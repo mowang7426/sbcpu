@@ -62,7 +62,7 @@
 			<key>label</key>
 			<string>▣ 充电与温控增强</string>
 			<key>footerText</key>
-			<string>突破系统限制，提供智能温度旁路供电与强力满血快充选项。</string>
+			<string>提供充电状态监测与充电增强目标；实时显示实际电压、电流、功率，并根据温度和电量判断是否正在降流。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -114,7 +114,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>SBCPU Floating V2.8 by MoWang</string>
+			<string>SBCPU Floating V2.9 by MoWang</string>
 		</dict>
 	</array>
 	<key>title</key>
