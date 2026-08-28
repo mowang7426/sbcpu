@@ -36,7 +36,7 @@ static BOOL getRealTimeBlockDimming() {
     return (getRealTimeState() >> 8) & 1;
 }
 
-// 读取第9位，判断是否开启强制满血快充
+// 🔥 新增：读取第9位，判断是否开启强制满血快充
 static BOOL getRealTimeForceFastCharge() {
     return (getRealTimeState() >> 9) & 1;
 }
@@ -49,10 +49,9 @@ static kern_return_t hook_IORegistryEntrySetCFProperty(io_registry_entry_t entry
 
     NSInteger mode = getRealTimeMitigationMode();
     BOOL blockDimming = getRealTimeBlockDimming();
-    BOOL forceFastCharge = getRealTimeForceFastCharge();
+    BOOL forceFastCharge = getRealTimeForceFastCharge(); // 🔥 获取快充状态
     NSString *propStr = (__bridge NSString *)propertyName;
     
-    // 拦截系统降亮度
     if (blockDimming) {
         if ([propStr containsString:@"max-brightness"] ||
             [propStr containsString:@"brightness-limit"] ||
@@ -63,7 +62,7 @@ static kern_return_t hook_IORegistryEntrySetCFProperty(io_registry_entry_t entry
         }
     }
 
-    // 🔥 拦截系统降低充电功率（强制快充）
+    // 🔥 新增：拦截系统降低充电功率（强制快充）
     if (forceFastCharge) {
         if ([propStr containsString:@"ChargeCurrentLimit"] || 
             [propStr containsString:@"ThermalMaxChargeCurrent"] ||
@@ -187,4 +186,3 @@ static kern_return_t hook_IORegistryEntrySetCFProperty(io_registry_entry_t entry
         dispatch_resume(timer);
     }
 }
-
