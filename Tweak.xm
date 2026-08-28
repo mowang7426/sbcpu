@@ -101,98 +101,128 @@ typedef struct {
 @implementation SBNotifReq
 @end
 
-#pragma mark - 游戏内顶部通知 Banner（直接使用 SpringBoard 全局浮窗层）
+#pragma mark - 游戏内侧边通知胶囊（横屏游戏专用）
 
-// 前置声明：游戏 Banner 在 C 函数中会直接使用 CPU 全局窗口
+// 游戏内通知使用 SpringBoard 的全局 UIWindow，但显示为“侧边竖向胶囊”。
+// 重点：通知层 userInteractionEnabled=NO，不拦截游戏触摸。
 static UIWindow *cpuWindow = nil;
+static UIInterfaceOrientation getActiveInterfaceOrientation(void);
 
 @interface SBCPUGameBannerView : UIView
-@property(nonatomic,strong) UIVisualEffectView *blurView;
+@property(nonatomic,strong) UIView *capsule;
 @property(nonatomic,strong) UILabel *iconLabel;
 @property(nonatomic,strong) UILabel *appLabel;
-@property(nonatomic,strong) UILabel *messageLabel;
+@property(nonatomic,strong) UILabel *countLabel;
 @end
 
 @implementation SBCPUGameBannerView
 - (instancetype)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
     if (!self) return nil;
+
     self.backgroundColor = UIColor.clearColor;
     self.userInteractionEnabled = NO;
-    self.layer.cornerRadius = 25.0;
-    self.layer.masksToBounds = NO;
-    self.layer.shadowColor = UIColor.blackColor.CGColor;
-    self.layer.shadowOpacity = 0.30;
-    self.layer.shadowRadius = 10.0;
-    self.layer.shadowOffset = CGSizeMake(0, 4);
 
-    UIView *capsule = [[UIView alloc] initWithFrame:self.bounds];
-    capsule.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    capsule.backgroundColor = [UIColor colorWithWhite:0.02 alpha:0.96];
-    capsule.layer.cornerRadius = 25.0;
-    capsule.layer.masksToBounds = YES;
-    [self addSubview:capsule];
-
-    _blurView = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark]];
-    _blurView.frame = capsule.bounds;
-    _blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _blurView.alpha = 0.38;
-    _blurView.userInteractionEnabled = NO;
-    [capsule addSubview:_blurView];
+    _capsule = [[UIView alloc] initWithFrame:self.bounds];
+    _capsule.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _capsule.backgroundColor = [UIColor colorWithWhite:0.015 alpha:0.97];
+    _capsule.layer.cornerRadius = 41.0;
+    _capsule.layer.masksToBounds = YES;
+    [self addSubview:_capsule];
 
     _iconLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _iconLabel.textAlignment = NSTextAlignmentCenter;
     _iconLabel.font = [UIFont systemFontOfSize:18.0 weight:UIFontWeightBold];
-    [capsule addSubview:_iconLabel];
+    _iconLabel.transform = CGAffineTransformMakeRotation((CGFloat)-M_PI_2);
+    [_capsule addSubview:_iconLabel];
 
     _appLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _appLabel.textColor = [UIColor colorWithWhite:1.0 alpha:0.68];
-    _appLabel.font = [UIFont systemFontOfSize:10.5 weight:UIFontWeightSemibold];
+    _appLabel.textAlignment = NSTextAlignmentCenter;
+    _appLabel.textColor = [UIColor colorWithWhite:1.0 alpha:0.78];
+    _appLabel.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightSemibold];
+    _appLabel.numberOfLines = 1;
     _appLabel.lineBreakMode = NSLineBreakByTruncatingTail;
-    [capsule addSubview:_appLabel];
+    _appLabel.transform = CGAffineTransformMakeRotation((CGFloat)-M_PI_2);
+    [_capsule addSubview:_appLabel];
 
-    _messageLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _messageLabel.textColor = UIColor.whiteColor;
-    _messageLabel.font = [UIFont systemFontOfSize:13.5 weight:UIFontWeightSemibold];
-    _messageLabel.lineBreakMode = NSLineBreakByTruncatingTail;
-    _messageLabel.numberOfLines = 1;
-    [capsule addSubview:_messageLabel];
+    _countLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _countLabel.textAlignment = NSTextAlignmentCenter;
+    _countLabel.textColor = UIColor.whiteColor;
+    _countLabel.font = [UIFont systemFontOfSize:20.0 weight:UIFontWeightBold];
+    _countLabel.transform = CGAffineTransformMakeRotation((CGFloat)-M_PI_2);
+    [_capsule addSubview:_countLabel];
+
+    self.layer.shadowColor = UIColor.blackColor.CGColor;
+    self.layer.shadowOpacity = 0.35;
+    self.layer.shadowRadius = 10.0;
+    self.layer.shadowOffset = CGSizeMake(2, 4);
     return self;
 }
+
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat w = self.bounds.size.width;
     CGFloat h = self.bounds.size.height;
-    _iconLabel.frame = CGRectMake(10, 0, 34, h);
-    _appLabel.frame = CGRectMake(50, 7, MAX(80, w - 62), 14);
-    _messageLabel.frame = CGRectMake(50, 23, MAX(120, w - 62), 19);
+    _capsule.frame = self.bounds;
+    _capsule.layer.cornerRadius = MIN(41.0, w * 0.5);
+
+    // 视觉上与目标效果一致：图标在上、应用名靠下、数量最下。
+    _iconLabel.bounds = CGRectMake(0, 0, 28, 28);
+    _iconLabel.center = CGPointMake(w * 0.5, 50);
+
+    // 旋转后的文字沿胶囊纵向显示，视觉方向与目标截图一致。
+    _appLabel.bounds = CGRectMake(0, 0, MIN(220.0, h - 120.0), 22);
+    _appLabel.center = CGPointMake(w * 0.5, h - 135.0);
+
+    _countLabel.bounds = CGRectMake(0, 0, 42, 26);
+    _countLabel.center = CGPointMake(w * 0.5, h - 72.0);
 }
 @end
 
 static SBCPUGameBannerView *gameBannerView = nil;
 static NSInteger gameBannerGeneration = 0;
+static NSInteger gameBannerUnreadCount = 0;
 
 static void layoutGameBanner(void);
 static void showGameBannerForNotification(SBNotifReq *req);
 static void hideGameBanner(void);
 
-#pragma mark - 游戏内 Banner
+#pragma mark - 游戏内侧边胶囊
+
+static BOOL isLandscapeInterfaceForGame(void) {
+    UIInterfaceOrientation o = getActiveInterfaceOrientation();
+    return (o == UIInterfaceOrientationLandscapeLeft || o == UIInterfaceOrientationLandscapeRight);
+}
 
 static void layoutGameBanner(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!gameBannerView || !cpuWindow || !cpuWindow.rootViewController) return;
         UIView *root = cpuWindow.rootViewController.view;
         CGRect b = root.bounds;
-        if (b.size.width < 10 || b.size.height < 10) return;
+        if (b.size.width < 100 || b.size.height < 100) return;
 
-        CGFloat width = MIN(390.0, b.size.width - 28.0);
-        if (width < 260.0) width = b.size.width - 16.0;
-        CGFloat height = 50.0;
-        CGFloat top = root.safeAreaInsets.top;
-        // 全屏游戏经常 safeArea=0；给灵动岛/刘海额外留出空间。
-        if (top < 12.0) top = 12.0;
-        CGFloat y = top + 8.0;
-        gameBannerView.frame = CGRectMake((b.size.width - width) * 0.5, y, width, height);
+        BOOL landscape = isLandscapeInterfaceForGame();
+        if (!landscape) {
+            // 竖屏时仍保留为顶部胶囊，避免覆盖正常界面。
+            CGFloat width = MIN(390.0, b.size.width - 28.0);
+            CGFloat height = 58.0;
+            CGFloat top = root.safeAreaInsets.top;
+            if (top < 12.0) top = 12.0;
+            gameBannerView.transform = CGAffineTransformIdentity;
+            gameBannerView.bounds = CGRectMake(0, 0, width, height);
+            gameBannerView.center = CGPointMake(CGRectGetMidX(b), top + height * 0.5 + 6.0);
+            return;
+        }
+
+        // 横屏游戏：目标效果为贴近屏幕左边缘的竖向黑色圆角胶囊。
+        CGFloat width = 82.0;
+        CGFloat height = MIN(630.0, MAX(420.0, b.size.height - 70.0));
+        CGFloat y = (b.size.height - height) * 0.5;
+        CGFloat x = MAX(8.0, MIN(120.0, b.size.width * 0.075));
+        gameBannerView.transform = CGAffineTransformIdentity;
+        gameBannerView.bounds = CGRectMake(0, 0, width, height);
+        gameBannerView.center = CGPointMake(x + width * 0.5, y + height * 0.5);
+        [gameBannerView setNeedsLayout];
     });
 }
 
@@ -200,9 +230,11 @@ static void hideGameBanner(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!gameBannerView) return;
         NSInteger generation = ++gameBannerGeneration;
-        [UIView animateWithDuration:0.20 animations:^{
+        BOOL landscape = isLandscapeInterfaceForGame();
+        CGAffineTransform out = landscape ? CGAffineTransformMakeTranslation(-92.0, 0) : CGAffineTransformMakeTranslation(0, -18.0);
+        [UIView animateWithDuration:0.28 delay:0 options:UIViewAnimationOptionCurveEaseIn | UIViewAnimationOptionBeginFromCurrentState animations:^{
             gameBannerView.alpha = 0.0;
-            gameBannerView.transform = CGAffineTransformMakeTranslation(0, -10);
+            gameBannerView.transform = out;
         } completion:^(BOOL finished) {
             (void)finished;
             if (generation == gameBannerGeneration) {
@@ -220,49 +252,59 @@ static void showGameBannerForNotification(SBNotifReq *req) {
         UIView *root = cpuWindow.rootViewController.view;
 
         if (!gameBannerView) {
-            gameBannerView = [[SBCPUGameBannerView alloc] initWithFrame:CGRectMake(0, 0, 320, 50)];
+            gameBannerView = [[SBCPUGameBannerView alloc] initWithFrame:CGRectMake(0, 0, 82, 600)];
             gameBannerView.hidden = YES;
             gameBannerView.alpha = 0.0;
             gameBannerView.userInteractionEnabled = NO;
             [root addSubview:gameBannerView];
-            [root bringSubviewToFront:gameBannerView];
         } else if (gameBannerView.superview != root) {
             [gameBannerView removeFromSuperview];
             [root addSubview:gameBannerView];
         }
 
         NSString *appName = @"消息";
-        NSString *icon = @"💬";
+        NSString *icon = @"◆";
         UIColor *iconColor = UIColor.whiteColor;
         if ([req.bundleID isEqualToString:@"com.tencent.xin"]) {
-            appName = @"微信"; icon = @"●"; iconColor = [UIColor systemGreenColor];
+            appName = @"微信";
+            icon = @"●";
+            iconColor = [UIColor systemGreenColor];
         } else if ([req.bundleID.lowercaseString containsString:@"qq"]) {
-            appName = @"QQ"; icon = @"◆"; iconColor = [UIColor systemBlueColor];
+            appName = @"QQ";
+            icon = @"◆";
+            iconColor = [UIColor systemBlueColor];
         } else if ([req.bundleID isEqualToString:@"com.tencent.tim"]) {
-            appName = @"TIM"; icon = @"◆"; iconColor = [UIColor colorWithRed:0.15 green:0.55 blue:1.0 alpha:1.0];
+            appName = @"TIM";
+            icon = @"◆";
+            iconColor = [UIColor colorWithRed:0.15 green:0.55 blue:1.0 alpha:1.0];
         }
 
+        gameBannerUnreadCount = MAX(1, gameBannerUnreadCount + 1);
         gameBannerView.iconLabel.text = icon;
         gameBannerView.iconLabel.textColor = iconColor;
         gameBannerView.appLabel.text = [NSString stringWithFormat:@"%@ · %@", appName, req.title.length ? req.title : @"新消息"];
-        gameBannerView.messageLabel.text = req.message.length ? req.message : @"收到一条新消息";
+        gameBannerView.countLabel.text = [NSString stringWithFormat:@"%ld", (long)gameBannerUnreadCount];
         [gameBannerView setNeedsLayout];
         layoutGameBanner();
 
         gameBannerGeneration++;
         gameBannerView.hidden = NO;
         gameBannerView.alpha = 0.0;
-        gameBannerView.transform = CGAffineTransformMakeTranslation(0, -14);
+        BOOL landscape = isLandscapeInterfaceForGame();
+        gameBannerView.transform = landscape ? CGAffineTransformMakeTranslation(-92.0, 0) : CGAffineTransformMakeTranslation(0, -18.0);
         [root bringSubviewToFront:gameBannerView];
 
-        [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionBeginFromCurrentState animations:^{
+        [UIView animateWithDuration:0.34 delay:0 options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionBeginFromCurrentState animations:^{
             gameBannerView.alpha = 1.0;
             gameBannerView.transform = CGAffineTransformIdentity;
         } completion:nil];
 
         NSInteger generation = gameBannerGeneration;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (generation == gameBannerGeneration) hideGameBanner();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(1, notificationDuration) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (generation == gameBannerGeneration) {
+                gameBannerUnreadCount = 0;
+                hideGameBanner();
+            }
         });
     });
 }
