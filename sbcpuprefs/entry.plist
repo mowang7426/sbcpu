@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>entry</key>
+	<dict>
+		<key>bundle</key>
+		<string>SBCPUPrefs</string>
+		<key>cell</key>
+		<string>PSLinkCell</string>
+		<key>detail</key>
+		<string>SBCPUPrefsRootListController</string>
+		<key>icon</key>
+		<string>icon.PNG</string>
+		<key>isController</key>
+		<true/>
+		<key>label</key>
+		<string>SBCPU Floating</string>
+	</dict>
+</dict>
+</plist>
+
