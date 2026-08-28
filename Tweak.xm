@@ -126,7 +126,7 @@ static void SBCPUSendGameOverlayPayload(SBNotifReq *req) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         CFMessagePortRef remote = CFMessagePortCreateRemote(kCFAllocatorDefault, kSBCPUGameOverlayPortName);
         if (!remote) return;
-        CFDataRef messageData = CFDataCreate(kCFAllocatorDefault, data.bytes, (CFIndex)data.length);
+        CFDataRef messageData = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)data.bytes, (CFIndex)data.length);
         if (messageData) {
             SInt32 status = CFMessagePortSendRequest(remote, 1, messageData, 0.15, 0.0, NULL, NULL);
             (void)status;
