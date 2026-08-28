@@ -182,8 +182,6 @@ static UIInterfaceOrientation getActiveInterfaceOrientation(void);
 static SBCPUGameBannerView *gameBannerView = nil;
 static NSInteger gameBannerGeneration = 0;
 static NSInteger gameBannerUnreadCount = 0;
-// 必须在游戏 Banner 函数之前声明，避免 C/ObjC 的“use of undeclared identifier”。
-static NSInteger notificationDuration = 5;
 
 static void layoutGameBanner(void);
 static void showGameBannerForNotification(SBNotifReq *req);
@@ -481,6 +479,7 @@ static BOOL wechatEnable = YES;
 static BOOL qqEnable = YES;
 static BOOL timEnable = YES;
 static BOOL hideContentOnLockScreen = NO;
+static NSInteger notificationDuration = 5;
 static NSMutableArray<SBNotifReq *> *historyNotifications = nil;
 
 static DeviceSpec MakeDeviceSpec(const char *platform, const char *modelName, const char *chipName, NSInteger cores, double maxFreqMHz, NSInteger designBatteryCapacity);
@@ -1412,9 +1411,19 @@ static void applySystemRefreshRate(void) {
             }
         }
 
-        // 游戏内通知现在直接使用 SpringBoard 自己的全屏 Overlay Window，
-        // 不再依赖 App 沙盒无法稳定读取的跨进程 payload 文件。
-        showGameBannerForNotification(req);
+        // 游戏内通知：写入共享的 root-readable plist，再通过 Darwin notify
+        // 通知注入到游戏进程的 SBCPUGameOverlay.dylib。
+        // UI 本身不再创建在 SpringBoard 上，避免出现“整条黑色横条”叠在游戏底部。
+        NSMutableDictionary *gameData = [NSMutableDictionary dictionary];
+        gameData[@"bundleID"] = req.bundleID ?: @"";
+        gameData[@"title"] = req.title ?: @"新消息";
+        gameData[@"message"] = req.message ?: @"";
+        gameData[@"count"] = @(historyNotifications.count > 0 ? historyNotifications.count : 1);
+        gameData[@"timestamp"] = @([[NSDate date] timeIntervalSince1970]);
+        [gameData writeToFile:@"/var/mobile/Library/Preferences/com.yourname.sbcpufloating.gamebanner.plist" atomically:YES];
+        notify_post("com.yourname.sbcpufloating.gamebanner");
+
+        // 保留 SpringBoard 普通通知浮窗；游戏内显示由 GameOverlay 独立负责。
     });
 }
 @end

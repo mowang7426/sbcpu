@@ -4,7 +4,7 @@ TARGET = iphone:clang:16.5:14.0
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = SBCPUFloating SBCPUMitigation
+TWEAK_NAME = SBCPUFloating SBCPUMitigation SBCPUGameOverlay
 
 # 1. 桌面 UI、悬浮窗、与通知管理
 SBCPUFloating_FILES = Tweak.xm
@@ -19,6 +19,12 @@ SBCPUMitigation_CFLAGS = -fobjc-arc
 SBCPUMitigation_FRAMEWORKS = Foundation
 SBCPUMitigation_PRIVATE_FRAMEWORKS = IOKit
 SBCPUMitigation_INSTALL_TARGET_PROCESSES = thermalmonitord powerd
+
+# 3. 游戏内通知显示层：仅注入指定游戏，不注入 SpringBoard/微信/QQ/TIM 本体
+SBCPUGameOverlay_FILES = GameOverlay.xm
+SBCPUGameOverlay_CFLAGS = -fobjc-arc
+SBCPUGameOverlay_FRAMEWORKS = UIKit Foundation
+SBCPUGameOverlay_INSTALL_TARGET_PROCESSES = QQSpeed
 
 # ⚠️ 注意这里，这句必须在 SUBPROJECTS 之前
 include $(THEOS_MAKE_PATH)/tweak.mk
