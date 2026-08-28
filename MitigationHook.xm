@@ -36,6 +36,11 @@ static BOOL getRealTimeBlockDimming() {
     return (getRealTimeState() >> 8) & 1;
 }
 
+// 读取第9位，判断是否开启强制满血快充
+static BOOL getRealTimeForceFastCharge() {
+    return (getRealTimeState() >> 9) & 1;
+}
+
 // 👑 [绝杀机制]：C语言底层 IOKit 硬件拦截 (采用 CF 级纯净内存管理避免崩溃)
 static kern_return_t (*orig_IORegistryEntrySetCFProperty)(io_registry_entry_t, CFStringRef, CFTypeRef);
 
@@ -44,14 +49,29 @@ static kern_return_t hook_IORegistryEntrySetCFProperty(io_registry_entry_t entry
 
     NSInteger mode = getRealTimeMitigationMode();
     BOOL blockDimming = getRealTimeBlockDimming();
+    BOOL forceFastCharge = getRealTimeForceFastCharge();
     NSString *propStr = (__bridge NSString *)propertyName;
     
+    // 拦截系统降亮度
     if (blockDimming) {
         if ([propStr containsString:@"max-brightness"] ||
             [propStr containsString:@"brightness-limit"] ||
             [propStr containsString:@"IOMFB_brightness_limit"] ||
             [propStr containsString:@"ThermalMitigation"] ||
             [propStr containsString:@"ThermalLimit"]) {
+            return KERN_SUCCESS; 
+        }
+    }
+
+    // 🔥 拦截系统降低充电功率（强制快充）
+    if (forceFastCharge) {
+        if ([propStr containsString:@"ChargeCurrentLimit"] || 
+            [propStr containsString:@"ThermalMaxChargeCurrent"] ||
+            [propStr containsString:@"MaxChargeCurrent"] ||
+            [propStr containsString:@"AdapterPowerLimit"] ||
+            [propStr containsString:@"AdapterCurrentLimit"] ||
+            [propStr containsString:@"ThermalChargingLimit"]) {
+            // 系统试图降流，我们直接吃掉这个指令，欺骗系统执行成功
             return KERN_SUCCESS; 
         }
     }
