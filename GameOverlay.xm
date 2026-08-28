@@ -2,172 +2,217 @@
 #import <Foundation/Foundation.h>
 #import <notify.h>
 
-static UIWindow *SBCPUGameOverlayWindow = nil;
+// ============================================================
+// SBCPUGameOverlay V2.9.5.4
+// 真正挂到游戏自己的 UIWindow 上，跟随游戏 UI 一起旋转。
+// 不再创建独立 UIWindow，避免 iOS 17 + 系统竖屏锁定时出现
+// “黑色横向大胶囊 / 文字倒置 / 横屏尺寸仍按竖屏计算”的问题。
+// ============================================================
+
 static UIView *SBCPUGamePill = nil;
 static UILabel *SBCPUGameIcon = nil;
 static UILabel *SBCPUGameApp = nil;
 static UILabel *SBCPUGameCount = nil;
+static UIWindow *SBCPUGameHostWindow = nil;
 static NSUInteger SBCPUGameGeneration = 0;
-static NSInteger SBCPUGameUnreadCount = 0;
 static BOOL SBCPUGameVisible = NO;
 
 static NSString * const kGameBannerPath = @"/var/mobile/Library/Preferences/com.yourname.sbcpufloating.gamebanner.plist";
 static const char *kGameBannerNotify = "com.yourname.sbcpufloating.gamebanner";
 
-@interface SBCPUGameOverlayRoot : UIViewController
-@end
+static UIWindow *SBCPUFindGameHostWindow(void) {
+    UIApplication *app = UIApplication.sharedApplication;
+    UIWindow *candidate = nil;
 
-@implementation SBCPUGameOverlayRoot
-- (void)loadView {
-    UIView *v = [[UIView alloc] initWithFrame:CGRectZero];
-    v.backgroundColor = UIColor.clearColor;
-    v.userInteractionEnabled = NO;
-    self.view = v;
-}
-- (BOOL)shouldAutorotate { return YES; }
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskAll; }
-- (BOOL)prefersStatusBarHidden { return YES; }
-@end
-
-@interface SBCPUGamePassthroughWindow : UIWindow
-@end
-
-@implementation SBCPUGamePassthroughWindow
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    // The overlay is display-only. Never consume game touches.
-    return nil;
-}
-@end
-
-static UIWindowScene *SBCPUCurrentGameScene(void) {
     if (@available(iOS 13.0, *)) {
-        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        for (UIScene *scene in app.connectedScenes) {
             if (![scene isKindOfClass:[UIWindowScene class]]) continue;
             UIWindowScene *ws = (UIWindowScene *)scene;
-            if (ws.activationState == UISceneActivationStateForegroundActive ||
-                ws.activationState == UISceneActivationStateForegroundInactive) {
-                return ws;
+            if (ws.activationState != UISceneActivationStateForegroundActive &&
+                ws.activationState != UISceneActivationStateForegroundInactive) continue;
+
+            // 优先真正的 key window。
+            for (UIWindow *w in ws.windows) {
+                if (!w.hidden && w.alpha > 0.01 && w.isKeyWindow && w.windowLevel == UIWindowLevelNormal) {
+                    return w;
+                }
+            }
+            // 再找正常级别、可见且面积最大的游戏窗口。
+            for (UIWindow *w in ws.windows) {
+                if (w.hidden || w.alpha <= 0.01) continue;
+                if (w.windowLevel != UIWindowLevelNormal) continue;
+                if (!candidate || (w.bounds.size.width * w.bounds.size.height > candidate.bounds.size.width * candidate.bounds.size.height)) {
+                    candidate = w;
+                }
             }
         }
-        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]]) return (UIWindowScene *)scene;
+    }
+
+    if (!candidate) {
+        for (UIWindow *w in app.windows) {
+            if (w.hidden || w.alpha <= 0.01) continue;
+            if (w.windowLevel != UIWindowLevelNormal) continue;
+            if (w.isKeyWindow) return w;
+            if (!candidate || (w.bounds.size.width * w.bounds.size.height > candidate.bounds.size.width * candidate.bounds.size.height)) {
+                candidate = w;
+            }
         }
     }
-    return nil;
+    return candidate;
+}
+
+static BOOL SBCPUGameIsLandscape(void) {
+    if (SBCPUGameHostWindow) {
+        CGRect b = SBCPUGameHostWindow.bounds;
+        if (b.size.width > b.size.height + 20.0) return YES;
+        if (b.size.height > b.size.width + 20.0) return NO;
+    }
+
+    if (@available(iOS 13.0, *)) {
+        UIInterfaceOrientation o = SBCPUGameHostWindow.windowScene.interfaceOrientation;
+        if (o == UIInterfaceOrientationLandscapeLeft || o == UIInterfaceOrientationLandscapeRight) return YES;
+        if (o == UIInterfaceOrientationPortrait || o == UIInterfaceOrientationPortraitUpsideDown) return NO;
+    }
+    return NO;
 }
 
 static void SBCPUApplyGamePillLayout(void) {
-    if (!SBCPUGameOverlayWindow || !SBCPUGamePill) return;
+    if (!SBCPUGamePill || !SBCPUGameHostWindow) return;
 
-    CGRect b = SBCPUGameOverlayWindow.bounds;
-    if (b.size.width < 100 || b.size.height < 100) return;
+    CGRect b = SBCPUGameHostWindow.bounds;
+    if (b.size.width < 100.0 || b.size.height < 100.0) return;
 
-    BOOL landscape = b.size.width > b.size.height;
-    CGFloat width = landscape ? 76.0 : MIN(390.0, b.size.width - 24.0);
-    CGFloat height = landscape ? MIN(620.0, MAX(360.0, b.size.height - 90.0)) : 60.0;
-    CGFloat x = landscape ? 8.0 : (b.size.width - width) * 0.5;
-    CGFloat y = landscape ? (b.size.height - height) * 0.5 : 14.0;
-
-    SBCPUGamePill.frame = CGRectMake(x, y, width, height);
-    SBCPUGamePill.layer.cornerRadius = width * 0.5;
+    BOOL landscape = SBCPUGameIsLandscape();
 
     if (landscape) {
-        // Vertical side capsule, matching the reference: icon -> app name -> count.
-        SBCPUGameIcon.transform = CGAffineTransformMakeRotation(-M_PI_2);
-        SBCPUGameApp.transform = CGAffineTransformMakeRotation(-M_PI_2);
-        SBCPUGameCount.transform = CGAffineTransformMakeRotation(-M_PI_2);
+        // 目标效果：左侧窄竖胶囊。绝不把整个横屏宽度当成胶囊宽度。
+        CGFloat width = 82.0;
+        CGFloat height = MIN(630.0, MAX(420.0, b.size.height - 70.0));
+        CGFloat x = 8.0;
+        CGFloat y = MAX(18.0, (b.size.height - height) * 0.5);
+
+        SBCPUGamePill.transform = CGAffineTransformIdentity;
+        SBCPUGamePill.bounds = CGRectMake(0, 0, width, height);
+        SBCPUGamePill.center = CGPointMake(x + width * 0.5, y + height * 0.5);
+        SBCPUGamePill.layer.cornerRadius = width * 0.5;
+
+        // 这里不再旋转 UIView 本身；只旋转文字标签。
+        SBCPUGameIcon.transform = CGAffineTransformMakeRotation((CGFloat)-M_PI_2);
+        SBCPUGameApp.transform = CGAffineTransformMakeRotation((CGFloat)-M_PI_2);
+        SBCPUGameCount.transform = CGAffineTransformMakeRotation((CGFloat)-M_PI_2);
 
         SBCPUGameIcon.bounds = CGRectMake(0, 0, 30, 30);
-        SBCPUGameIcon.center = CGPointMake(width * 0.5, 48.0);
+        SBCPUGameIcon.center = CGPointMake(width * 0.5, 52.0);
 
-        SBCPUGameApp.bounds = CGRectMake(0, 0, MIN(300.0, height - 120.0), 20.0);
+        SBCPUGameApp.bounds = CGRectMake(0, 0, MIN(300.0, height - 130.0), 20.0);
         SBCPUGameApp.center = CGPointMake(width * 0.5, height * 0.5);
 
-        SBCPUGameCount.bounds = CGRectMake(0, 0, 38, 28);
-        SBCPUGameCount.center = CGPointMake(width * 0.5, height - 58.0);
+        SBCPUGameCount.bounds = CGRectMake(0, 0, 44, 30);
+        SBCPUGameCount.center = CGPointMake(width * 0.5, height - 62.0);
     } else {
+        // 竖屏：顶部小胶囊；进入横屏后会重新变成左侧竖胶囊。
+        CGFloat width = MIN(390.0, b.size.width - 28.0);
+        CGFloat height = 60.0;
+        CGFloat x = (b.size.width - width) * 0.5;
+        CGFloat y = MAX(12.0, b.origin.y);
+
+        SBCPUGamePill.transform = CGAffineTransformIdentity;
+        SBCPUGamePill.bounds = CGRectMake(0, 0, width, height);
+        SBCPUGamePill.center = CGPointMake(x + width * 0.5, y + height * 0.5 + 6.0);
+        SBCPUGamePill.layer.cornerRadius = height * 0.5;
+
         SBCPUGameIcon.transform = CGAffineTransformIdentity;
         SBCPUGameApp.transform = CGAffineTransformIdentity;
         SBCPUGameCount.transform = CGAffineTransformIdentity;
 
         SBCPUGameIcon.frame = CGRectMake(14, 15, 28, 28);
-        SBCPUGameApp.frame = CGRectMake(48, 12, width - 90, 22);
-        SBCPUGameCount.frame = CGRectMake(width - 40, 13, 26, 26);
+        SBCPUGameApp.frame = CGRectMake(48, 12, MAX(40.0, width - 90.0), 22);
+        SBCPUGameCount.frame = CGRectMake(width - 40, 15, 28, 28);
     }
+
+    [SBCPUGamePill.superview bringSubviewToFront:SBCPUGamePill];
 }
 
-static void SBCPUEnsureGameOverlay(void) {
+static void SBCPUAttachGamePillToHostWindow(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindowScene *scene = SBCPUCurrentGameScene();
-        if (!scene) return;
+        UIWindow *host = SBCPUFindGameHostWindow();
+        if (!host) return;
 
-        if (!SBCPUGameOverlayWindow) {
-            SBCPUGameOverlayWindow = [[SBCPUGamePassthroughWindow alloc] initWithWindowScene:scene];
-            SBCPUGameOverlayWindow.backgroundColor = UIColor.clearColor;
-            SBCPUGameOverlayWindow.opaque = NO;
-            SBCPUGameOverlayWindow.windowLevel = UIWindowLevelAlert + 100.0;
-            SBCPUGameOverlayWindow.rootViewController = [[SBCPUGameOverlayRoot alloc] init];
-            SBCPUGameOverlayWindow.hidden = NO;
-
-            SBCPUGamePill = [[UIView alloc] initWithFrame:CGRectZero];
-            SBCPUGamePill.backgroundColor = [UIColor colorWithWhite:0.01 alpha:0.96];
-            SBCPUGamePill.layer.masksToBounds = YES;
-            SBCPUGamePill.userInteractionEnabled = NO;
-            [SBCPUGameOverlayWindow.rootViewController.view addSubview:SBCPUGamePill];
-
-            SBCPUGameIcon = [[UILabel alloc] initWithFrame:CGRectZero];
-            SBCPUGameIcon.textAlignment = NSTextAlignmentCenter;
-            SBCPUGameIcon.font = [UIFont systemFontOfSize:19 weight:UIFontWeightBold];
-            SBCPUGameIcon.userInteractionEnabled = NO;
-            [SBCPUGamePill addSubview:SBCPUGameIcon];
-
-            SBCPUGameApp = [[UILabel alloc] initWithFrame:CGRectZero];
-            SBCPUGameApp.textAlignment = NSTextAlignmentCenter;
-            SBCPUGameApp.textColor = [UIColor colorWithWhite:1 alpha:0.90];
-            SBCPUGameApp.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
-            SBCPUGameApp.numberOfLines = 1;
-            SBCPUGameApp.lineBreakMode = NSLineBreakByTruncatingTail;
-            SBCPUGameApp.userInteractionEnabled = NO;
-            [SBCPUGamePill addSubview:SBCPUGameApp];
-
-            SBCPUGameCount = [[UILabel alloc] initWithFrame:CGRectZero];
-            SBCPUGameCount.textAlignment = NSTextAlignmentCenter;
-            SBCPUGameCount.textColor = UIColor.whiteColor;
-            SBCPUGameCount.font = [UIFont systemFontOfSize:21 weight:UIFontWeightBold];
-            SBCPUGameCount.userInteractionEnabled = NO;
-            [SBCPUGamePill addSubview:SBCPUGameCount];
-        } else if (SBCPUGameOverlayWindow.windowScene != scene) {
-            SBCPUGameOverlayWindow.windowScene = scene;
+        if (SBCPUGameHostWindow != host) {
+            [SBCPUGamePill removeFromSuperview];
+            SBCPUGameHostWindow = host;
+            if (SBCPUGamePill) [host addSubview:SBCPUGamePill];
+        } else if (SBCPUGamePill.superview != host) {
+            [SBCPUGamePill removeFromSuperview];
+            [host addSubview:SBCPUGamePill];
         }
 
         SBCPUApplyGamePillLayout();
     });
 }
 
+static void SBCPUCreateGamePillIfNeeded(void) {
+    if (SBCPUGamePill) return;
+
+    SBCPUGamePill = [[UIView alloc] initWithFrame:CGRectZero];
+    SBCPUGamePill.backgroundColor = [UIColor colorWithWhite:0.01 alpha:0.96];
+    SBCPUGamePill.layer.masksToBounds = YES;
+    SBCPUGamePill.userInteractionEnabled = NO;
+    SBCPUGamePill.accessibilityElementsHidden = YES;
+
+    SBCPUGameIcon = [[UILabel alloc] initWithFrame:CGRectZero];
+    SBCPUGameIcon.textAlignment = NSTextAlignmentCenter;
+    SBCPUGameIcon.font = [UIFont systemFontOfSize:19.0 weight:UIFontWeightBold];
+    SBCPUGameIcon.userInteractionEnabled = NO;
+    [SBCPUGamePill addSubview:SBCPUGameIcon];
+
+    SBCPUGameApp = [[UILabel alloc] initWithFrame:CGRectZero];
+    SBCPUGameApp.textAlignment = NSTextAlignmentCenter;
+    SBCPUGameApp.textColor = [UIColor colorWithWhite:1.0 alpha:0.92];
+    SBCPUGameApp.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightSemibold];
+    SBCPUGameApp.numberOfLines = 1;
+    SBCPUGameApp.lineBreakMode = NSLineBreakByTruncatingTail;
+    SBCPUGameApp.userInteractionEnabled = NO;
+    [SBCPUGamePill addSubview:SBCPUGameApp];
+
+    SBCPUGameCount = [[UILabel alloc] initWithFrame:CGRectZero];
+    SBCPUGameCount.textAlignment = NSTextAlignmentCenter;
+    SBCPUGameCount.textColor = UIColor.whiteColor;
+    SBCPUGameCount.font = [UIFont systemFontOfSize:21.0 weight:UIFontWeightBold];
+    SBCPUGameCount.userInteractionEnabled = NO;
+    [SBCPUGamePill addSubview:SBCPUGameCount];
+}
+
 static void SBCPUHideGamePillAnimated(void) {
-    if (!SBCPUGamePill || !SBCPUGameVisible) return;
-    SBCPUGameVisible = NO;
-    NSUInteger generation = ++SBCPUGameGeneration;
-    BOOL landscape = SBCPUGameOverlayWindow.bounds.size.width > SBCPUGameOverlayWindow.bounds.size.height;
-    CGAffineTransform out = landscape ? CGAffineTransformMakeTranslation(-95.0, 0) : CGAffineTransformMakeTranslation(0, -72.0);
-    [UIView animateWithDuration:0.30 animations:^{
-        SBCPUGamePill.alpha = 0.0;
-        SBCPUGamePill.transform = out;
-    } completion:^(BOOL finished) {
-        (void)finished;
-        if (generation == SBCPUGameGeneration) {
-            SBCPUGamePill.hidden = YES;
-            SBCPUGamePill.transform = CGAffineTransformIdentity;
-        }
-    }];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!SBCPUGamePill || !SBCPUGameVisible) return;
+        SBCPUGameVisible = NO;
+        NSUInteger generation = ++SBCPUGameGeneration;
+        BOOL landscape = SBCPUGameIsLandscape();
+        CGAffineTransform out = landscape ? CGAffineTransformMakeTranslation(-105.0, 0) : CGAffineTransformMakeTranslation(0, -75.0);
+
+        [UIView animateWithDuration:0.30 delay:0 options:UIViewAnimationOptionCurveEaseIn | UIViewAnimationOptionBeginFromCurrentState animations:^{
+            SBCPUGamePill.alpha = 0.0;
+            SBCPUGamePill.transform = CGAffineTransformConcat(out, CGAffineTransformIdentity);
+        } completion:^(BOOL finished) {
+            (void)finished;
+            if (generation == SBCPUGameGeneration) {
+                SBCPUGamePill.hidden = YES;
+                SBCPUGamePill.transform = CGAffineTransformIdentity;
+            }
+        }];
+    });
 }
 
 static void SBCPUShowGamePillFromDictionary(NSDictionary *data) {
     if (![data isKindOfClass:[NSDictionary class]]) return;
+
     dispatch_async(dispatch_get_main_queue(), ^{
-        SBCPUEnsureGameOverlay();
+        SBCPUCreateGamePillIfNeeded();
+        SBCPUAttachGamePillToHostWindow();
+
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (!SBCPUGamePill || !SBCPUGameOverlayWindow) return;
+            if (!SBCPUGamePill || !SBCPUGameHostWindow) return;
 
             NSString *bundle = [data[@"bundleID"] isKindOfClass:[NSString class]] ? data[@"bundleID"] : @"";
             NSString *title = [data[@"title"] isKindOfClass:[NSString class]] ? data[@"title"] : @"新消息";
@@ -176,9 +221,19 @@ static void SBCPUShowGamePillFromDictionary(NSDictionary *data) {
             NSString *app = @"消息";
             NSString *icon = @"◆";
             UIColor *iconColor = UIColor.whiteColor;
-            if ([bundle isEqualToString:@"com.tencent.xin"]) { app = @"微信"; icon = @"●"; iconColor = UIColor.systemGreenColor; }
-            else if ([bundle.lowercaseString containsString:@"qq"]) { app = @"QQ"; icon = @"◆"; iconColor = UIColor.systemBlueColor; }
-            else if ([bundle isEqualToString:@"com.tencent.tim"]) { app = @"TIM"; icon = @"◆"; iconColor = [UIColor colorWithRed:0.15 green:0.55 blue:1 alpha:1]; }
+            if ([bundle isEqualToString:@"com.tencent.xin"]) {
+                app = @"微信";
+                icon = @"●";
+                iconColor = UIColor.systemGreenColor;
+            } else if ([bundle.lowercaseString containsString:@"qq"]) {
+                app = @"QQ";
+                icon = @"◆";
+                iconColor = UIColor.systemBlueColor;
+            } else if ([bundle isEqualToString:@"com.tencent.tim"]) {
+                app = @"TIM";
+                icon = @"◆";
+                iconColor = [UIColor colorWithRed:0.15 green:0.55 blue:1.0 alpha:1.0];
+            }
 
             SBCPUGameIcon.text = icon;
             SBCPUGameIcon.textColor = iconColor;
@@ -186,13 +241,14 @@ static void SBCPUShowGamePillFromDictionary(NSDictionary *data) {
             SBCPUGameCount.text = [NSString stringWithFormat:@"%@", count];
 
             SBCPUApplyGamePillLayout();
-            BOOL landscape = SBCPUGameOverlayWindow.bounds.size.width > SBCPUGameOverlayWindow.bounds.size.height;
+            BOOL landscape = SBCPUGameIsLandscape();
             SBCPUGamePill.hidden = NO;
             SBCPUGamePill.alpha = 0.0;
-            SBCPUGamePill.transform = landscape ? CGAffineTransformMakeTranslation(-95.0, 0) : CGAffineTransformMakeTranslation(0, -72.0);
+            SBCPUGamePill.transform = landscape ? CGAffineTransformMakeTranslation(-105.0, 0) : CGAffineTransformMakeTranslation(0, -75.0);
             SBCPUGameVisible = YES;
             NSUInteger generation = ++SBCPUGameGeneration;
-            [UIView animateWithDuration:0.32 delay:0 options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionBeginFromCurrentState animations:^{
+
+            [UIView animateWithDuration:0.34 delay:0 options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionBeginFromCurrentState animations:^{
                 SBCPUGamePill.alpha = 1.0;
                 SBCPUGamePill.transform = CGAffineTransformIdentity;
             } completion:nil];
@@ -219,22 +275,34 @@ static void SBCPURegisterGameBannerNotification(void) {
 
 __attribute__((constructor)) static void SBCPUGameOverlayInit(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        // Do not create an overlay for the SpringBoard process itself.
         NSString *bundle = NSBundle.mainBundle.bundleIdentifier ?: @"";
         if ([bundle isEqualToString:@"com.apple.springboard"]) return;
 
         SBCPURegisterGameBannerNotification();
-        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
+
+        NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
+        [nc addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
             (void)note;
-            SBCPUEnsureGameOverlay();
+            SBCPUAttachGamePillToHostWindow();
         }];
-        [[NSNotificationCenter defaultCenter] addObserverForName:UIDeviceOrientationDidChangeNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
+        [nc addObserverForName:UIWindowDidBecomeKeyNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
             (void)note;
-            SBCPUApplyGamePillLayout();
+            SBCPUAttachGamePillToHostWindow();
+            if (SBCPUGameVisible) SBCPUApplyGamePillLayout();
+        }];
+        [nc addObserverForName:UIApplicationDidChangeStatusBarOrientationNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            (void)note;
+            SBCPUAttachGamePillToHostWindow();
+        }];
+        [nc addObserverForName:UIDeviceOrientationDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            (void)note;
+            SBCPUAttachGamePillToHostWindow();
+            if (SBCPUGameVisible) SBCPUApplyGamePillLayout();
         }];
 
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            SBCPUEnsureGameOverlay();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            SBCPUCreateGamePillIfNeeded();
+            SBCPUAttachGamePillToHostWindow();
             SBCPUReadAndShowGameBanner();
         });
     });
