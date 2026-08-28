@@ -155,7 +155,6 @@ static CFStringRef const kSBCPUGameOverlayPortName = CFSTR("com.yourname.sbcpufl
 - (void)dismissCurrent {
     [self.dismissTimer invalidate];
     self.dismissTimer = nil;
-    CGFloat screenW = UIScreen.mainScreen.bounds.size.width;
     CGFloat bannerW = self.banner.bounds.size.width;
     [UIView animateWithDuration:0.38 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
         self.banner.alpha = 0.0;
