@@ -1,14 +1,17 @@
-SBCPUFloating 2.9.1 游戏内弹幕通知测试版
+SBCPUFloating 2.9.2 游戏内消息横幅测试版
 
-功能：
-1. SpringBoard 继续负责捕获微信/QQ/TIM 通知。
-2. 当前前台游戏若注入 SBCPUGameOverlay.dylib，会通过 CFMessagePort 收到通知。
-3. 通知以细长胶囊横幅从屏幕右侧滑入，停留约 2.6 秒，再向左侧滑出。
-4. Overlay 的 window 和 banner 都不接收触摸，不应该阻挡游戏操作。
-5. 游戏窗口绑定当前 UIWindowScene，避免 iOS 13+ 创建窗口但不显示。
-6. 一次多条通知进入队列，按顺序显示。
+本版重点修复：
+1. 不再使用独立 UIWindow，避免进入横屏游戏后画面旋转、缩放或变形。
+2. 游戏内通知直接挂到游戏当前前台 UIWindow。
+3. SpringBoard 与 GameOverlay 改用共享 plist + Darwin Notify 传递通知，避免部分 RootHide/Rootless 环境下 CFMessagePort 跨进程不稳定。
+4. 横幅为顶部黑色胶囊，单独显示，不占用 CPU 浮窗区域。
+5. 横幅默认显示约 3.2 秒，右侧/上方动画改为从顶部轻微滑入后退出。
+6. Overlay 完全不接收触摸，不应影响游戏操作。
+7. 游戏进程仍采用白名单，只注入 SBCPUGameOverlay.plist 中的游戏。
+8. 游戏启动前已经存在的旧通知不会在刚进入游戏时重复弹出。
 
-注意：
-- GameOverlay 当前采用白名单，只注入 SBCPUGameOverlay.plist 中列出的游戏。
-- 如果要测试的游戏不在白名单，需要把其 Bundle ID 加进去。
-- 第一阶段只验证“游戏内显示”，不做点击通知跳转聊天。
+测试重点：
+- 进入 QQ 飞车手游后，画面不能再出现 90 度旋转或整体变形。
+- TIM/微信/QQ 新消息应在游戏顶部中央出现独立黑色横幅。
+- CPU 浮窗继续保持原来的位置和功能。
+- 游戏触摸操作应正常。

@@ -104,10 +104,12 @@ typedef struct {
 #pragma mark - Game Overlay IPC
 // 游戏内 Overlay 使用 CFMessagePort 接收 SpringBoard 推送的通知数据。
 // 不把原始 SBNotification 请求对象跨进程传输，只发送简单的 plist 字段。
-static CFStringRef const kSBCPUGameOverlayPortName = CFSTR("com.yourname.sbcpufloating.gameoverlay.port");
+static NSString * const kSBCPUGameOverlayFilePath = @"/var/mobile/Library/Preferences/com.yourname.sbcpufloating.gameoverlay.plist";
+static CFStringRef const kSBCPUGameOverlayDarwinNotification = CFSTR("com.yourname.sbcpufloating.gameoverlay.message");
 
 static void SBCPUSendGameOverlayPayload(SBNotifReq *req) {
     if (!req) return;
+
     NSDictionary *payload = @{
         @"bundleID": req.bundleID ?: @"",
         @"title": req.title ?: @"新消息",
@@ -115,24 +117,19 @@ static void SBCPUSendGameOverlayPayload(SBNotifReq *req) {
         @"timestamp": @([[NSDate date] timeIntervalSince1970])
     };
 
-    NSError *error = nil;
-    NSData *data = [NSPropertyListSerialization dataWithPropertyList:payload
-                                                                format:NSPropertyListBinaryFormat_v1_0
-                                                               options:0
-                                                                 error:&error];
-    if (!data || error) return;
-
-    // 发送操作放到后台，避免通知处理链路被游戏进程不存在时的 IPC 等待拖慢。
+    // 使用共享 plist + Darwin Notify 做跨进程 IPC。
+    // 相比 CFMessagePort，在 RootHide/Rootless + 游戏进程组合下更稳定。
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        CFMessagePortRef remote = CFMessagePortCreateRemote(kCFAllocatorDefault, kSBCPUGameOverlayPortName);
-        if (!remote) return;
-        CFDataRef messageData = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)data.bytes, (CFIndex)data.length);
-        if (messageData) {
-            SInt32 status = CFMessagePortSendRequest(remote, 1, messageData, 0.15, 0.0, NULL, NULL);
-            (void)status;
-            CFRelease(messageData);
+        @autoreleasepool {
+            NSString *tmpPath = [kSBCPUGameOverlayFilePath stringByAppendingString:@".tmp"];
+            BOOL ok = [payload writeToFile:tmpPath atomically:YES];
+            if (!ok) return;
+            [[NSFileManager defaultManager] removeItemAtPath:kSBCPUGameOverlayFilePath error:nil];
+            [[NSFileManager defaultManager] moveItemAtPath:tmpPath toPath:kSBCPUGameOverlayFilePath error:nil];
+            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                                  kSBCPUGameOverlayDarwinNotification,
+                                                  NULL, NULL, YES);
         }
-        CFRelease(remote);
     });
 }
 
