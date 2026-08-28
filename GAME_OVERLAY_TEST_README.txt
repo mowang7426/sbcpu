@@ -1,17 +1,18 @@
-SBCPUFloating 2.9.2 游戏内消息横幅测试版
+SBCPUFloating V2.9.3 - GameMarquee Test
 
-本版重点修复：
-1. 不再使用独立 UIWindow，避免进入横屏游戏后画面旋转、缩放或变形。
-2. 游戏内通知直接挂到游戏当前前台 UIWindow。
-3. SpringBoard 与 GameOverlay 改用共享 plist + Darwin Notify 传递通知，避免部分 RootHide/Rootless 环境下 CFMessagePort 跨进程不稳定。
-4. 横幅为顶部黑色胶囊，单独显示，不占用 CPU 浮窗区域。
-5. 横幅默认显示约 3.2 秒，右侧/上方动画改为从顶部轻微滑入后退出。
-6. Overlay 完全不接收触摸，不应影响游戏操作。
-7. 游戏进程仍采用白名单，只注入 SBCPUGameOverlay.plist 中的游戏。
-8. 游戏启动前已经存在的旧通知不会在刚进入游戏时重复弹出。
+本版针对 V2.9.2 测试截图继续修复：
+1. 游戏内通知层不再创建独立 UIWindow。
+2. Overlay 选择前台游戏中面积最大的正常 UIWindow，避免误挂到特殊/辅助窗口。
+3. Overlay 与 Banner 设置极高 zPosition，确保位于游戏 UIKit 窗口最上层。
+4. SpringBoard 与 GameOverlay 使用共享 payload + Darwin Notify。
+5. GameOverlay 增加 0.35 秒轻量轮询作为 Darwin Notify 兜底，解决部分 RootHide/游戏进程组合下 Darwin 通知偶发丢失。
+6. 对 payload timestamp 做去重，避免轮询导致同一条消息重复弹出。
+7. 横竖屏变化时重新计算 Banner 位置，不主动修改游戏方向。
+8. Banner 不接收触摸，游戏操作不被拦截。
 
-测试重点：
-- 进入 QQ 飞车手游后，画面不能再出现 90 度旋转或整体变形。
-- TIM/微信/QQ 新消息应在游戏顶部中央出现独立黑色横幅。
-- CPU 浮窗继续保持原来的位置和功能。
-- 游戏触摸操作应正常。
+重点测试：
+- QQ飞车手游横屏进入后，游戏画面不能旋转/拉伸。
+- TIM/微信/QQ 新消息到达后，游戏顶部出现独立黑色胶囊横幅。
+- CPU 浮窗继续独立显示，不与游戏横幅合并。
+
+注意：如果顶部仍出现游戏/系统自己的白色通知条，而黑色 GameMarquee 不出现，说明旧的系统通知 UI 仍在显示，但 GameOverlay 本身尚未收到/显示 payload；此时请提供截图和 build 日志。

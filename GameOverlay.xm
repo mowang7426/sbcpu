@@ -119,6 +119,8 @@ static BOOL SBCPUGameOverlayIsAllowedProcess(void) {
 @property(nonatomic,assign) BOOL showing;
 @property(nonatomic,assign) NSTimeInterval processStartTime;
 @property(nonatomic,assign) BOOL observingDarwin;
+@property(nonatomic,strong) NSTimer *pollTimer;
+@property(nonatomic,assign) NSTimeInterval lastConsumedTimestamp;
 + (instancetype)sharedManager;
 - (void)start;
 @end
@@ -137,40 +139,49 @@ static BOOL SBCPUGameOverlayIsAllowedProcess(void) {
     if (self) {
         _queue = [NSMutableArray array];
         _processStartTime = NSDate.date.timeIntervalSince1970;
+        _lastConsumedTimestamp = _processStartTime;
     }
     return self;
 }
 
 - (UIWindow *)findHostWindow {
     UIApplication *app = UIApplication.sharedApplication;
+    UIWindow *best = nil;
+    CGFloat bestArea = 0.0;
 
     if (@available(iOS 13.0, *)) {
         for (UIScene *scene in app.connectedScenes) {
             if (![scene isKindOfClass:UIWindowScene.class]) continue;
             UIWindowScene *windowScene = (UIWindowScene *)scene;
-            if (windowScene.activationState != UISceneActivationStateForegroundActive) continue;
+            UISceneActivationState state = windowScene.activationState;
+            if (state != UISceneActivationStateForegroundActive && state != UISceneActivationStateForegroundInactive) continue;
 
-            // 优先游戏自己的 keyWindow。
             for (UIWindow *window in windowScene.windows) {
-                if (window.hidden || window.alpha <= 0.01 || window.bounds.size.width <= 1 || window.bounds.size.height <= 1) continue;
-                if (window.isKeyWindow) return window;
-            }
-            // 避免选到系统/调试窗口；通常第一个正常全屏窗口就是游戏窗口。
-            for (UIWindow *window in windowScene.windows) {
-                if (window.hidden || window.alpha <= 0.01 || window.bounds.size.width <= 1 || window.bounds.size.height <= 1) continue;
+                if (window.hidden || window.alpha <= 0.01) continue;
+                CGRect r = window.bounds;
+                CGFloat area = MAX(0.0, r.size.width) * MAX(0.0, r.size.height);
+                if (area < 10000.0) continue;
                 NSString *className = NSStringFromClass(window.class);
                 if ([className containsString:@"UITextEffects"] || [className containsString:@"Keyboard"]) continue;
-                return window;
+                if ([className containsString:@"UIRemoteKeyboard"]) continue;
+                // 选择面积最大的正常游戏窗口，而不是盲目使用 keyWindow。
+                if (area > bestArea) {
+                    bestArea = area;
+                    best = window;
+                }
             }
         }
     }
 
-    for (UIWindow *window in app.windows) {
-        if (window.isKeyWindow && !window.hidden && window.alpha > 0.01) return window;
+    if (!best) {
+        for (UIWindow *window in app.windows) {
+            if (window.hidden || window.alpha <= 0.01) continue;
+            CGFloat area = MAX(0.0, window.bounds.size.width) * MAX(0.0, window.bounds.size.height);
+            if (area > bestArea) { bestArea = area; best = window; }
+        }
     }
-    return app.windows.firstObject;
+    return best;
 }
-
 - (void)installOverlayOnWindow:(UIWindow *)window {
     if (!window) return;
     if (self.hostWindow == window && self.overlayView.superview == window) {
@@ -187,6 +198,7 @@ static BOOL SBCPUGameOverlayIsAllowedProcess(void) {
     overlay.userInteractionEnabled = NO;
     overlay.clipsToBounds = NO;
     self.overlayView = overlay;
+    overlay.layer.zPosition = 999999.0;
     [window addSubview:overlay];
     [window bringSubviewToFront:overlay];
 
@@ -194,6 +206,7 @@ static BOOL SBCPUGameOverlayIsAllowedProcess(void) {
     self.banner.alpha = 0.0;
     self.banner.hidden = YES;
     [overlay addSubview:self.banner];
+    self.banner.layer.zPosition = 1000000.0;
     [self layoutBanner];
 }
 
@@ -225,6 +238,11 @@ static BOOL SBCPUGameOverlayIsAllowedProcess(void) {
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applicationDidBecomeActive:) name:UIApplicationDidBecomeActiveNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowDidBecomeKey:) name:UIWindowDidBecomeKeyNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowDidBecomeKey:) name:UIDeviceOrientationDidChangeNotification object:nil];
+
+    // Darwin 通知在部分 RootHide/游戏进程组合下可能丢失，因此增加轻量轮询兜底。
+    [self.pollTimer invalidate];
+    self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:0.35 target:self selector:@selector(pollSharedPayload) userInfo:nil repeats:YES];
 }
 
 static void SBCPUGameOverlayDarwinCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
@@ -262,14 +280,21 @@ static void SBCPUGameOverlayDarwinCallback(CFNotificationCenterRef center, void 
     }
 }
 
+- (void)pollSharedPayload {
+    [self readSharedPayloadAndShow];
+}
+
 - (void)readSharedPayloadAndShow {
     NSDictionary *payload = [NSDictionary dictionaryWithContentsOfFile:kSBCPUGameOverlayFilePath];
     if (![payload isKindOfClass:NSDictionary.class]) return;
 
     NSNumber *timestamp = payload[@"timestamp"];
     if (![timestamp isKindOfClass:NSNumber.class]) return;
-    // 忽略游戏启动前已经存在的旧消息，防止刚进游戏就弹出历史消息。
-    if (timestamp.doubleValue + 0.15 < self.processStartTime) return;
+    double ts = timestamp.doubleValue;
+    // 忽略游戏启动前已经存在的旧消息，并避免轮询重复加入同一条消息。
+    if (ts + 0.15 < self.processStartTime) return;
+    if (ts <= self.lastConsumedTimestamp + 0.001) return;
+    self.lastConsumedTimestamp = ts;
 
     [self ensureHostWindow];
     [self.queue addObject:payload];
@@ -359,6 +384,7 @@ static void SBCPUGameOverlayDarwinCallback(CFNotificationCenterRef center, void 
     }
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_dismissTimer invalidate];
+    [_pollTimer invalidate];
 }
 @end
 

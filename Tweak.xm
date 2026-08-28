@@ -104,7 +104,7 @@ typedef struct {
 #pragma mark - Game Overlay IPC
 // 游戏内 Overlay 使用 CFMessagePort 接收 SpringBoard 推送的通知数据。
 // 不把原始 SBNotification 请求对象跨进程传输，只发送简单的 plist 字段。
-static NSString * const kSBCPUGameOverlayFilePath = @"/var/mobile/Library/Preferences/com.yourname.sbcpufloating.gameoverlay.plist";
+static NSString * const kSBCPUGameOverlayFilePath = @"/var/tmp/com.yourname.sbcpufloating.gameoverlay.plist";
 static CFStringRef const kSBCPUGameOverlayDarwinNotification = CFSTR("com.yourname.sbcpufloating.gameoverlay.message");
 
 static void SBCPUSendGameOverlayPayload(SBNotifReq *req) {
