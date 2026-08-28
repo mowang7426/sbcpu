@@ -1,4 +1,4 @@
-
+```objectivec
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
@@ -3060,17 +3060,35 @@ static void applySystemRefreshRate(void) {
 }
 
 - (void)saveConfigs { SavePreferencesAndNotify(); }
-- (void)changeScaleSlider:(UISlider *)s { 
-    floatingScale = s.value; 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self saveConfigs]; });
+// 实时滑块更新：数值标签直接更新，不再 reloadRows，避免滑块拖动时 detailTextLabel 被旧 cell 状态覆盖。
+- (void)changeScaleSlider:(UISlider *)s {
+    floatingScale = s.value;
+    SavePreferencesAndNotify();
+    updateFloatingSize();
+
+    NSIndexPath *path = [NSIndexPath indexPathForRow:2 inSection:2];
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
+    if (cell) cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0f%%", floatingScale * 100.0f];
 }
-- (void)changeFontSlider:(UISlider *)s { 
-    floatingFontSize = s.value; 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self saveConfigs]; });
+
+- (void)changeFontSlider:(UISlider *)s {
+    floatingFontSize = s.value;
+    SavePreferencesAndNotify();
+    updateFloatingSize();
+
+    NSIndexPath *path = [NSIndexPath indexPathForRow:3 inSection:2];
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
+    if (cell) cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0fpt", floatingFontSize];
 }
-- (void)changeCornerRadiusSlider:(UISlider *)s { 
-    floatingCornerRadius = s.value; 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self saveConfigs]; });
+
+- (void)changeCornerRadiusSlider:(UISlider *)s {
+    floatingCornerRadius = s.value;
+    SavePreferencesAndNotify();
+    updateFloatingSize();
+
+    NSIndexPath *path = [NSIndexPath indexPathForRow:4 inSection:2];
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
+    if (cell) cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0f", floatingCornerRadius];
 }
 
 // UI Switch Actions
@@ -3255,3 +3273,4 @@ static void registerV160Observers(void) {
     }
 }
 
+```
