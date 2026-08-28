@@ -1,6 +1,12 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <math.h>
+
+// GameOverlay V2.9.1 Fixed4
+// 关键修复：不再创建独立 UIWindow。
+// 独立 UIWindow 在部分横屏游戏中会参与界面方向决策，可能导致游戏画面整体旋转/缩放异常。
+// 现在直接把透明 Overlay View 挂到游戏自己的前台 UIWindow 上，不参与方向控制。
 
 static CFStringRef const kSBCPUGameOverlayPortName = CFSTR("com.yourname.sbcpufloating.gameoverlay.port");
 
@@ -44,16 +50,19 @@ static CFStringRef const kSBCPUGameOverlayPortName = CFSTR("com.yourname.sbcpufl
     self.iconLabel.textAlignment = NSTextAlignmentCenter;
     self.iconLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
     self.iconLabel.textColor = [UIColor systemGreenColor];
+    self.iconLabel.userInteractionEnabled = NO;
     [self.content addSubview:self.iconLabel];
 
     self.appLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.appLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
     self.appLabel.textColor = [UIColor colorWithWhite:1 alpha:0.88];
+    self.appLabel.userInteractionEnabled = NO;
     [self.content addSubview:self.appLabel];
 
     self.senderLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.senderLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
     self.senderLabel.textColor = UIColor.whiteColor;
+    self.senderLabel.userInteractionEnabled = NO;
     [self.content addSubview:self.senderLabel];
 
     self.messageLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -61,6 +70,7 @@ static CFStringRef const kSBCPUGameOverlayPortName = CFSTR("com.yourname.sbcpufl
     self.messageLabel.textColor = UIColor.whiteColor;
     self.messageLabel.numberOfLines = 1;
     self.messageLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    self.messageLabel.userInteractionEnabled = NO;
     [self.content addSubview:self.messageLabel];
 
     return self;
@@ -69,19 +79,18 @@ static CFStringRef const kSBCPUGameOverlayPortName = CFSTR("com.yourname.sbcpufl
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat h = self.bounds.size.height;
-    self.iconLabel.frame = CGRectMake(9, 0, 34, h);
-    self.appLabel.frame = CGRectMake(45, 8, 70, 17);
-    self.senderLabel.frame = CGRectMake(112, 7, 150, 18);
-    self.messageLabel.frame = CGRectMake(45, 27, self.bounds.size.width - 58, 25);
+    CGFloat w = self.bounds.size.width;
+    self.iconLabel.frame = CGRectMake(8, 0, 32, h);
+    self.appLabel.frame = CGRectMake(42, 7, MIN(70.0, w - 50.0), 17);
+    self.senderLabel.frame = CGRectMake(110, 7, MAX(60.0, w - 122.0), 18);
+    self.messageLabel.frame = CGRectMake(42, 28, MAX(80.0, w - 54.0), 23);
 }
-
 @end
 
 @interface SBCPUGameOverlayController : UIViewController
 @property(nonatomic,strong) SBCPUGameOverlayBanner *banner;
 @property(nonatomic,strong) NSTimer *dismissTimer;
 @property(nonatomic,strong) NSMutableArray<NSDictionary *> *queue;
-@property(nonatomic,assign) BOOL portReady;
 @end
 
 @implementation SBCPUGameOverlayController
@@ -94,13 +103,47 @@ static CFStringRef const kSBCPUGameOverlayPortName = CFSTR("com.yourname.sbcpufl
     [self installBanner];
 }
 
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    [self layoutBannerPreservingVisibility:NO];
+}
+
+- (void)layoutBannerPreservingVisibility:(BOOL)resetPosition {
+    if (!self.banner) return;
+    CGRect bounds = self.view.bounds;
+    CGFloat safeTop = self.view.safeAreaInsets.top;
+    if (safeTop < 8.0) safeTop = 8.0;
+
+    CGFloat width = MIN(MAX(260.0, bounds.size.width - 28.0), 520.0);
+    CGFloat height = 62.0;
+    CGFloat x = MAX(14.0, (bounds.size.width - width) * 0.5);
+    CGFloat y = safeTop + 4.0;
+
+    if (bounds.size.width < 280.0) {
+        width = MAX(220.0, bounds.size.width - 20.0);
+        x = (bounds.size.width - width) * 0.5;
+    }
+
+    CGRect target = CGRectMake(x, y, width, height);
+    self.banner.bounds = CGRectMake(0, 0, width, height);
+    if (resetPosition || self.banner.alpha <= 0.01) {
+        self.banner.center = CGPointMake(CGRectGetMidX(target), CGRectGetMidY(target));
+    } else {
+        CGPoint oldCenter = self.banner.center;
+        self.banner.center = CGPointMake(CGRectGetMidX(target), oldCenter.y);
+        if (fabs(oldCenter.y - CGRectGetMidY(target)) > 80.0) {
+            self.banner.center = CGPointMake(CGRectGetMidX(target), CGRectGetMidY(target));
+        }
+    }
+}
+
 - (void)installBanner {
     [self.banner removeFromSuperview];
-    CGFloat width = MIN(UIScreen.mainScreen.bounds.size.width - 28.0, 520.0);
-    self.banner = [[SBCPUGameOverlayBanner alloc] initWithFrame:CGRectMake(14, 18, width, 62)];
-    self.banner.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    self.banner = [[SBCPUGameOverlayBanner alloc] initWithFrame:CGRectMake(0, 0, 280, 62)];
+    self.banner.autoresizingMask = UIViewAutoresizingNone;
     self.banner.alpha = 0.0;
     [self.view addSubview:self.banner];
+    [self layoutBannerPreservingVisibility:YES];
 }
 
 - (void)showPayload:(NSDictionary *)payload {
@@ -137,17 +180,23 @@ static CFStringRef const kSBCPUGameOverlayPortName = CFSTR("com.yourname.sbcpufl
     self.banner.messageLabel.text = message.length ? message : @"收到一条新消息";
     [self.banner setNeedsLayout];
 
-    CGFloat screenW = UIScreen.mainScreen.bounds.size.width;
+    [self layoutBannerPreservingVisibility:YES];
+
+    CGFloat viewW = self.view.bounds.size.width;
     CGFloat bannerW = self.banner.bounds.size.width;
-    self.banner.center = CGPointMake(screenW + bannerW * 0.5 + 12, self.banner.center.y);
+    CGFloat centerY = self.banner.center.y;
+    self.banner.center = CGPointMake(viewW + bannerW * 0.5 + 12.0, centerY);
     self.banner.alpha = 0.0;
     self.banner.animating = YES;
 
     [UIView animateWithDuration:0.42 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
         self.banner.alpha = 1.0;
-        self.banner.center = CGPointMake(screenW * 0.5, self.banner.center.y);
+        self.banner.center = CGPointMake(viewW * 0.5, centerY);
     } completion:^(BOOL finished) {
-        if (!finished) return;
+        if (!finished) {
+            self.banner.animating = NO;
+            return;
+        }
         self.dismissTimer = [NSTimer scheduledTimerWithTimeInterval:2.6 target:self selector:@selector(dismissCurrent) userInfo:nil repeats:NO];
     }];
 }
@@ -158,28 +207,19 @@ static CFStringRef const kSBCPUGameOverlayPortName = CFSTR("com.yourname.sbcpufl
     CGFloat bannerW = self.banner.bounds.size.width;
     [UIView animateWithDuration:0.38 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
         self.banner.alpha = 0.0;
-        self.banner.center = CGPointMake(-bannerW * 0.5 - 12, self.banner.center.y);
+        self.banner.center = CGPointMake(-bannerW * 0.5 - 12.0, self.banner.center.y);
     } completion:^(BOOL finished) {
         self.banner.animating = NO;
-        if (self.queue.count) {
-            [self showNext];
-        }
+        if (self.queue.count) [self showNext];
     }];
 }
 
 - (void)handleIncomingData:(NSData *)data {
     if (!data.length) return;
-    NSError *error = nil;
-    NSDictionary *payload = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:NULL error:&error];
-    if (error || ![payload isKindOfClass:NSDictionary.class]) return;
+    NSDictionary *payload = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:NULL error:nil];
+    if (![payload isKindOfClass:NSDictionary.class]) return;
     dispatch_async(dispatch_get_main_queue(), ^{
         [self showPayload:payload];
-    });
-}
-
-- (void)updateForOrientation {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [self installBanner];
     });
 }
 @end
@@ -187,15 +227,14 @@ static CFStringRef const kSBCPUGameOverlayPortName = CFSTR("com.yourname.sbcpufl
 static CFDataRef SBCPUGameOverlayMessageCallback(CFMessagePortRef local, SInt32 msgid, CFDataRef data, void *info) {
     (void)local; (void)msgid;
     SBCPUGameOverlayController *controller = (__bridge SBCPUGameOverlayController *)info;
-    if (data) {
-        NSData *nsData = (__bridge NSData *)data;
-        [controller handleIncomingData:nsData];
+    if (data && controller) {
+        [controller handleIncomingData:(__bridge NSData *)data];
     }
     return NULL;
 }
 
 @interface SBCPUGameOverlayManager : NSObject
-@property(nonatomic,strong) UIWindow *window;
+@property(nonatomic,strong) UIWindow *hostWindow;
 @property(nonatomic,strong) SBCPUGameOverlayController *controller;
 @property(nonatomic,assign) CFMessagePortRef localPort;
 + (instancetype)sharedManager;
@@ -211,37 +250,55 @@ static CFDataRef SBCPUGameOverlayMessageCallback(CFMessagePortRef local, SInt32 
     return m;
 }
 
+- (UIWindow *)findHostWindow {
+    UIApplication *app = UIApplication.sharedApplication;
+
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in app.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class]) continue;
+            UIWindowScene *ws = (UIWindowScene *)scene;
+            if (ws.activationState != UISceneActivationStateForegroundActive) continue;
+            for (UIWindow *w in ws.windows) {
+                if (w.hidden || w.alpha <= 0.01 || w.bounds.size.width <= 0 || w.bounds.size.height <= 0) continue;
+                if (w.isKeyWindow) return w;
+            }
+            for (UIWindow *w in ws.windows) {
+                if (!w.hidden && w.alpha > 0.01 && w.bounds.size.width > 0 && w.bounds.size.height > 0) return w;
+            }
+        }
+    }
+
+    for (UIWindow *w in app.windows) {
+        if (w.isKeyWindow && !w.hidden && w.alpha > 0.01) return w;
+    }
+    for (UIWindow *w in app.windows) {
+        if (!w.hidden && w.alpha > 0.01 && w.bounds.size.width > 0 && w.bounds.size.height > 0) return w;
+    }
+    return nil;
+}
+
 - (void)start {
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (self.window) return;
+        if (self.controller && self.hostWindow) return;
 
-        self.controller = [SBCPUGameOverlayController new];
-        self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-        self.window.rootViewController = self.controller;
-        self.window.backgroundColor = UIColor.clearColor;
-        self.window.windowLevel = UIWindowLevelAlert + 20.0;
-        self.window.userInteractionEnabled = NO;
-        self.window.hidden = NO;
-
-        // iOS 13+：把 Overlay 绑定到当前游戏的 UIWindowScene，避免“窗口创建了但不显示”。
-        if (@available(iOS 13.0, *)) {
-            UIWindowScene *scene = nil;
-            for (UIScene *candidate in UIApplication.sharedApplication.connectedScenes) {
-                if (candidate.activationState == UISceneActivationStateForegroundActive && [candidate isKindOfClass:UIWindowScene.class]) {
-                    scene = (UIWindowScene *)candidate;
-                    break;
-                }
-            }
-            if (!scene) {
-                for (UIScene *candidate in UIApplication.sharedApplication.connectedScenes) {
-                    if ([candidate isKindOfClass:UIWindowScene.class]) {
-                        scene = (UIWindowScene *)candidate;
-                        break;
-                    }
-                }
-            }
-            if (scene) self.window.windowScene = scene;
+        UIWindow *host = [self findHostWindow];
+        if (!host) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [self start];
+            });
+            return;
         }
+
+        self.hostWindow = host;
+        self.controller = [SBCPUGameOverlayController new];
+        UIView *overlayView = self.controller.view;
+        overlayView.frame = host.bounds;
+        overlayView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        overlayView.userInteractionEnabled = NO;
+
+        // 直接挂到游戏自己的 UIWindow：不创建新 UIWindow，不改变游戏方向、不参与方向决策。
+        [host addSubview:overlayView];
+        [host bringSubviewToFront:overlayView];
 
         if (!self.localPort) {
             CFMessagePortContext ctx = {0, (__bridge void *)self.controller, NULL, NULL, NULL};
@@ -256,13 +313,19 @@ static CFDataRef SBCPUGameOverlayMessageCallback(CFMessagePortRef local, SInt32 
             }
         }
 
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(orientationChanged:) name:UIDeviceOrientationDidChangeNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowDidLayout:) name:UIWindowDidBecomeKeyNotification object:nil];
     });
 }
 
-- (void)orientationChanged:(NSNotification *)note {
-    (void)note;
-    [self.controller updateForOrientation];
+- (void)windowDidLayout:(NSNotification *)note {
+    UIWindow *w = note.object;
+    if (w == self.hostWindow) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.controller.view.frame = self.hostWindow.bounds;
+            [self.controller.view setNeedsLayout];
+            [self.hostWindow bringSubviewToFront:self.controller.view];
+        });
+    }
 }
 
 - (void)dealloc {
