@@ -2,14 +2,14 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 
-// SBCPUGameOverlay V2.9.2
+// SBCPUGameOverlay V2.9.4
 // 游戏内通知显示层：
 // 1. 不创建新的 UIWindow，避免影响游戏横竖屏方向。
 // 2. 直接挂载到游戏当前前台 UIWindow。
 // 3. SpringBoard -> 共享 plist -> Darwin Notify -> 游戏进程，避免 CFMessagePort 在部分越狱环境下找不到端口。
 // 4. Overlay 永不接收触摸。
 
-static NSString * const kSBCPUGameOverlayFilePath = @"/var/mobile/Library/Preferences/com.yourname.sbcpufloating.gameoverlay.plist";
+static NSString * const kSBCPUGameOverlayFilePath = @"/var/tmp/com.yourname.sbcpufloating.gameoverlay.plist";
 static CFStringRef const kSBCPUGameOverlayDarwinNotification = CFSTR("com.yourname.sbcpufloating.gameoverlay.message");
 
 @class SBCPUGameOverlayManager;
@@ -241,6 +241,7 @@ static BOOL SBCPUGameOverlayIsAllowedProcess(void) {
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowDidBecomeKey:) name:UIDeviceOrientationDidChangeNotification object:nil];
 
     // Darwin 通知在部分 RootHide/游戏进程组合下可能丢失，因此增加轻量轮询兜底。
+    // 共享路径与 SpringBoard 发送端统一使用 /var/tmp，确保跨进程读取的是同一份 payload。
     [self.pollTimer invalidate];
     self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:0.35 target:self selector:@selector(pollSharedPayload) userInfo:nil repeats:YES];
 }
