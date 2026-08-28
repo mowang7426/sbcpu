@@ -244,6 +244,11 @@ static double previousChargeWatts = 0.0;
 static double chargeBoostBaselineWatts = 0.0;
 static CFAbsoluteTime chargeBoostStartTime = 0;
 static BOOL chargeBoostVerified = NO;
+static double chargeBoostPeakWatts = 0.0;
+static double chargeBoostAverageWatts = 0.0;
+static double chargeBoostWattsSum = 0.0;
+static NSUInteger chargeBoostSampleCount = 0;
+static CFAbsoluteTime chargeBoostLastSampleTime = 0;
 static NSString *chargeBoostStatus = nil;
 static BOOL isCurrentlyChargeInhibited = NO;      
 
@@ -284,286 +289,15 @@ static void applySystemRefreshRate(void);
 static void LoadPreferences(void);
 static void SavePreferencesAndNotify(void);
 static void setHardwareChargingInhibit(BOOL inhibit);
-static void applyChargeBoostTarget(void);
-static NSString *getChargeBoostStatus(double watts, double temp, NSInteger battery, BOOL charging);
-static NSString *getNetworkType(void);
-static NSDictionary *getRealBatteryDetails(void);
-static double getBatteryTemperatureInternal(void);
-static double getBatteryCurrentInternal(void);
-static BOOL isChargingInternal(void);
-static BOOL isDeviceOverheated(void);
-static double getSpringBoardCPUUsage(void);
-static double getTotalCPUUsage(void);
-static double getRealCPUFrequency(double currentCpuUsage);
-static UIWindowScene *getWindowScene(void);
-static UIInterfaceOrientation getActiveInterfaceOrientation(void);
-static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate);
-static void updateFloatingSize(void);
-static void createCPUWindow(void);
-static void openDetailView(void);
-static void openSettings(void);
-static void checkHighCPU(double cpu);
-static void updateCPU(void);
-
-#pragma mark - 4. 底层 C 函数实现
-
-static DeviceSpec MakeDeviceSpec(const char *platform, const char *modelName, const char *chipName, NSInteger cores, double maxFreqMHz, NSInteger designBatteryCapacity) {
-    DeviceSpec spec;
-    spec.platform = platform;
-    spec.modelName = modelName;
-    spec.chipName = chipName;
-    spec.cores = cores;
-    spec.maxFreqMHz = maxFreqMHz;
-    spec.designBatteryCapacity = designBatteryCapacity;
-    return spec;
-}
-
-static DeviceSpec getDeviceSpec(void) {
-    char machine[256] = {0};
-    size_t size = sizeof(machine);
-    sysctlbyname("hw.machine", machine, &size, NULL, 0);
-    NSString *platform = [NSString stringWithUTF8String:machine];
-
-    if ([platform isEqualToString:@"iPhone16,2"]) return MakeDeviceSpec("iPhone16,2", "iPhone 15 Pro Max", "A17 Pro", 6, 3780.0, 4422);
-    if ([platform isEqualToString:@"iPhone16,1"]) return MakeDeviceSpec("iPhone16,1", "iPhone 15 Pro", "A17 Pro", 6, 3780.0, 3274);
-    if ([platform isEqualToString:@"iPhone15,5"]) return MakeDeviceSpec("iPhone15,5", "iPhone 15 Plus", "A16 Bionic", 6, 3468.0, 4383);
-    if ([platform isEqualToString:@"iPhone15,4"]) return MakeDeviceSpec("iPhone15,4", "iPhone 15", "A16 Bionic", 6, 3349.0, 3349);
-    if ([platform isEqualToString:@"iPhone15,3"]) return MakeDeviceSpec("iPhone15,3", "iPhone 14 Pro Max", "A16 Bionic", 6, 3468.0, 4323);
-    if ([platform isEqualToString:@"iPhone15,2"]) return MakeDeviceSpec("iPhone15,2", "iPhone 14 Pro", "A16 Bionic", 6, 3468.0, 3200);
-    if ([platform isEqualToString:@"iPhone17,1"]) return MakeDeviceSpec("iPhone17,1", "iPhone 16 Pro", "A18 Pro", 6, 4040.0, 3582);
-    if ([platform isEqualToString:@"iPhone17,2"]) return MakeDeviceSpec("iPhone17,2", "iPhone 16 Pro Max", "A18 Pro", 6, 4040.0, 4685);
-
-    NSInteger activeCores = [NSProcessInfo processInfo].processorCount;
-    return MakeDeviceSpec(machine, "iPhone", "Apple Silicon", activeCores, 3468.0, 4000);
-}
-
-static BOOL getBoolPref(CFStringRef key, BOOL defaultVal) {
-    CFPropertyListRef val = CFPreferencesCopyValue(key, kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-    if (val) {
-        BOOL res = defaultVal;
-        if (CFGetTypeID(val) == CFBooleanGetTypeID()) res = CFBooleanGetValue((CFBooleanRef)val);
-        else if (CFGetTypeID(val) == CFNumberGetTypeID()) { int intVal; CFNumberGetValue((CFNumberRef)val, kCFNumberIntType, &intVal); res = (intVal != 0); }
-        CFRelease(val); return res;
-    }
-    return defaultVal;
-}
-
-static float getFloatPref(CFStringRef key, float defaultVal) {
-    CFPropertyListRef val = CFPreferencesCopyValue(key, kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-    if (val) {
-        float res = defaultVal;
-        if (CFGetTypeID(val) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)val, kCFNumberFloatType, &res);
-        CFRelease(val); return res;
-    }
-    return defaultVal;
-}
-
-static NSInteger getIntPref(CFStringRef key, NSInteger defaultVal) {
-    CFPropertyListRef val = CFPreferencesCopyValue(key, kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-    if (val) {
-        NSInteger res = defaultVal;
-        if (CFGetTypeID(val) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)val, kCFNumberNSIntegerType, &res);
-        CFRelease(val); return res;
-    }
-    return defaultVal;
-}
-
-static void setBoolPref(CFStringRef key, BOOL value) {
-    CFPreferencesSetValue(key, value ? kCFBooleanTrue : kCFBooleanFalse, kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-}
-
-static void setFloatPref(CFStringRef key, float value) {
-    CFNumberRef num = CFNumberCreate(NULL, kCFNumberFloatType, &value);
-    CFPreferencesSetValue(key, num, kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-    CFRelease(num);
-}
-
-static void setIntPref(CFStringRef key, NSInteger value) {
-    CFNumberRef num = CFNumberCreate(NULL, kCFNumberNSIntegerType, &value);
-    CFPreferencesSetValue(key, num, kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-    CFRelease(num);
-}
-
-static void applyVisibility(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (cpuWindow) cpuWindow.hidden = !isEnabled;
-    });
-}
-
-static void applyFloatingAlpha(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (floatingView) floatingView.alpha = floatingAlphaEnable ? floatingAlpha : 1.0;
-    });
-}
-
-static void LoadPreferences(void) {
-    CFPreferencesAppSynchronize(kPrefAppID);
-
-    isEnabled = getBoolPref(CFSTR("isEnabled"), YES); 
-    autoCollapseEnable = getBoolPref(CFSTR("autoCollapseEnable"), YES);
-    autoCollapseDelay = getIntPref(CFSTR("autoCollapseDelay"), 4);
-    collapsedDisplayMode = getIntPref(CFSTR("collapsedDisplayMode"), 0);
-    autoExpandLandscape = getBoolPref(CFSTR("autoExpandLandscape"), YES); 
-    
-    autoLogoutEnable = getBoolPref(CFSTR("autoLogoutEnable"), NO);
-    logoutCPUThreshold = (double)getFloatPref(CFSTR("logoutCPUThreshold"), 100.0);
-    logoutDuration = getIntPref(CFSTR("logoutDuration"), 60);
-    
-    floatingAlphaEnable = getBoolPref(CFSTR("floatingAlphaEnable"), YES);
-    floatingAlpha = getFloatPref(CFSTR("floatingAlpha"), 0.85f);
-    floatingScale = getFloatPref(CFSTR("floatingScale"), 1.0f);
-    floatingFontSize = getFloatPref(CFSTR("floatingFontSize"), 13.0f);
-    floatingCornerRadius = getFloatPref(CFSTR("floatingCornerRadius"), 16.0f);
-    
-    keyboardAvoidEnable = getBoolPref(CFSTR("keyboardAvoidEnable"), YES);
-    smartDockEnable = getBoolPref(CFSTR("smartDockEnable"), YES);
-    dockMode = getIntPref(CFSTR("dockMode"), 0);
-    rememberPositionEnable = getBoolPref(CFSTR("rememberPositionEnable"), YES);
-    
-    showCpuFrequency = getBoolPref(CFSTR("showCpuFrequency"), YES);
-    showFps = getBoolPref(CFSTR("showFps"), YES);
-    force120HzEnable = getBoolPref(CFSTR("force120HzEnable"), NO);
-    thermalProtectionEnable = getBoolPref(CFSTR("thermalProtectionEnable"), YES);
-    
-    showBatteryPercent = getBoolPref(CFSTR("showBatteryPercent"), YES);
-    showBatteryTemperature = getBoolPref(CFSTR("showBatteryTemperature"), YES);
-    showBatteryCurrent = getBoolPref(CFSTR("showBatteryCurrent"), YES);
-    
-    insulationCpuMode = getIntPref(CFSTR("insulationCpuMode"), 0);
-    blockThermalDimming = getBoolPref(CFSTR("blockThermalDimming"), YES);
-    blockThermalAlert = getBoolPref(CFSTR("blockThermalAlert"), YES);
-    blockPocketTemp = getBoolPref(CFSTR("blockPocketTemp"), YES);
-    forceSunlightHBM = getBoolPref(CFSTR("forceSunlightHBM"), NO);
-    
-    smartChargeLimitEnable = getBoolPref(CFSTR("smartChargeLimitEnable"), NO);
-    smartChargeLimitTemp = getFloatPref(CFSTR("smartChargeLimitTemp"), 38.0f);
-    chargeBoostEnable = getBoolPref(CFSTR("chargeBoostEnable"), NO);
-    
-    notificationEnable = getBoolPref(CFSTR("notificationEnable"), YES);
-    wechatEnable = getBoolPref(CFSTR("wechatEnable"), YES);
-    qqEnable = getBoolPref(CFSTR("qqEnable"), YES);
-    timEnable = getBoolPref(CFSTR("timEnable"), YES);
-    hideContentOnLockScreen = getBoolPref(CFSTR("hideContentOnLockScreen"), NO);
-    notificationDuration = getIntPref(CFSTR("notificationDuration"), 5);
-
-    if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
-        applyVisibility();
-        if (showFps || force120HzEnable || collapsedDisplayMode == 1) {
-            [[SBCPUFPSHelper sharedInstance] startMonitoring];
-        } else {
-            [[SBCPUFPSHelper sharedInstance] stopMonitoring];
-        }
-        applySystemRefreshRate(); 
-        int token;
-        if (notify_register_check(NOTIFY_CPU_MODE, &token) == NOTIFY_STATUS_OK) {
-            uint64_t state = (insulationCpuMode & 0xFF) | ((blockThermalDimming ? 1ULL : 0) << 8) | 0;
-            notify_set_state(token, state);
-            notify_post(NOTIFY_CPU_MODE);
-            notify_cancel(token);
-        }
-    }
-}
-
-static void SavePreferencesAndNotify(void) {
-    setBoolPref(CFSTR("isEnabled"), isEnabled);
-    setBoolPref(CFSTR("autoCollapseEnable"), autoCollapseEnable);
-    setIntPref(CFSTR("autoCollapseDelay"), autoCollapseDelay);
-    setIntPref(CFSTR("collapsedDisplayMode"), collapsedDisplayMode);
-    setBoolPref(CFSTR("autoExpandLandscape"), autoExpandLandscape); 
-    setBoolPref(CFSTR("autoLogoutEnable"), autoLogoutEnable);
-    setFloatPref(CFSTR("logoutCPUThreshold"), (float)logoutCPUThreshold);
-    setIntPref(CFSTR("logoutDuration"), logoutDuration);
-    setBoolPref(CFSTR("floatingAlphaEnable"), floatingAlphaEnable);
-    setFloatPref(CFSTR("floatingAlpha"), floatingAlpha);
-    setFloatPref(CFSTR("floatingScale"), floatingScale);
-    setFloatPref(CFSTR("floatingFontSize"), floatingFontSize);
-    setFloatPref(CFSTR("floatingCornerRadius"), floatingCornerRadius);
-    setBoolPref(CFSTR("keyboardAvoidEnable"), keyboardAvoidEnable);
-    setBoolPref(CFSTR("smartDockEnable"), smartDockEnable);
-    setIntPref(CFSTR("dockMode"), dockMode);
-    setBoolPref(CFSTR("rememberPositionEnable"), rememberPositionEnable);
-    setBoolPref(CFSTR("showCpuFrequency"), showCpuFrequency);
-    setBoolPref(CFSTR("showFps"), showFps);
-    setBoolPref(CFSTR("force120HzEnable"), force120HzEnable);
-    setBoolPref(CFSTR("thermalProtectionEnable"), thermalProtectionEnable);
-    setBoolPref(CFSTR("showBatteryPercent"), showBatteryPercent);
-    setBoolPref(CFSTR("showBatteryTemperature"), showBatteryTemperature);
-    setBoolPref(CFSTR("showBatteryCurrent"), showBatteryCurrent);
-    setIntPref(CFSTR("insulationCpuMode"), insulationCpuMode);
-    setBoolPref(CFSTR("blockThermalDimming"), blockThermalDimming);
-    setBoolPref(CFSTR("blockThermalAlert"), blockThermalAlert);
-    setBoolPref(CFSTR("blockPocketTemp"), blockPocketTemp);
-    setBoolPref(CFSTR("forceSunlightHBM"), forceSunlightHBM);
-    setBoolPref(CFSTR("smartChargeLimitEnable"), smartChargeLimitEnable);
-    setFloatPref(CFSTR("smartChargeLimitTemp"), smartChargeLimitTemp);
-    setBoolPref(CFSTR("chargeBoostEnable"), chargeBoostEnable);
-    setBoolPref(CFSTR("notificationEnable"), notificationEnable);
-    setBoolPref(CFSTR("wechatEnable"), wechatEnable);
-    setBoolPref(CFSTR("qqEnable"), qqEnable);
-    setBoolPref(CFSTR("timEnable"), timEnable);
-    setBoolPref(CFSTR("hideContentOnLockScreen"), hideContentOnLockScreen);
-    setIntPref(CFSTR("notificationDuration"), notificationDuration);
-    
-    CFPreferencesSynchronize(kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-
-    if (showFps || force120HzEnable || collapsedDisplayMode == 1) {
-        [[SBCPUFPSHelper sharedInstance] startMonitoring];
-    } else {
-        [[SBCPUFPSHelper sharedInstance] stopMonitoring];
-    }
-    applySystemRefreshRate(); 
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), kPrefChangedNotification, NULL, NULL, YES);
-    
-    if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
-        int token;
-        if (notify_register_check(NOTIFY_CPU_MODE, &token) == NOTIFY_STATUS_OK) {
-            uint64_t state = (insulationCpuMode & 0xFF) | ((blockThermalDimming ? 1ULL : 0) << 8) | 0;
-            notify_set_state(token, state);
-            notify_post(NOTIFY_CPU_MODE);
-            notify_cancel(token);
-        }
-    }
-}
-
-static void setHardwareChargingInhibit(BOOL inhibit) {
-    io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBatteryManager"));
-    if (service) {
-        IORegistryEntrySetCFProperty(service, CFSTR("ChargeInhibit"), inhibit ? kCFBooleanTrue : kCFBooleanFalse);
-        IOObjectRelease(service);
-    }
-    io_service_t pmuService = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleDialogPMU"));
-    if (pmuService) {
-        IORegistryEntrySetCFProperty(pmuService, CFSTR("ChargeInhibit"), inhibit ? kCFBooleanTrue : kCFBooleanFalse);
-        IOObjectRelease(pmuService);
-    }
-}
-
-static void applyChargeBoostTarget(void) {
-    if (!chargeBoostEnable) return;
-
-    // 仅请求 100% 充电目标，不修改充电电流，也不绕过温度/电池硬件保护。
-    io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
-    if (!service) return;
-
-    int limit = 100;
-    CFNumberRef limitNum = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &limit);
-    if (limitNum) {
-        IORegistryEntrySetCFProperty(service, CFSTR("ChargeLimit"), limitNum);
-        CFRelease(limitNum);
-    }
-    IOObjectRelease(service);
-}
-
 static NSString *getChargeBoostStatus(double watts, double temp, NSInteger battery, BOOL charging) {
     if (!charging) return @"未充电";
-    if (temp >= 42.0) return @"高温保护 / 系统可能降流";
-    if (battery >= 80 && watts > 15.0) return @"高电量仍保持较高功率";
+    if (temp >= 43.0) return @"温度限制功率";
+    if (battery >= 95) return @"接近充满 / 系统管理中";
     if (battery >= 80) return @"高电量充电管理中";
-    if (watts >= 18.0) return @"较高功率充电";
-    if (watts >= 10.0) return @"正常充电";
-    return @"低功率充电 / 可能正在限流";
+    if (watts >= 18.0) return @"较高功率";
+    if (watts >= 10.0) return @"正常功率";
+    return @"低功率 / 可能受限";
 }
-
 
 static NSString *getNetworkType(void) {
     struct ifaddrs *interfaces = NULL;
@@ -987,6 +721,18 @@ static void updateCPU(void) {
             }
             [floatingView triggerPlugAnimation];
         }
+        if (!charging && previousChargingState) {
+            chargeBoostStartTime = 0;
+            lastChargeWatts = 0;
+            previousChargeWatts = 0;
+            chargeBoostBaselineWatts = 0;
+            chargeBoostPeakWatts = 0;
+            chargeBoostAverageWatts = 0;
+            chargeBoostWattsSum = 0;
+            chargeBoostSampleCount = 0;
+            chargeBoostLastSampleTime = 0;
+            chargeBoostVerified = NO;
+        }
         previousChargingState = charging;
 
         if (autoExpandLandscape) {
@@ -1001,24 +747,36 @@ static void updateCPU(void) {
             wasLandscape = isLandscape;
         }
 
-        if (chargeBoostEnable && charging) {
-            applyChargeBoostTarget();
-        }
-
         NSDictionary *chargeInfo = getRealBatteryDetails();
+        // CalculatedWatts = 实时电压 × 实时电流；AdapterDetails.Watts 只是适配器额定信息，不能冒充实时充电功率。
         double chargeWatts = [chargeInfo[@"CalculatedWatts"] doubleValue];
         double adapterWatts = [chargeInfo[@"Watts"] doubleValue];
-        if (adapterWatts > 0.1) chargeWatts = adapterWatts;
         if (chargeWatts < 0) chargeWatts = 0;
         previousChargeWatts = lastChargeWatts;
         lastChargeWatts = chargeWatts;
+
         if (chargeBoostEnable && charging) {
-            if (chargeBoostStartTime <= 0) chargeBoostStartTime = CFAbsoluteTimeGetCurrent();
-            if (chargeBoostBaselineWatts <= 0.1 && chargeWatts > 0.1) chargeBoostBaselineWatts = chargeWatts;
-            if (!chargeBoostVerified && chargeBoostStartTime > 0 && (CFAbsoluteTimeGetCurrent() - chargeBoostStartTime) >= 5.0) {
-                chargeBoostVerified = (chargeBoostBaselineWatts > 0.1 && chargeWatts >= chargeBoostBaselineWatts + 1.0);
+            CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+            if (chargeBoostStartTime <= 0) chargeBoostStartTime = now;
+
+            // 每次 updateCPU 只在功率发生有效变化时累计样本，避免重复刷同一个值。
+            if (chargeWatts > 0.1 && (chargeBoostLastSampleTime <= 0 || (now - chargeBoostLastSampleTime) >= 0.8)) {
+                chargeBoostLastSampleTime = now;
+                if (chargeBoostSampleCount == 0) {
+                    chargeBoostBaselineWatts = chargeWatts;
+                }
+                chargeBoostPeakWatts = MAX(chargeBoostPeakWatts, chargeWatts);
+                chargeBoostWattsSum += chargeWatts;
+                chargeBoostSampleCount++;
+                chargeBoostAverageWatts = chargeBoostWattsSum / (double)chargeBoostSampleCount;
             }
+
+            // 这里的“验证”只表示已经完成足够采样，不宣称绕过 Apple 限制。
+            chargeBoostVerified = (chargeBoostSampleCount >= 5);
+        } else {
+            chargeBoostVerified = NO;
         }
+
         chargeBoostStatus = [getChargeBoostStatus(chargeWatts, temp, battery, charging) copy];
 
         if (isCurrentlyChargeInhibited) {
@@ -1026,10 +784,8 @@ static void updateCPU(void) {
             floatingView.statusLabel.textColor = [UIColor systemOrangeColor];
             floatingView.statusDot.backgroundColor = [UIColor systemOrangeColor];
         } else if (chargeBoostEnable && charging) {
-            NSString *verify = @"监测中";
-            if (chargeBoostVerified) verify = @"检测到功率提升";
-            else if (chargeBoostStartTime > 0 && (CFAbsoluteTimeGetCurrent() - chargeBoostStartTime) >= 5.0) verify = @"未检测到明显提升";
-            floatingView.statusLabel.text = [NSString stringWithFormat:@"⚡ 充电增强 · %.1fW · %@", chargeWatts, verify];
+            NSString *state = chargeBoostStatus ?: @"监测中";
+            floatingView.statusLabel.text = [NSString stringWithFormat:@"⚡ 功率优化 · %.1fW · %@", chargeWatts, state];
             floatingView.statusLabel.textColor = chargeBoostVerified ? [UIColor systemGreenColor] : [UIColor systemBlueColor];
             floatingView.statusDot.backgroundColor = floatingView.statusLabel.textColor;
         }
@@ -2138,8 +1894,12 @@ static void applySystemRefreshRate(void) {
             double watts = [chargeInfo[@"CalculatedWatts"] doubleValue];
             double adapterWatts = [chargeInfo[@"Watts"] doubleValue];
             if (adapterWatts > 0.1) watts = adapterWatts;
-            NSString *verify = chargeBoostVerified ? @"已验证功率提升" : @"实时验证中";
-            _statusLabel.text = [NSString stringWithFormat:@"⚡ 充电增强 · %.1fW · %@", MAX(0.0, watts), verify];
+            NSString *state = chargeBoostStatus ?: @"实时监测中";
+            if (chargeBoostSampleCount >= 5) {
+                _statusLabel.text = [NSString stringWithFormat:@"⚡ 功率优化 · %.1fW · 峰值 %.1fW", MAX(0.0, watts), chargeBoostPeakWatts];
+            } else {
+                _statusLabel.text = [NSString stringWithFormat:@"⚡ 功率优化 · %.1fW · %@", MAX(0.0, watts), state];
+            }
             _statusLabel.textColor = chargeBoostVerified ? [UIColor systemGreenColor] : [UIColor systemBlueColor];
         } else {
             _statusLabel.text = isCharging ? @"正在充电" : @"未在充电";
@@ -2339,12 +2099,14 @@ static void applySystemRefreshRate(void) {
 
     _labelsDict[@"电池充电类型"].text = charging ? (batInfo[@"ChargerType"] ?: @"PD 快充") : @"未充电";
 
-    double watts = [batInfo[@"Watts"] doubleValue];
-    double calcWatts = [batInfo[@"CalculatedWatts"] doubleValue];
-    if (watts <= 0.1 && calcWatts > 0) {
-        watts = calcWatts;
-    }
-    _labelsDict[@"电池充电功率"].text = charging ? [NSString stringWithFormat:@"%.1fW%@", watts, chargeBoostEnable ? @" · 增强" : @""] : @"0W";
+    // 显示实时功率：电压 × 实时电流。AdapterDetails.Watts 只作为适配器额定信息，不用于冒充实时功率。
+    double watts = [batInfo[@"CalculatedWatts"] doubleValue];
+    if (watts < 0) watts = 0;
+    if (charging && chargeBoostEnable) {
+            _labelsDict[@"电池充电功率"].text = [NSString stringWithFormat:@"%.1fW · 峰值 %.1fW · 平均 %.1fW", watts, chargeBoostPeakWatts, chargeBoostAverageWatts];
+        } else {
+            _labelsDict[@"电池充电功率"].text = charging ? [NSString stringWithFormat:@"%.1fW", watts] : @"0W";
+        }
 
     double currentmA = getBatteryCurrentInternal();
     _labelsDict[@"电池当前电流"].text = [NSString stringWithFormat:@"%.0fmA", currentmA];
@@ -2828,7 +2590,7 @@ static void applySystemRefreshRate(void) {
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%.1f°C", smartChargeLimitTemp];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else if (indexPath.row == 2) {
-            cell.textLabel.text = @"充电增强（实时验证）";
+            cell.textLabel.text = @"充电功率优化（实时监测）";
             UISwitch *sw = [UISwitch new];
             sw.on = chargeBoostEnable;
             [sw addTarget:self action:@selector(changeChargeBoost:) forControlEvents:UIControlEventValueChanged];
@@ -3025,7 +2787,20 @@ static void applySystemRefreshRate(void) {
 - (void)changeInsulationPocket:(UISwitch *)sw { blockPocketTemp = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeInsulationSunlight:(UISwitch *)sw { forceSunlightHBM = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeSmartChargeLimit:(UISwitch *)sw { smartChargeLimitEnable = sw.isOn; SavePreferencesAndNotify(); }
-- (void)changeChargeBoost:(UISwitch *)sw { chargeBoostEnable = sw.isOn; chargeBoostStartTime = sw.isOn ? CFAbsoluteTimeGetCurrent() : 0; lastChargeWatts = 0; previousChargeWatts = 0; chargeBoostBaselineWatts = 0; chargeBoostVerified = NO; SavePreferencesAndNotify(); }
+- (void)changeChargeBoost:(UISwitch *)sw {
+    chargeBoostEnable = sw.isOn;
+    chargeBoostStartTime = sw.isOn ? CFAbsoluteTimeGetCurrent() : 0;
+    lastChargeWatts = 0;
+    previousChargeWatts = 0;
+    chargeBoostBaselineWatts = 0;
+    chargeBoostPeakWatts = 0;
+    chargeBoostAverageWatts = 0;
+    chargeBoostWattsSum = 0;
+    chargeBoostSampleCount = 0;
+    chargeBoostLastSampleTime = 0;
+    chargeBoostVerified = NO;
+    SavePreferencesAndNotify();
+}
 - (void)changeNotificationEnable:(UISwitch *)sw { notificationEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeWechatEnable:(UISwitch *)sw { wechatEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeQqEnable:(UISwitch *)sw { qqEnable = sw.isOn; SavePreferencesAndNotify(); }
