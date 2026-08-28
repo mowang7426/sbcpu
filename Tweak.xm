@@ -1019,7 +1019,7 @@ static void updateCPU(void) {
                 chargeBoostVerified = (chargeBoostBaselineWatts > 0.1 && chargeWatts >= chargeBoostBaselineWatts + 1.0);
             }
         }
-        chargeBoostStatus = [getChargeBoostStatus:chargeWatts temp:temp battery:battery charging:charging copy];
+        chargeBoostStatus = [getChargeBoostStatus(chargeWatts, temp, battery, charging) copy];
 
         if (isCurrentlyChargeInhibited) {
             floatingView.statusLabel.text = @"⚠️ 高温断充保护中";
