@@ -239,6 +239,8 @@ static BOOL forceSunlightHBM = NO;
 static BOOL smartChargeLimitEnable = NO;
 static float smartChargeLimitTemp = 38.0f;
 static BOOL chargeBoostEnable = NO;
+static BOOL forceFastChargeEnable = NO; // 🔥 新增：强制满血快充
+
 static double lastChargeWatts = 0.0;
 static double previousChargeWatts = 0.0;
 static double chargeBoostBaselineWatts = 0.0;
@@ -441,6 +443,7 @@ static void LoadPreferences(void) {
     smartChargeLimitEnable = getBoolPref(CFSTR("smartChargeLimitEnable"), NO);
     smartChargeLimitTemp = getFloatPref(CFSTR("smartChargeLimitTemp"), 38.0f);
     chargeBoostEnable = getBoolPref(CFSTR("chargeBoostEnable"), NO);
+    forceFastChargeEnable = getBoolPref(CFSTR("forceFastChargeEnable"), NO); // 🔥 新增读取
     
     notificationEnable = getBoolPref(CFSTR("notificationEnable"), YES);
     wechatEnable = getBoolPref(CFSTR("wechatEnable"), YES);
@@ -459,7 +462,10 @@ static void LoadPreferences(void) {
         applySystemRefreshRate(); 
         int token;
         if (notify_register_check(NOTIFY_CPU_MODE, &token) == NOTIFY_STATUS_OK) {
-            uint64_t state = (insulationCpuMode & 0xFF) | ((blockThermalDimming ? 1ULL : 0) << 8) | 0;
+            // 🔥 新增：将强制快充位（第9位）传给底层
+            uint64_t state = (insulationCpuMode & 0xFF) | 
+                             ((blockThermalDimming ? 1ULL : 0) << 8) | 
+                             ((forceFastChargeEnable ? 1ULL : 0) << 9);
             notify_set_state(token, state);
             notify_post(NOTIFY_CPU_MODE);
             notify_cancel(token);
@@ -500,6 +506,7 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("smartChargeLimitEnable"), smartChargeLimitEnable);
     setFloatPref(CFSTR("smartChargeLimitTemp"), smartChargeLimitTemp);
     setBoolPref(CFSTR("chargeBoostEnable"), chargeBoostEnable);
+    setBoolPref(CFSTR("forceFastChargeEnable"), forceFastChargeEnable); // 🔥 新增保存
     setBoolPref(CFSTR("notificationEnable"), notificationEnable);
     setBoolPref(CFSTR("wechatEnable"), wechatEnable);
     setBoolPref(CFSTR("qqEnable"), qqEnable);
@@ -520,7 +527,10 @@ static void SavePreferencesAndNotify(void) {
     if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
         int token;
         if (notify_register_check(NOTIFY_CPU_MODE, &token) == NOTIFY_STATUS_OK) {
-            uint64_t state = (insulationCpuMode & 0xFF) | ((blockThermalDimming ? 1ULL : 0) << 8) | 0;
+            // 🔥 新增：将强制快充位（第9位）传给底层
+            uint64_t state = (insulationCpuMode & 0xFF) | 
+                             ((blockThermalDimming ? 1ULL : 0) << 8) | 
+                             ((forceFastChargeEnable ? 1ULL : 0) << 9);
             notify_set_state(token, state);
             notify_post(NOTIFY_CPU_MODE);
             notify_cancel(token);
@@ -1068,7 +1078,12 @@ static void updateCPU(void) {
         }
         chargeBoostStatus = [getChargeBoostStatus(chargeWatts, temp, battery, charging) copy];
 
-        if (isCurrentlyChargeInhibited) {
+        // 🔥 新增UI判断逻辑：当强制快充开启时，红字高亮提醒
+        if (forceFastChargeEnable && charging) {
+            floatingView.statusLabel.text = [NSString stringWithFormat:@"🔥 强制满血快充 · %.1fW", chargeWatts];
+            floatingView.statusLabel.textColor = [UIColor systemRedColor];
+            floatingView.statusDot.backgroundColor = [UIColor systemRedColor];
+        } else if (isCurrentlyChargeInhibited) {
             floatingView.statusLabel.text = @"⚠️ 高温断充保护中";
             floatingView.statusLabel.textColor = [UIColor systemOrangeColor];
             floatingView.statusDot.backgroundColor = [UIColor systemOrangeColor];
@@ -2179,7 +2194,8 @@ static void applySystemRefreshRate(void) {
     _tempValueLabel.text = (temp > 0) ? [NSString stringWithFormat:@"%.1f°C", temp] : @"--°C";
     _currentValueLabel.text = [NSString stringWithFormat:@"%.0f mA", current];
     
-    if (!isCurrentlyChargeInhibited) {
+    // 🔥UI更新拦截：如果没被硬件拦截，但开启了强制快充，直接红色高亮显示
+    if (!isCurrentlyChargeInhibited && !forceFastChargeEnable) {
         if (chargeBoostEnable && isCharging) {
             NSDictionary *chargeInfo = getRealBatteryDetails();
             double watts = [chargeInfo[@"CalculatedWatts"] doubleValue];
@@ -2212,7 +2228,7 @@ static void applySystemRefreshRate(void) {
         _miniCpuLabel.text = [NSString stringWithFormat:@"%.0fmA", current];
     }
     
-    if (!isCurrentlyChargeInhibited) {
+    if (!isCurrentlyChargeInhibited && !forceFastChargeEnable) {
         UIColor *statusColor = [UIColor darkGrayColor];
         if (isCharging) statusColor = chargeBoostEnable ? [UIColor systemBlueColor] : [UIColor colorWithRed:0.0f green:0.8f blue:0.4f alpha:1.0f];
         else if (cpu >= 80.0 || temp >= 42.0) statusColor = [UIColor systemRedColor];
@@ -2386,7 +2402,8 @@ static void applySystemRefreshRate(void) {
 
     double watts = [batInfo[@"CalculatedWatts"] doubleValue];
     if (watts < 0.1) watts = 0.0;
-    _labelsDict[@"电池充电功率"].text = charging ? [NSString stringWithFormat:@"%.1fW%@", watts, chargeBoostEnable ? @" · 增强" : @""] : @"0W";
+    // 🔥 改动点：在详细面板也显示强制快充状态
+    _labelsDict[@"电池充电功率"].text = charging ? [NSString stringWithFormat:@"%.1fW%@", watts, (chargeBoostEnable || forceFastChargeEnable) ? @" · 增强" : @""] : @"0W";
 
     double currentmA = getBatteryCurrentInternal();
     _labelsDict[@"电池当前电流"].text = [NSString stringWithFormat:@"%.0fmA", currentmA];
@@ -2649,7 +2666,7 @@ static void applySystemRefreshRate(void) {
     if (section == 4) return 3;
     if (section == 5) return 2;
     if (section == 6) return 5;
-    if (section == 7) return 3; 
+    if (section == 7) return 4; // 🔥 改动：3 -> 4
     if (section == 8) return 6;
     if (section == 9) return 5; // 📖 功能说明行数
     return 0;
@@ -2876,6 +2893,15 @@ static void applySystemRefreshRate(void) {
             [sw addTarget:self action:@selector(changeChargeBoost:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         }
+        // 🔥 新增：在设置项中强行插入一行控制快充开关
+        else if (indexPath.row == 3) {
+            cell.textLabel.text = @"🔥 强制满血快充 (无视温控)"; 
+            cell.textLabel.textColor = [UIColor systemRedColor];
+            UISwitch *sw = [UISwitch new]; 
+            sw.on = forceFastChargeEnable; 
+            [sw addTarget:self action:@selector(changeForceFastCharge:) forControlEvents:UIControlEventValueChanged]; 
+            cell.accessoryView = sw; 
+        }
     } else if (indexPath.section == 8) {
         if (indexPath.row == 0) {
             cell.textLabel.text = @"记忆悬浮窗位置";
@@ -3077,6 +3103,26 @@ static void applySystemRefreshRate(void) {
     applyExperimentalChargeLimit100(chargeBoostEnable);
     SavePreferencesAndNotify();
 }
+
+// 🔥 新增：带有风险提醒的强制快充开关
+- (void)changeForceFastCharge:(UISwitch *)sw {
+    forceFastChargeEnable = sw.isOn;
+    if (sw.isOn) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚠️ 极度危险警告" message:@"您正在强制抛弃苹果原厂充电温控！\n\n这可能导致手机充电时极度发烫，极大增加电池鼓包、主板烧毁风险。\n\n⚠️强烈建议仅在配合【半导体制冷散热背夹】时使用此功能！" preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
+            sw.on = NO;
+            forceFastChargeEnable = NO;
+            SavePreferencesAndNotify();
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"我知晓风险并开启" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+            SavePreferencesAndNotify();
+        }]];
+        [self presentViewController:alert animated:YES completion:nil];
+    } else {
+        SavePreferencesAndNotify();
+    }
+}
+
 - (void)changeNotificationEnable:(UISwitch *)sw { notificationEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeWechatEnable:(UISwitch *)sw { wechatEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeQqEnable:(UISwitch *)sw { qqEnable = sw.isOn; SavePreferencesAndNotify(); }
