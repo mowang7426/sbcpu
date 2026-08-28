@@ -175,6 +175,9 @@ typedef struct {
 @end
 @interface SBCPUWindow : UIWindow
 @end
+
+// CPU 悬浮窗实例；必须在所有 C 函数引用之前声明。
+static SBCPUWindow *cpuWindow = nil;
 @interface SBCPUValuePickerController : UITableViewController
 @end
 @interface SBCPUTimePickerController : UITableViewController
