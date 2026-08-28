@@ -290,10 +290,6 @@ __attribute__((constructor)) static void SBCPUGameOverlayInit(void) {
             SBCPUAttachGamePillToHostWindow();
             if (SBCPUGameVisible) SBCPUApplyGamePillLayout();
         }];
-        [nc addObserverForName:UIApplicationDidChangeStatusBarOrientationNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
-            (void)note;
-            SBCPUAttachGamePillToHostWindow();
-        }];
         [nc addObserverForName:UIDeviceOrientationDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
             (void)note;
             SBCPUAttachGamePillToHostWindow();

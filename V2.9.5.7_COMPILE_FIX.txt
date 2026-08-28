@@ -1,0 +1,6 @@
+SBCPUFloating V2.9.5.7
+
+修复 GameOverlay.xm 在 iPhoneOS16.5 SDK 下因
+UIApplicationDidChangeStatusBarOrientationNotification 已废弃而触发 -Werror 的编译失败。
+
+移除旧的状态栏方向通知监听；保留 UIWindow/UIDevice 方向监听。
