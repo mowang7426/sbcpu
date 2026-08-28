@@ -1,9 +1,0 @@
-Package: com.sbcpu.floating
-Name: SB CPU Floating
-Version: 2.9
-Architecture: iphoneos-arm64
-Maintainer: MoWang
-Author: MoWang
-Description: SpringBoard CPU Floating Monitor, Notification Manager and CPU Mitigation
-Section: Tweaks
-Depends: mobilesubstrate, preferenceloader
