@@ -1,1 +1,97 @@
 
+name: Build SBCPUFloating V2.8
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install make dpkg ldid xz
+
+      - name: Set THEOS
+        run: |
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          echo "$HOME/theos/bin" >> $GITHUB_PATH
+
+      - name: Install RootHide Theos
+        run: |
+          rm -rf "$HOME/theos"
+          git clone --recursive https://github.com/roothide/theos.git "$HOME/theos"
+
+      - name: Install iPhoneOS 16.5 SDK
+        run: |
+          set -e
+          rm -rf /tmp/theos-sdks
+          mkdir -p "$HOME/theos/sdks"
+          git clone --depth=1 --filter=blob:none --sparse https://github.com/theos/sdks.git /tmp/theos-sdks
+          cd /tmp/theos-sdks
+          git sparse-checkout set iPhoneOS16.5.sdk
+          cp -R "iPhoneOS16.5.sdk" "$HOME/theos/sdks/"
+
+      # =======================================================
+      # 🔴 核心修复2：加入了 preferenceloader 依赖
+      # =======================================================
+      - name: Generate Perfect Control File
+        run: |
+          rm -f control
+          cat << 'EOF' > control
+          Package: com.sbcpu.floating
+          Name: SB CPU Floating Notification
+          Version: 2.8
+          Architecture: iphoneos-arm64
+          Maintainer: MoWang
+          Author: MoWang
+          Description: SpringBoard CPU Monitor and Notification Manager
+          Section: Tweaks
+          Depends: mobilesubstrate, preferenceloader
+          EOF
+          echo "✅ Control file successfully generated!"
+          cat -e control
+
+      - name: Prepare build directory
+        run: |
+          rm -rf build
+          mkdir -p build
+
+      - name: Build Rootless
+        run: |
+          set -e
+          make clean
+          THEOS_PACKAGE_SCHEME=rootless make package FINALPACKAGE=1
+
+      - name: Copy Rootless package
+        run: |
+          set -e
+          ROOTLESS_DEB=$(find packages -maxdepth 1 -type f -name "*.deb" | head -n 1)
+          cp "$ROOTLESS_DEB" "build/SBCPUFloating-V2.8-rootless.deb"
+
+      - name: Clean before RootHide
+        run: |
+          make clean
+          rm -rf packages
+
+      - name: Build RootHide
+        run: |
+          set -e
+          THEOS_PACKAGE_SCHEME=roothide make package FINALPACKAGE=1
+
+      - name: Copy RootHide package
+        run: |
+          set -e
+          ROOTHIDE_DEB=$(find packages -maxdepth 1 -type f -name "*.deb" | head -n 1)
+          cp "$ROOTHIDE_DEB" "build/SBCPUFloating-V2.8-roothide.deb"
+
+      - name: Upload DEB packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: SBCPUFloating-V2.8
+          path: build/*.deb
+
