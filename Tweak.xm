@@ -245,7 +245,10 @@ static double chargeBoostBaselineWatts = 0.0;
 static CFAbsoluteTime chargeBoostStartTime = 0;
 static BOOL chargeBoostVerified = NO;
 static NSString *chargeBoostStatus = nil;
-static BOOL isCurrentlyChargeInhibited = NO;      
+static BOOL isCurrentlyChargeInhibited = NO;
+static BOOL chargeLimit100Applied = NO;
+static BOOL chargeLimitOriginalSaved = NO;
+static NSInteger chargeLimitOriginalValue = 0;
 
 static BOOL showBatteryPercent = YES;
 static BOOL showBatteryTemperature = YES;
@@ -284,6 +287,7 @@ static void applySystemRefreshRate(void);
 static void LoadPreferences(void);
 static void SavePreferencesAndNotify(void);
 static void setHardwareChargingInhibit(BOOL inhibit);
+static void applyExperimentalChargeLimit100(BOOL enable);
 static NSString *getChargeBoostStatus(double watts, double temp, NSInteger battery, BOOL charging);
 static NSString *getNetworkType(void);
 static NSDictionary *getRealBatteryDetails(void);
@@ -535,6 +539,65 @@ static void setHardwareChargingInhibit(BOOL inhibit) {
         IORegistryEntrySetCFProperty(pmuService, CFSTR("ChargeInhibit"), inhibit ? kCFBooleanTrue : kCFBooleanFalse);
         IOObjectRelease(pmuService);
     }
+}
+
+
+/*
+ * Experimental charging-target helper.
+ *
+ * This does NOT set a current/voltage/power level. It only attempts to
+ * change the SmartBattery target limit to 100 while the test switch is on.
+ * The original value is saved when available and restored when disabling.
+ */
+static void applyExperimentalChargeLimit100(BOOL enable) {
+    io_service_t service = IOServiceGetMatchingService(
+        kIOMainPortDefault,
+        IOServiceMatching("AppleSmartBattery")
+    );
+    if (!service) return;
+
+    if (enable) {
+        if (!chargeLimitOriginalSaved) {
+            CFTypeRef oldValue = IORegistryEntryCreateCFProperty(
+                service, CFSTR("ChargeLimit"), kCFAllocatorDefault, 0
+            );
+            if (oldValue) {
+                if (CFGetTypeID(oldValue) == CFNumberGetTypeID()) {
+                    int oldLimit = 0;
+                    if (CFNumberGetValue((CFNumberRef)oldValue, kCFNumberIntType, &oldLimit)) {
+                        chargeLimitOriginalValue = oldLimit;
+                        chargeLimitOriginalSaved = YES;
+                    }
+                }
+                CFRelease(oldValue);
+            }
+        }
+
+        int target = 100;
+        CFNumberRef number = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &target);
+        if (number) {
+            kern_return_t kr = IORegistryEntrySetCFProperty(
+                service, CFSTR("ChargeLimit"), number
+            );
+            if (kr == KERN_SUCCESS) {
+                chargeLimit100Applied = YES;
+            }
+            CFRelease(number);
+        }
+    } else if (chargeLimit100Applied) {
+        if (chargeLimitOriginalSaved) {
+            int oldLimit = (int)chargeLimitOriginalValue;
+            CFNumberRef number = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &oldLimit);
+            if (number) {
+                IORegistryEntrySetCFProperty(service, CFSTR("ChargeLimit"), number);
+                CFRelease(number);
+            }
+        }
+        chargeLimit100Applied = NO;
+        chargeLimitOriginalSaved = NO;
+    }
+
+    IOObjectRelease(service);
 }
 
 static NSString *getChargeBoostStatus(double watts, double temp, NSInteger battery, BOOL charging) {
@@ -946,6 +1009,13 @@ static void updateCPU(void) {
         double temp = getBatteryTemperatureInternal();
         double current = getBatteryCurrentInternal();
         BOOL charging = isChargingInternal();
+
+        if (chargeBoostEnable && charging) {
+            // Experimental: request a 100% charge target.
+            applyExperimentalChargeLimit100(YES);
+        } else if (!chargeBoostEnable && chargeLimit100Applied) {
+            applyExperimentalChargeLimit100(NO);
+        }
 
         if (smartChargeLimitEnable && temp > 0) {
             if (temp >= smartChargeLimitTemp) {
@@ -2997,7 +3067,16 @@ static void applySystemRefreshRate(void) {
 - (void)changeInsulationPocket:(UISwitch *)sw { blockPocketTemp = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeInsulationSunlight:(UISwitch *)sw { forceSunlightHBM = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeSmartChargeLimit:(UISwitch *)sw { smartChargeLimitEnable = sw.isOn; SavePreferencesAndNotify(); }
-- (void)changeChargeBoost:(UISwitch *)sw { chargeBoostEnable = sw.isOn; chargeBoostStartTime = sw.isOn ? CFAbsoluteTimeGetCurrent() : 0; lastChargeWatts = 0; previousChargeWatts = 0; chargeBoostBaselineWatts = 0; chargeBoostVerified = NO; SavePreferencesAndNotify(); }
+- (void)changeChargeBoost:(UISwitch *)sw {
+    chargeBoostEnable = sw.isOn;
+    chargeBoostStartTime = sw.isOn ? CFAbsoluteTimeGetCurrent() : 0;
+    lastChargeWatts = 0;
+    previousChargeWatts = 0;
+    chargeBoostBaselineWatts = 0;
+    chargeBoostVerified = NO;
+    applyExperimentalChargeLimit100(chargeBoostEnable);
+    SavePreferencesAndNotify();
+}
 - (void)changeNotificationEnable:(UISwitch *)sw { notificationEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeWechatEnable:(UISwitch *)sw { wechatEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeQqEnable:(UISwitch *)sw { qqEnable = sw.isOn; SavePreferencesAndNotify(); }
