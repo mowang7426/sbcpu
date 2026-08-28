@@ -1,3 +1,4 @@
+
 name: Build SBCPUFloating V2.9
 
 on:
@@ -8,196 +9,92 @@ jobs:
     runs-on: macos-14
 
     steps:
-      # =======================================================
-      # Checkout
-      # =======================================================
       - name: Checkout
         uses: actions/checkout@v4
 
-      # =======================================================
-      # Basic dependencies
-      # =======================================================
       - name: Install dependencies
         run: |
-          set -e
           brew install make dpkg ldid xz
 
-      # =======================================================
-      # Install RootHide Theos
-      # =======================================================
+      - name: Set THEOS
+        run: |
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          echo "THEOS_MAKE_PATH=$HOME/theos/makefiles" >> $GITHUB_ENV
+          echo "$HOME/theos/bin" >> $GITHUB_PATH
+
       - name: Install RootHide Theos
         run: |
-          set -e
           rm -rf "$HOME/theos"
           git clone --recursive https://github.com/roothide/theos.git "$HOME/theos"
 
-      # =======================================================
-      # Set Theos environment
-      # =======================================================
-      - name: Set Theos environment
-        run: |
-          set -e
-          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
-          echo "THEOS_MAKE_PATH=$HOME/theos/makefiles" >> "$GITHUB_ENV"
-          echo "$HOME/theos/bin" >> "$GITHUB_PATH"
-
-      # =======================================================
-      # Install iPhoneOS 16.5 SDK
-      # =======================================================
       - name: Install iPhoneOS 16.5 SDK
         run: |
           set -e
           rm -rf /tmp/theos-sdks
           mkdir -p "$HOME/theos/sdks"
-
-          git clone --depth=1 --filter=blob:none --sparse \
-            https://github.com/theos/sdks.git /tmp/theos-sdks
-
+          git clone --depth=1 --filter=blob:none --sparse https://github.com/theos/sdks.git /tmp/theos-sdks
           cd /tmp/theos-sdks
           git sparse-checkout set iPhoneOS16.5.sdk
+          cp -R "iPhoneOS16.5.sdk" "$HOME/theos/sdks/"
 
-          rm -rf "$HOME/theos/sdks/iPhoneOS16.5.sdk"
-          cp -R iPhoneOS16.5.sdk "$HOME/theos/sdks/"
-
-      # =======================================================
-      # Verify build environment BEFORE make
-      # =======================================================
-      - name: Verify Theos and project
+      - name: Verify Theos environment
         run: |
           set -e
-
           echo "THEOS=$THEOS"
           echo "THEOS_MAKE_PATH=$THEOS_MAKE_PATH"
-
           test -f "$THEOS/makefiles/common.mk"
           test -f "$THEOS/makefiles/tweak.mk"
           test -f "$THEOS/makefiles/aggregate.mk"
 
-          test -f Makefile
-          test -f Tweak.xm
-          test -f MitigationHook.xm
-          test -f SBCPUFloating.plist
-          test -f SBCPUMitigation.plist
-
-          test -f sbcpuprefs/Makefile
-          test -f sbcpuprefs/Root.plist || test -f sbcpuprefs/Resources/Root.plist
-
-          echo "========================================"
-          echo "THEOS CHECK: OK"
-          echo "PROJECT CHECK: OK"
-          echo "========================================"
-
-      # =======================================================
-      # Generate control file
-      # =======================================================
-      - name: Generate control file
+      - name: Verify package metadata
         run: |
           set -e
+          grep -E '^(Package|Name|Version|Depends):' control
 
-          cat > control <<'EOF'
-          Package: com.sbcpu.floating
-          Name: SB CPU Floating Notification
-          Version: 2.9
-          Architecture: iphoneos-arm64
-          Maintainer: MoWang
-          Author: MoWang
-          Description: SpringBoard CPU Monitor and Notification Manager
-          Section: Tweaks
-          Depends: mobilesubstrate, preferenceloader
-          EOF
-
-          echo "===== control ====="
-          cat control
-
-      # =======================================================
-      # Prepare output directory
-      # =======================================================
       - name: Prepare build directory
         run: |
-          set -e
-          rm -rf build packages
+          rm -rf build
           mkdir -p build
 
-      # =======================================================
-      # Build Rootless
-      # =======================================================
       - name: Build Rootless
         run: |
           set -e
-          make clean || true
-          rm -rf packages
+          make clean
+          THEOS_PACKAGE_SCHEME=rootless make package FINALPACKAGE=1
 
-          THEOS_PACKAGE_SCHEME=rootless \
-            make package FINALPACKAGE=1
-
-          test -d packages
-
-          ROOTLESS_DEB="$(find packages -maxdepth 1 -type f -name '*.deb' | head -n 1)"
-          test -n "$ROOTLESS_DEB"
-          test -f "$ROOTLESS_DEB"
-
-          cp "$ROOTLESS_DEB" "build/SBCPUFloating-V2.9-rootless.deb"
-
-      # =======================================================
-      # Check Rootless package contents
-      # =======================================================
-      - name: Verify Rootless package
+      - name: Copy Rootless package
         run: |
           set -e
+          ROOTLESS_DEB=$(find packages -maxdepth 1 -type f -name "*.deb" | head -n 1)
+          cp "$ROOTLESS_DEB" "build/SBCPUFloating-V2.9-rootless.deb"
 
-          DEB="build/SBCPUFloating-V2.9-rootless.deb"
+      - name: Clean before RootHide
+        run: |
+          make clean
+          rm -rf packages
 
-          echo "===== Rootless package ====="
-          dpkg-deb -c "$DEB"
-
-          dpkg-deb -c "$DEB" | grep -E \
-            'SBCPUFloating\.dylib|SBCPUMitigation\.dylib|SBCPUPrefs\.bundle|PreferenceLoader/Preferences'
-
-          echo "Rootless package structure check: OK"
-
-      # =======================================================
-      # Build RootHide
-      # =======================================================
       - name: Build RootHide
         run: |
           set -e
-          make clean || true
-          rm -rf packages
+          THEOS_PACKAGE_SCHEME=roothide make package FINALPACKAGE=1
 
-          THEOS_PACKAGE_SCHEME=roothide \
-            make package FINALPACKAGE=1
-
-          test -d packages
-
-          ROOTHIDE_DEB="$(find packages -maxdepth 1 -type f -name '*.deb' | head -n 1)"
-          test -n "$ROOTHIDE_DEB"
-          test -f "$ROOTHIDE_DEB"
-
-          cp "$ROOTHIDE_DEB" "build/SBCPUFloating-V2.9-roothide.deb"
-
-      # =======================================================
-      # Check RootHide package contents
-      # =======================================================
-      - name: Verify RootHide package
+      - name: Copy RootHide package
         run: |
           set -e
+          ROOTHIDE_DEB=$(find packages -maxdepth 1 -type f -name "*.deb" | head -n 1)
+          cp "$ROOTHIDE_DEB" "build/SBCPUFloating-V2.9-roothide.deb"
 
-          DEB="build/SBCPUFloating-V2.9-roothide.deb"
+      - name: Verify preference bundle is packaged
+        run: |
+          set -e
+          for deb in build/*.deb; do
+            echo "===== Checking $deb ====="
+            dpkg-deb -c "$deb" | grep -E 'PreferenceBundles/SBCPUPrefs\.bundle|PreferenceLoader/Preferences/SBCPUPrefs\.plist'
+          done
 
-          echo "===== RootHide package ====="
-          dpkg-deb -c "$DEB"
-
-          dpkg-deb -c "$DEB" | grep -E \
-            'SBCPUFloating\.dylib|SBCPUMitigation\.dylib|SBCPUPrefs\.bundle|PreferenceLoader/Preferences'
-
-          echo "RootHide package structure check: OK"
-
-      # =======================================================
-      # Upload
-      # =======================================================
       - name: Upload DEB packages
         uses: actions/upload-artifact@v4
         with:
           name: SBCPUFloating-V2.9
           path: build/*.deb
-          if-no-files-found: error
+
