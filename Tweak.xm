@@ -182,6 +182,8 @@ static UIInterfaceOrientation getActiveInterfaceOrientation(void);
 static SBCPUGameBannerView *gameBannerView = nil;
 static NSInteger gameBannerGeneration = 0;
 static NSInteger gameBannerUnreadCount = 0;
+// 必须在游戏 Banner 函数之前声明，避免 C/ObjC 的“use of undeclared identifier”。
+static NSInteger notificationDuration = 5;
 
 static void layoutGameBanner(void);
 static void showGameBannerForNotification(SBNotifReq *req);
@@ -479,7 +481,6 @@ static BOOL wechatEnable = YES;
 static BOOL qqEnable = YES;
 static BOOL timEnable = YES;
 static BOOL hideContentOnLockScreen = NO;
-static NSInteger notificationDuration = 5;
 static NSMutableArray<SBNotifReq *> *historyNotifications = nil;
 
 static DeviceSpec MakeDeviceSpec(const char *platform, const char *modelName, const char *chipName, NSInteger cores, double maxFreqMHz, NSInteger designBatteryCapacity);
