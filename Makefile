@@ -1,37 +1,28 @@
+
 ARCHS = arm64 arm64e
 TARGET = iphone:clang:16.5:14.0
-
-# RootHide / Rootless scheme is selected by the build command.
-# Example:
-#   THEOS_PACKAGE_SCHEME=rootless make package
-#   THEOS_PACKAGE_SCHEME=roothide make package
 
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = SBCPUFloating SBCPUMitigation
 
-# ------------------------------------------------------------
-# SBCPUFloating
-# SpringBoard floating UI / CPU / FPS / battery / temperature
-# ------------------------------------------------------------
+# 1. 桌面 UI、悬浮窗、与通知管理
 SBCPUFloating_FILES = Tweak.xm
 SBCPUFloating_CFLAGS = -fobjc-arc
 SBCPUFloating_FRAMEWORKS = UIKit Foundation QuartzCore CoreMotion
-SBCPUFloating_PRIVATE_FRAMEWORKS = IOKit
+SBCPUFloating_PRIVATE_FRAMEWORKS = PowerUI IOKit FrontBoardServices
 
-# ------------------------------------------------------------
-# SBCPUMitigation
-# Low-level mitigation / charging / thermal related hooks
-# ------------------------------------------------------------
+# 2. 底层守护进程 (引入 IOKit 以支持硬件级拦截)
 SBCPUMitigation_FILES = MitigationHook.xm
 SBCPUMitigation_CFLAGS = -fobjc-arc
 SBCPUMitigation_FRAMEWORKS = Foundation
 SBCPUMitigation_PRIVATE_FRAMEWORKS = IOKit
 
-# Build the two tweak dylibs.
+# ⚠️ 注意这里，这句必须在 SUBPROJECTS 之前
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-# Build the PreferenceBundle subproject.
+# 🔴 核心修复1：必须加上这两行，编译器才会去打包你的设置页面！
 SUBPROJECTS += sbcpuprefs
-
 include $(THEOS_MAKE_PATH)/aggregate.mk
+
+
