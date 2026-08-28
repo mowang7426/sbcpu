@@ -103,6 +103,9 @@ typedef struct {
 
 #pragma mark - 游戏内顶部通知 Banner（直接使用 SpringBoard 全局浮窗层）
 
+// 前置声明：游戏 Banner 在 C 函数中会直接使用 CPU 全局窗口
+static UIWindow *cpuWindow = nil;
+
 @interface SBCPUGameBannerView : UIView
 @property(nonatomic,strong) UIVisualEffectView *blurView;
 @property(nonatomic,strong) UILabel *iconLabel;
@@ -355,7 +358,6 @@ static void showGameBannerForNotification(SBNotifReq *req) {
 
 #pragma mark - 3. 全局状态变量与所有 C 函数前置声明
 
-static UIWindow *cpuWindow = nil;
 static SBCPUFloatingView *floatingView = nil;
 static SBCPUDetailViewController *detailVC = nil;
 
