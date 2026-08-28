@@ -1130,6 +1130,13 @@ static void applySystemRefreshRate(void) {
 
 #pragma mark - 5. Notification Manager 实现
 
+// SpringBoard 私有类没有公开头文件。这里只声明本插件实际使用的方法，
+// 避免 clang 把 SBNotificationManager 当成未声明的根类。
+@interface SBNotificationManager : NSObject
++ (instancetype)sharedInstance;
+- (void)extractAndHandleRequest:(id)req;
+@end
+
 @implementation SBNotificationManager
 + (instancetype)sharedInstance {
     static SBNotificationManager *instance = nil;
