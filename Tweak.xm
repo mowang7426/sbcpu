@@ -443,7 +443,7 @@ static void LoadPreferences(void) {
     smartChargeLimitEnable = getBoolPref(CFSTR("smartChargeLimitEnable"), NO);
     smartChargeLimitTemp = getFloatPref(CFSTR("smartChargeLimitTemp"), 38.0f);
     chargeBoostEnable = getBoolPref(CFSTR("chargeBoostEnable"), NO);
-    forceFastChargeEnable = getBoolPref(CFSTR("forceFastChargeEnable"), NO); // 🔥 新增读取
+    forceFastChargeEnable = getBoolPref(CFSTR("forceFastChargeEnable"), NO);
     
     notificationEnable = getBoolPref(CFSTR("notificationEnable"), YES);
     wechatEnable = getBoolPref(CFSTR("wechatEnable"), YES);
@@ -462,7 +462,6 @@ static void LoadPreferences(void) {
         applySystemRefreshRate(); 
         int token;
         if (notify_register_check(NOTIFY_CPU_MODE, &token) == NOTIFY_STATUS_OK) {
-            // 🔥 新增：将强制快充位（第9位）传给底层
             uint64_t state = (insulationCpuMode & 0xFF) | 
                              ((blockThermalDimming ? 1ULL : 0) << 8) | 
                              ((forceFastChargeEnable ? 1ULL : 0) << 9);
@@ -506,7 +505,7 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("smartChargeLimitEnable"), smartChargeLimitEnable);
     setFloatPref(CFSTR("smartChargeLimitTemp"), smartChargeLimitTemp);
     setBoolPref(CFSTR("chargeBoostEnable"), chargeBoostEnable);
-    setBoolPref(CFSTR("forceFastChargeEnable"), forceFastChargeEnable); // 🔥 新增保存
+    setBoolPref(CFSTR("forceFastChargeEnable"), forceFastChargeEnable); 
     setBoolPref(CFSTR("notificationEnable"), notificationEnable);
     setBoolPref(CFSTR("wechatEnable"), wechatEnable);
     setBoolPref(CFSTR("qqEnable"), qqEnable);
@@ -527,7 +526,6 @@ static void SavePreferencesAndNotify(void) {
     if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
         int token;
         if (notify_register_check(NOTIFY_CPU_MODE, &token) == NOTIFY_STATUS_OK) {
-            // 🔥 新增：将强制快充位（第9位）传给底层
             uint64_t state = (insulationCpuMode & 0xFF) | 
                              ((blockThermalDimming ? 1ULL : 0) << 8) | 
                              ((forceFastChargeEnable ? 1ULL : 0) << 9);
@@ -554,10 +552,6 @@ static void setHardwareChargingInhibit(BOOL inhibit) {
 
 /*
  * Experimental charging-target helper.
- *
- * This does NOT set a current/voltage/power level. It only attempts to
- * change the SmartBattery target limit to 100 while the test switch is on.
- * The original value is saved when available and restored when disabling.
  */
 static void applyExperimentalChargeLimit100(BOOL enable) {
     io_service_t service = IOServiceGetMatchingService(
@@ -997,7 +991,6 @@ static void checkHighCPU(double cpu) {
 static void updateCPU(void) {
     if (!isEnabled) return;
 
-    // 👑 自动防丢失补救机制：如果刚开机时 scene 还没准备好导致没创建成功，每秒重试一次，绝不失联！
     if (!cpuWindow || !floatingView) {
         createCPUWindow();
     }
@@ -1021,7 +1014,6 @@ static void updateCPU(void) {
         BOOL charging = isChargingInternal();
 
         if (chargeBoostEnable && charging) {
-            // Experimental: request a 100% charge target.
             applyExperimentalChargeLimit100(YES);
         } else if (!chargeBoostEnable && chargeLimit100Applied) {
             applyExperimentalChargeLimit100(NO);
@@ -1078,7 +1070,6 @@ static void updateCPU(void) {
         }
         chargeBoostStatus = [getChargeBoostStatus(chargeWatts, temp, battery, charging) copy];
 
-        // 🔥 新增UI判断逻辑：当强制快充开启时，红字高亮提醒
         if (forceFastChargeEnable && charging) {
             floatingView.statusLabel.text = [NSString stringWithFormat:@"🔥 强制满血快充 · %.1fW", chargeWatts];
             floatingView.statusLabel.textColor = [UIColor systemRedColor];
@@ -1582,7 +1573,6 @@ static void applySystemRefreshRate(void) {
     }
 }
 
-// 🚀 核心绝杀：彻底抛弃 performSelector，注入闭包执行！绝不卡顿！
 - (void)handleSingleTap:(UITapGestureRecognizer *)tap {
     if (tap.state == UIGestureRecognizerStateEnded) {
         BOOL hasUnread = (historyNotifications.count > 0);
@@ -1595,7 +1585,6 @@ static void applySystemRefreshRate(void) {
                 NSDictionary *userInfo = targetReq.userInfoPayload;
                 id rawRequest = targetReq.originalRequest; 
                 
-                // 🟢 瞬间清除小红点及缓存，彻底隐藏绝不残留！
                 self.badgeLabel.hidden = YES;
                 self.isShowingNotification = NO;
                 self.currentNotification = nil;
@@ -1607,7 +1596,6 @@ static void applySystemRefreshRate(void) {
                     dispatch_async(dispatch_get_main_queue(), ^{
                         BOOL opened = NO;
 
-                        // 第一层：最极致 0延迟！利用系统 ActionRunner 回调直接跳转
                         @try {
                             if (rawRequest && [rawRequest respondsToSelector:@selector(defaultAction)]) {
                                 id defaultAction = [rawRequest performSelector:@selector(defaultAction)];
@@ -1615,7 +1603,6 @@ static void applySystemRefreshRate(void) {
                                     id runner = [defaultAction performSelector:@selector(actionRunner)];
                                     if (runner && [runner respondsToSelector:@selector(executeAction:fromOrigin:endpoint:withParameters:completion:)]) {
                                         
-                                        // 完美填入 5 个参数的执行，附带一个必定执行成功的假闭包，欺骗系统无需等待！
                                         void (^completionBlock)(BOOL) = ^(BOOL success) {};
                                         [runner executeAction:defaultAction fromOrigin:@"NCNotificationDestinationBanner" endpoint:nil withParameters:nil completion:completionBlock];
                                         opened = YES;
@@ -1624,7 +1611,6 @@ static void applySystemRefreshRate(void) {
                             }
                         } @catch (NSException *e) {}
 
-                        // 第二层：使用 FBS 传入解析好的纯净参数
                         if (!opened) {
                             @try {
                                 id fbsServiceClass = NSClassFromString(@"FBSOpenApplicationService");
@@ -1650,7 +1636,6 @@ static void applySystemRefreshRate(void) {
                             } @catch (NSException *e) {}
                         }
                         
-                        // 第三层：稳定兜底
                         if (!opened) {
                             @try {
                                 id lsawClass = NSClassFromString(@"LSApplicationWorkspace");
@@ -1743,7 +1728,6 @@ static void applySystemRefreshRate(void) {
     [_blurView.layer addAnimation:glowAnim forKey:@"borderGlow"];
 }
 
-// 👑 [史诗级重构]：彻底杜绝折叠灰条！展示消息时，CPU检测一定在上方展示！
 - (void)updateLayoutWithShowCpuFreq:(BOOL)showFreq
                             showFps:(BOOL)showFps
                  showBatteryPercent:(BOOL)showBattery
@@ -1751,7 +1735,6 @@ static void applySystemRefreshRate(void) {
                  showBatteryCurrent:(BOOL)showCurrent
                          isCharging:(BOOL)isCharging {
     
-    // 如果是折叠状态，且没有在自动弹消息，则直接拦截布局重绘，保持纯胶囊形态
     if (self.isCollapsed && !self.isShowingNotification) return;
 
     BOOL hasUnread = (historyNotifications.count > 0 && !self.isShowingNotification);
@@ -1760,7 +1743,6 @@ static void applySystemRefreshRate(void) {
 
     BOOL showCombinedMode = (!self.isCollapsed && historyNotifications.count > 0) || self.isShowingNotification;
 
-    // 🟢 任何只要被执行到这里的时候（弹窗、展开），父级容器【必须】强行显示，杜绝消失！
     self.performanceContainer.hidden = NO;
     self.performanceContainer.alpha = 1.0;
 
@@ -1865,7 +1847,6 @@ static void applySystemRefreshRate(void) {
         currentY += 14.0f;
     }
 
-    // --- 下层消息区域绘制 ---
     if (showCombinedMode) {
         self.horizontalDiv.hidden = NO;
         self.notificationContainer.hidden = NO;
@@ -1910,15 +1891,12 @@ static void applySystemRefreshRate(void) {
 
     currentY += 8.0f; 
 
-    // 🚀 核心修复：内侧边缘吸附红点，绝对不切边
     if (!self.badgeLabel.hidden) {
         UIView *parent = self.superview;
         CGFloat screenW = parent ? parent.bounds.size.width : [UIScreen mainScreen].bounds.size.width;
         BOOL isLeft = (self.center.x <= screenW / 2.0f);
         
         CGFloat badgeW = 20.0f;
-        // isLeft 左边靠边时，红点在右侧(内部靠边)
-        // isLeft 否右边靠边时，红点在左侧(内部靠边)
         CGFloat targetBadgeX = isLeft ? (finalW - badgeW/2.0f - 4.0f) : (-badgeW/2.0f + 4.0f);
         self.badgeLabel.frame = CGRectMake(targetBadgeX, -6.0f, badgeW, 14.0f);
     }
@@ -2008,7 +1986,6 @@ static void applySystemRefreshRate(void) {
 
     CGPoint targetCenter = CGPointMake(targetX, targetY);
 
-    // 🟢 最关键保障：保证折叠胶囊绝不消失，父级强制显示！
     self.performanceContainer.hidden = NO;
     self.performanceContainer.alpha = 1.0;
     self.collapsedContainerView.hidden = NO;
@@ -2032,7 +2009,6 @@ static void applySystemRefreshRate(void) {
         self.bounds = CGRectMake(0, 0, targetW, targetH);
         self.center = targetCenter;
 
-        // 折叠时的内侧红点跟随机制
         if (!self.badgeLabel.hidden) {
             CGFloat badgeW = 20.0f;
             CGFloat targetBadgeX = isLeft ? (targetW - badgeW/2.0f - 4.0f) : (-badgeW/2.0f + 4.0f);
@@ -2145,7 +2121,6 @@ static void applySystemRefreshRate(void) {
     [self.notificationTimer invalidate];
     self.notificationTimer = [NSTimer scheduledTimerWithTimeInterval:notificationDuration target:self selector:@selector(hideNotification) userInfo:nil repeats:NO];
     
-    // 🟢 保障全组件渲染可见
     for (UIView *v in self.performanceContainer.subviews) {
         if (v != self.collapsedContainerView) v.hidden = NO;
     }
@@ -2194,7 +2169,6 @@ static void applySystemRefreshRate(void) {
     _tempValueLabel.text = (temp > 0) ? [NSString stringWithFormat:@"%.1f°C", temp] : @"--°C";
     _currentValueLabel.text = [NSString stringWithFormat:@"%.0f mA", current];
     
-    // 🔥UI更新拦截：如果没被硬件拦截，但开启了强制快充，直接红色高亮显示
     if (!isCurrentlyChargeInhibited && !forceFastChargeEnable) {
         if (chargeBoostEnable && isCharging) {
             NSDictionary *chargeInfo = getRealBatteryDetails();
@@ -2402,7 +2376,6 @@ static void applySystemRefreshRate(void) {
 
     double watts = [batInfo[@"CalculatedWatts"] doubleValue];
     if (watts < 0.1) watts = 0.0;
-    // 🔥 改动点：在详细面板也显示强制快充状态
     _labelsDict[@"电池充电功率"].text = charging ? [NSString stringWithFormat:@"%.1fW%@", watts, (chargeBoostEnable || forceFastChargeEnable) ? @" · 增强" : @""] : @"0W";
 
     double currentmA = getBatteryCurrentInternal();
@@ -2666,7 +2639,7 @@ static void applySystemRefreshRate(void) {
     if (section == 4) return 3;
     if (section == 5) return 2;
     if (section == 6) return 5;
-    if (section == 7) return 4; // 🔥 改动：3 -> 4
+    if (section == 7) return 4; 
     if (section == 8) return 6;
     if (section == 9) return 5; // 📖 功能说明行数
     return 0;
@@ -2893,7 +2866,6 @@ static void applySystemRefreshRate(void) {
             [sw addTarget:self action:@selector(changeChargeBoost:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         }
-        // 🔥 新增：在设置项中强行插入一行控制快充开关
         else if (indexPath.row == 3) {
             cell.textLabel.text = @"🔥 强制满血快充 (无视温控)"; 
             cell.textLabel.textColor = [UIColor systemRedColor];
@@ -3060,18 +3032,46 @@ static void applySystemRefreshRate(void) {
 }
 
 - (void)saveConfigs { SavePreferencesAndNotify(); }
+
+// ==========================================
+// 🚀 核心修复区：滑块拖动事件，实时寻找 Cell 并更新数值，带防抖保护
+// ==========================================
+- (UITableViewCell *)_cellForView:(UIView *)view {
+    UIView *v = view.superview;
+    while (v != nil) {
+        if ([v isKindOfClass:[UITableViewCell class]]) return (UITableViewCell *)v;
+        v = v.superview;
+    }
+    return nil;
+}
+
 - (void)changeScaleSlider:(UISlider *)s { 
     floatingScale = s.value; 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self saveConfigs]; });
+    UITableViewCell *cell = [self _cellForView:s];
+    if (cell) cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0f%%", floatingScale * 100];
+    
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(saveConfigs) object:nil];
+    [self performSelector:@selector(saveConfigs) withObject:nil afterDelay:0.5];
 }
+
 - (void)changeFontSlider:(UISlider *)s { 
-    floatingFontSize = s.value; 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self saveConfigs]; });
+    floatingFontSize = s.value;
+    UITableViewCell *cell = [self _cellForView:s];
+    if (cell) cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0fpt", floatingFontSize];
+
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(saveConfigs) object:nil];
+    [self performSelector:@selector(saveConfigs) withObject:nil afterDelay:0.5];
 }
+
 - (void)changeCornerRadiusSlider:(UISlider *)s { 
-    floatingCornerRadius = s.value; 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self saveConfigs]; });
+    floatingCornerRadius = s.value;
+    UITableViewCell *cell = [self _cellForView:s];
+    if (cell) cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0f", floatingCornerRadius];
+
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(saveConfigs) object:nil];
+    [self performSelector:@selector(saveConfigs) withObject:nil afterDelay:0.5];
 }
+// ==========================================
 
 // UI Switch Actions
 - (void)changeAutoCollapse:(UISwitch *)sw { autoCollapseEnable = sw.isOn; SavePreferencesAndNotify(); }
