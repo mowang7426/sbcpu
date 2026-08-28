@@ -1,0 +1,16 @@
+{
+    Filter = {
+        Bundles = (
+            "com.tencent.tmgp.sgame",
+            "com.tencent.tmgp.pubgmhd",
+            "com.tencent.tmgp.speedmobile",
+            "com.tencent.tmgp.cf",
+            "com.miHoYo.GenshinImpact",
+            "com.miHoYo.hkrpg",
+            "com.miHoYo.Yuanshen",
+            "com.hypergryph.arknights",
+            "com.tencent.wzryAndroid",
+            "com.netease.wxzc"
+        );
+    };
+}

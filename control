@@ -1,6 +1,6 @@
 Package: com.sbcpu.floating
 Name: SB CPU Floating
-Version: 2.9
+Version: 2.9.1-gameoverlay
 Architecture: iphoneos-arm64
 Maintainer: MoWang
 Author: MoWang
