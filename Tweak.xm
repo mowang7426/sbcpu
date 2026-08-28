@@ -238,7 +238,13 @@ static BOOL forceSunlightHBM = NO;
 
 static BOOL smartChargeLimitEnable = NO;
 static float smartChargeLimitTemp = 38.0f;
-static BOOL forceFastChargeEnable = NO; 
+static BOOL chargeBoostEnable = NO;
+static double lastChargeWatts = 0.0;
+static double previousChargeWatts = 0.0;
+static double chargeBoostBaselineWatts = 0.0;
+static CFAbsoluteTime chargeBoostStartTime = 0;
+static BOOL chargeBoostVerified = NO;
+static NSString *chargeBoostStatus = nil;
 static BOOL isCurrentlyChargeInhibited = NO;      
 
 static BOOL showBatteryPercent = YES;
@@ -278,7 +284,8 @@ static void applySystemRefreshRate(void);
 static void LoadPreferences(void);
 static void SavePreferencesAndNotify(void);
 static void setHardwareChargingInhibit(BOOL inhibit);
-static void setForceFastChargeOverride(BOOL force);
+static void applyChargeBoostTarget(void);
+static NSString *getChargeBoostStatus(double watts, double temp, NSInteger battery, BOOL charging);
 static NSString *getNetworkType(void);
 static NSDictionary *getRealBatteryDetails(void);
 static double getBatteryTemperatureInternal(void);
@@ -430,7 +437,7 @@ static void LoadPreferences(void) {
     
     smartChargeLimitEnable = getBoolPref(CFSTR("smartChargeLimitEnable"), NO);
     smartChargeLimitTemp = getFloatPref(CFSTR("smartChargeLimitTemp"), 38.0f);
-    forceFastChargeEnable = getBoolPref(CFSTR("forceFastChargeEnable"), NO); 
+    chargeBoostEnable = getBoolPref(CFSTR("chargeBoostEnable"), NO);
     
     notificationEnable = getBoolPref(CFSTR("notificationEnable"), YES);
     wechatEnable = getBoolPref(CFSTR("wechatEnable"), YES);
@@ -449,7 +456,7 @@ static void LoadPreferences(void) {
         applySystemRefreshRate(); 
         int token;
         if (notify_register_check(NOTIFY_CPU_MODE, &token) == NOTIFY_STATUS_OK) {
-            uint64_t state = (insulationCpuMode & 0xFF) | ((blockThermalDimming ? 1ULL : 0) << 8) | ((forceFastChargeEnable ? 1ULL : 0) << 9);
+            uint64_t state = (insulationCpuMode & 0xFF) | ((blockThermalDimming ? 1ULL : 0) << 8) | 0;
             notify_set_state(token, state);
             notify_post(NOTIFY_CPU_MODE);
             notify_cancel(token);
@@ -489,7 +496,7 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("forceSunlightHBM"), forceSunlightHBM);
     setBoolPref(CFSTR("smartChargeLimitEnable"), smartChargeLimitEnable);
     setFloatPref(CFSTR("smartChargeLimitTemp"), smartChargeLimitTemp);
-    setBoolPref(CFSTR("forceFastChargeEnable"), forceFastChargeEnable); 
+    setBoolPref(CFSTR("chargeBoostEnable"), chargeBoostEnable);
     setBoolPref(CFSTR("notificationEnable"), notificationEnable);
     setBoolPref(CFSTR("wechatEnable"), wechatEnable);
     setBoolPref(CFSTR("qqEnable"), qqEnable);
@@ -510,7 +517,7 @@ static void SavePreferencesAndNotify(void) {
     if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
         int token;
         if (notify_register_check(NOTIFY_CPU_MODE, &token) == NOTIFY_STATUS_OK) {
-            uint64_t state = (insulationCpuMode & 0xFF) | ((blockThermalDimming ? 1ULL : 0) << 8) | ((forceFastChargeEnable ? 1ULL : 0) << 9);
+            uint64_t state = (insulationCpuMode & 0xFF) | ((blockThermalDimming ? 1ULL : 0) << 8) | 0;
             notify_set_state(token, state);
             notify_post(NOTIFY_CPU_MODE);
             notify_cancel(token);
@@ -531,23 +538,32 @@ static void setHardwareChargingInhibit(BOOL inhibit) {
     }
 }
 
-static void setForceFastChargeOverride(BOOL force) {
-    if (!force) return;
-    io_service_t managerService = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBatteryManager"));
-    if (managerService) {
-        IORegistryEntrySetCFProperty(managerService, CFSTR("SmartChargingAppOverride"), kCFBooleanTrue);
-        IORegistryEntrySetCFProperty(managerService, CFSTR("SmartChargingOverride"), kCFBooleanTrue); 
-        IOObjectRelease(managerService);
-    }
-    io_service_t batService = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
-    if (batService) {
-        int limit = 100;
-        CFNumberRef limitNum = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &limit);
-        IORegistryEntrySetCFProperty(batService, CFSTR("ChargeLimit"), limitNum);
+static void applyChargeBoostTarget(void) {
+    if (!chargeBoostEnable) return;
+
+    // 仅请求 100% 充电目标，不修改充电电流，也不绕过温度/电池硬件保护。
+    io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
+    if (!service) return;
+
+    int limit = 100;
+    CFNumberRef limitNum = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &limit);
+    if (limitNum) {
+        IORegistryEntrySetCFProperty(service, CFSTR("ChargeLimit"), limitNum);
         CFRelease(limitNum);
-        IOObjectRelease(batService);
     }
+    IOObjectRelease(service);
 }
+
+static NSString *getChargeBoostStatus(double watts, double temp, NSInteger battery, BOOL charging) {
+    if (!charging) return @"未充电";
+    if (temp >= 42.0) return @"高温保护 / 系统可能降流";
+    if (battery >= 80 && watts > 15.0) return @"高电量仍保持较高功率";
+    if (battery >= 80) return @"高电量充电管理中";
+    if (watts >= 18.0) return @"较高功率充电";
+    if (watts >= 10.0) return @"正常充电";
+    return @"低功率充电 / 可能正在限流";
+}
+
 
 static NSString *getNetworkType(void) {
     struct ifaddrs *interfaces = NULL;
@@ -985,14 +1001,37 @@ static void updateCPU(void) {
             wasLandscape = isLandscape;
         }
 
+        if (chargeBoostEnable && charging) {
+            applyChargeBoostTarget();
+        }
+
+        NSDictionary *chargeInfo = getRealBatteryDetails();
+        double chargeWatts = [chargeInfo[@"CalculatedWatts"] doubleValue];
+        double adapterWatts = [chargeInfo[@"Watts"] doubleValue];
+        if (adapterWatts > 0.1) chargeWatts = adapterWatts;
+        if (chargeWatts < 0) chargeWatts = 0;
+        previousChargeWatts = lastChargeWatts;
+        lastChargeWatts = chargeWatts;
+        if (chargeBoostEnable && charging) {
+            if (chargeBoostStartTime <= 0) chargeBoostStartTime = CFAbsoluteTimeGetCurrent();
+            if (chargeBoostBaselineWatts <= 0.1 && chargeWatts > 0.1) chargeBoostBaselineWatts = chargeWatts;
+            if (!chargeBoostVerified && chargeBoostStartTime > 0 && (CFAbsoluteTimeGetCurrent() - chargeBoostStartTime) >= 5.0) {
+                chargeBoostVerified = (chargeBoostBaselineWatts > 0.1 && chargeWatts >= chargeBoostBaselineWatts + 1.0);
+            }
+        }
+        chargeBoostStatus = [getChargeBoostStatus:chargeWatts temp:temp battery:battery charging:charging copy];
+
         if (isCurrentlyChargeInhibited) {
-            floatingView.statusLabel.text = @"⚠️ 高温旁路供电中";
+            floatingView.statusLabel.text = @"⚠️ 高温断充保护中";
             floatingView.statusLabel.textColor = [UIColor systemOrangeColor];
             floatingView.statusDot.backgroundColor = [UIColor systemOrangeColor];
-        } else if (forceFastChargeEnable && charging) {
-            setForceFastChargeOverride(YES);
-            floatingView.statusLabel.text = @"⚡ 满血快充无视限制中";
-            floatingView.statusLabel.textColor = [UIColor systemRedColor];
+        } else if (chargeBoostEnable && charging) {
+            NSString *verify = @"监测中";
+            if (chargeBoostVerified) verify = @"检测到功率提升";
+            else if (chargeBoostStartTime > 0 && (CFAbsoluteTimeGetCurrent() - chargeBoostStartTime) >= 5.0) verify = @"未检测到明显提升";
+            floatingView.statusLabel.text = [NSString stringWithFormat:@"⚡ 充电增强 · %.1fW · %@", chargeWatts, verify];
+            floatingView.statusLabel.textColor = chargeBoostVerified ? [UIColor systemGreenColor] : [UIColor systemBlueColor];
+            floatingView.statusDot.backgroundColor = floatingView.statusLabel.textColor;
         }
 
         [floatingView updateDataWithCPU:cpu 
@@ -2094,9 +2133,14 @@ static void applySystemRefreshRate(void) {
     _currentValueLabel.text = [NSString stringWithFormat:@"%.0f mA", current];
     
     if (!isCurrentlyChargeInhibited) {
-        if (forceFastChargeEnable && isCharging) {
-            _statusLabel.text = @"⚡ 满血快充无视限制中";
-            _statusLabel.textColor = [UIColor systemRedColor];
+        if (chargeBoostEnable && isCharging) {
+            NSDictionary *chargeInfo = getRealBatteryDetails();
+            double watts = [chargeInfo[@"CalculatedWatts"] doubleValue];
+            double adapterWatts = [chargeInfo[@"Watts"] doubleValue];
+            if (adapterWatts > 0.1) watts = adapterWatts;
+            NSString *verify = chargeBoostVerified ? @"已验证功率提升" : @"实时验证中";
+            _statusLabel.text = [NSString stringWithFormat:@"⚡ 充电增强 · %.1fW · %@", MAX(0.0, watts), verify];
+            _statusLabel.textColor = chargeBoostVerified ? [UIColor systemGreenColor] : [UIColor systemBlueColor];
         } else {
             _statusLabel.text = isCharging ? @"正在充电" : @"未在充电";
             _statusLabel.textColor = [UIColor colorWithRed:0.15f green:0.65f blue:0.3f alpha:1.0f];
@@ -2125,7 +2169,7 @@ static void applySystemRefreshRate(void) {
     
     if (!isCurrentlyChargeInhibited) {
         UIColor *statusColor = [UIColor darkGrayColor];
-        if (isCharging) statusColor = forceFastChargeEnable ? [UIColor systemRedColor] : [UIColor colorWithRed:0.0f green:0.8f blue:0.4f alpha:1.0f];
+        if (isCharging) statusColor = chargeBoostEnable ? [UIColor systemBlueColor] : [UIColor colorWithRed:0.0f green:0.8f blue:0.4f alpha:1.0f];
         else if (cpu >= 80.0 || temp >= 42.0) statusColor = [UIColor systemRedColor];
         else if (temp >= 38.0) statusColor = [UIColor systemOrangeColor];
         _statusDot.backgroundColor = statusColor;
@@ -2300,7 +2344,7 @@ static void applySystemRefreshRate(void) {
     if (watts <= 0.1 && calcWatts > 0) {
         watts = calcWatts;
     }
-    _labelsDict[@"电池充电功率"].text = charging ? [NSString stringWithFormat:@"%.1fW", watts] : @"0W";
+    _labelsDict[@"电池充电功率"].text = charging ? [NSString stringWithFormat:@"%.1fW%@", watts, chargeBoostEnable ? @" · 增强" : @""] : @"0W";
 
     double currentmA = getBatteryCurrentInternal();
     _labelsDict[@"电池当前电流"].text = [NSString stringWithFormat:@"%.0fmA", currentmA];
@@ -2596,7 +2640,7 @@ static void applySystemRefreshRate(void) {
         else if (indexPath.row == 1) cell.textLabel.text = @"✌️ 双击悬浮窗：打开此高级设置中心";
         else if (indexPath.row == 2) cell.textLabel.text = @"👆 长按悬浮窗：全屏展示设备深层物理状态";
         else if (indexPath.row == 3) cell.textLabel.text = @"🤚 拖动悬浮窗：自由挪动位置并带物理回弹";
-        else if (indexPath.row == 4) cell.textLabel.text = @"🔋 满血快充：底层解除 80% 优化充电强力限流锁";
+        else if (indexPath.row == 4) cell.textLabel.text = @"🔋 充电增强：实时功率监测与高电量充电目标";
         return cell;
     }
 
@@ -2784,10 +2828,10 @@ static void applySystemRefreshRate(void) {
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%.1f°C", smartChargeLimitTemp];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else if (indexPath.row == 2) {
-            cell.textLabel.text = @"强制满血快充 (无视发热)";
+            cell.textLabel.text = @"充电增强（实时验证）";
             UISwitch *sw = [UISwitch new];
-            sw.on = forceFastChargeEnable;
-            [sw addTarget:self action:@selector(changeForceFastCharge:) forControlEvents:UIControlEventValueChanged];
+            sw.on = chargeBoostEnable;
+            [sw addTarget:self action:@selector(changeChargeBoost:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         }
     } else if (indexPath.section == 8) {
@@ -2981,7 +3025,7 @@ static void applySystemRefreshRate(void) {
 - (void)changeInsulationPocket:(UISwitch *)sw { blockPocketTemp = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeInsulationSunlight:(UISwitch *)sw { forceSunlightHBM = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeSmartChargeLimit:(UISwitch *)sw { smartChargeLimitEnable = sw.isOn; SavePreferencesAndNotify(); }
-- (void)changeForceFastCharge:(UISwitch *)sw { forceFastChargeEnable = sw.isOn; SavePreferencesAndNotify(); }
+- (void)changeChargeBoost:(UISwitch *)sw { chargeBoostEnable = sw.isOn; chargeBoostStartTime = sw.isOn ? CFAbsoluteTimeGetCurrent() : 0; lastChargeWatts = 0; previousChargeWatts = 0; chargeBoostBaselineWatts = 0; chargeBoostVerified = NO; SavePreferencesAndNotify(); }
 - (void)changeNotificationEnable:(UISwitch *)sw { notificationEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeWechatEnable:(UISwitch *)sw { wechatEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeQqEnable:(UISwitch *)sw { qqEnable = sw.isOn; SavePreferencesAndNotify(); }
