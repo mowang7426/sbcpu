@@ -750,7 +750,6 @@ static void updateCPU(void) {
         NSDictionary *chargeInfo = getRealBatteryDetails();
         // CalculatedWatts = 实时电压 × 实时电流；AdapterDetails.Watts 只是适配器额定信息，不能冒充实时充电功率。
         double chargeWatts = [chargeInfo[@"CalculatedWatts"] doubleValue];
-        double adapterWatts = [chargeInfo[@"Watts"] doubleValue];
         if (chargeWatts < 0) chargeWatts = 0;
         previousChargeWatts = lastChargeWatts;
         lastChargeWatts = chargeWatts;
@@ -1892,8 +1891,6 @@ static void applySystemRefreshRate(void) {
         if (chargeBoostEnable && isCharging) {
             NSDictionary *chargeInfo = getRealBatteryDetails();
             double watts = [chargeInfo[@"CalculatedWatts"] doubleValue];
-            double adapterWatts = [chargeInfo[@"Watts"] doubleValue];
-            if (adapterWatts > 0.1) watts = adapterWatts;
             NSString *state = chargeBoostStatus ?: @"实时监测中";
             if (chargeBoostSampleCount >= 5) {
                 _statusLabel.text = [NSString stringWithFormat:@"⚡ 功率优化 · %.1fW · 峰值 %.1fW", MAX(0.0, watts), chargeBoostPeakWatts];
