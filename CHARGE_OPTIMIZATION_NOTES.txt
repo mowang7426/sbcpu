@@ -1,8 +1,0 @@
-V2.9 功率优化修正版
-
-1. 不再写入 ChargeLimit=100；该属性不能保证提高实际充电功率。
-2. 实时功率以 AppleSmartBattery 的 Voltage × Amperage 计算值为准。
-3. AdapterDetails.Watts 不再覆盖实时功率，它仅作为适配器信息。
-4. 保留温度/高温断充保护逻辑。
-5. SBCPUFloating 仅用于 SpringBoard；SBCPUMitigation 仅用于 thermalmonitord/powerd。
-6. build.yml 明确设置 THEOS_MAKE_PATH，并在编译前检查 Theos 文件。
