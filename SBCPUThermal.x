@@ -214,6 +214,7 @@ static BOOL g_pressureSafetyOverride = NO;
 static SBCPUThermalPressureLevel g_currentPressureLevel = SBCPUThermalPressureLevelUnknown;
 static CFAbsoluteTime g_pressureNominalSince = 0;
 static int g_pressureNotifyToken = -1;
+static dispatch_source_t g_engineHeartbeatTimer = NULL;
 // 保留 SBCPUFloating 原有“强制满血快充”控制，仅在开关开启时拦截充电限制写入.
 static BOOL g_forceFastChargeEnabled = NO;
 static NSNumber *g_maxBacklightBrightnessValue = nil;
@@ -244,6 +245,8 @@ static void registerScreenWakeObservers(void);
 static void registerThermalPressureObserver(void);
 static void evaluateThermalPressureState(void);
 static void restoreUserModeAfterThermalPressure(void);
+static void publishThermalEngineHeartbeat(void);
+static void startThermalEngineHeartbeat(void);
 
 static void runtimeConfigSnapshot(BOOL *enabled, BOOL *cpuProtection, BOOL *blockNetwork, BOOL *blockPopup, BOOL *preventDimming) {
 os_unfair_lock_lock(&g_stateLock);
@@ -444,15 +447,51 @@ if (state == 0) restoreUserModeAfterWake("screen-on");
 else switchToLowPowerForSleep("screen-off");
 }
 
-static void publishThermalDiagnosticState(SBCPUThermalPressureLevel pressure, BOOL protectionActive) {
+static void publishThermalEngineHeartbeat(void) {
     int token = -1;
-    uint64_t value = 0;
+    uint64_t heartbeat = 0;
+    if (runtimeEnabled()) {
+        heartbeat = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
+    }
 
+    if (notify_register_check(SBCPUThermalDiagEngineHeartbeatNotif, &token) == NOTIFY_STATUS_OK) {
+        notify_set_state(token, heartbeat);
+        notify_post(SBCPUThermalDiagEngineHeartbeatNotif);
+        notify_cancel(token);
+    }
+
+    // 保留旧的 0/1 诊断通知，兼容旧版设置页。新设置页以 heartbeat 为准。
+    token = -1;
     if (notify_register_check(SBCPUThermalDiagEngineActiveNotif, &token) == NOTIFY_STATUS_OK) {
         notify_set_state(token, runtimeEnabled() ? 1 : 0);
         notify_post(SBCPUThermalDiagEngineActiveNotif);
         notify_cancel(token);
     }
+}
+
+static void startThermalEngineHeartbeat(void) {
+    if (g_engineHeartbeatTimer) return;
+    publishThermalEngineHeartbeat();
+
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                                                      dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
+    if (!timer) return;
+    g_engineHeartbeatTimer = timer;
+    dispatch_source_set_timer(timer,
+                              dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
+                              (uint64_t)(3.0 * NSEC_PER_SEC),
+                              (uint64_t)(0.2 * NSEC_PER_SEC));
+    dispatch_source_set_event_handler(timer, ^{
+        publishThermalEngineHeartbeat();
+    });
+    dispatch_resume(timer);
+}
+
+static void publishThermalDiagnosticState(SBCPUThermalPressureLevel pressure, BOOL protectionActive) {
+    int token = -1;
+    uint64_t value = 0;
+
+    publishThermalEngineHeartbeat();
 
     token = -1;
     if (notify_register_check(SBCPUThermalDiagBootSettledNotif, &token) == NOTIFY_STATUS_OK) {
@@ -2342,6 +2381,9 @@ else dispatch_async(dispatch_get_main_queue(), block);
 %ctor {
 @autoreleasepool {
 loadPrefs();
+// thermalmonitord 真正加载 SBCPUThermal 后立即开始心跳。
+// 设置页会据此判断核心是否真实存活，而不是只看用户开关。
+startThermalEngineHeartbeat();
 publishThermalDiagnosticState(SBCPUThermalPressureLevelUnknown, NO);
 
 // 确保 IOKit 已加载

@@ -2599,7 +2599,11 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     BOOL engineEnabled = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
     BOOL pressureProtectionEnabled = sbcputhermalGetBoolPref(@"thermalPressureAutoProtectionEnabled", YES);
     BOOL recoveryEnabled = sbcputhermalGetBoolPref(@"thermalNominalAutoRecoveryEnabled", YES);
-    uint64_t engine = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineActiveNotif, engineEnabled ? 1 : 0);
+    uint64_t engineHeartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
+    uint64_t engineLegacy = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineActiveNotif, 0);
+    uint64_t nowMS = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
+    // 只有最近 10 秒内有 thermalmonitord 心跳，才认为温控核心真实运行。
+    BOOL engineAlive = engineHeartbeat > 0 && nowMS >= engineHeartbeat && (nowMS - engineHeartbeat) <= 10000;
     uint64_t boot = sbcputhermalReadNotifyState(SBCPUThermalDiagBootSettledNotif, 0);
     uint64_t protection = sbcputhermalReadNotifyState(SBCPUThermalDiagProtectionNotif, 0);
     SBCPUThermalPressureLevel pressure = SBCPUThermalGetPressureLevel();
@@ -2609,8 +2613,12 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
     // 这里显示的是“实际温度压力 + 核心保护状态”，而不是只显示一个固定的 Nominal。
     // 温控核心关闭时明确告诉用户不会主动保护；启动静默期结束后再显示真实状态。
-    if (!engineEnabled || !engine) {
-        return [NSString stringWithFormat:@"当前：温控未开启\n温控核心没有运行，不会主动调整功耗。\n系统温度状态：%@", pressureText];
+    if (!engineEnabled) {
+        return [NSString stringWithFormat:@"当前：温控已关闭\n你已关闭温度保护，温控核心不会主动调整功耗。\n系统温度状态：%@", pressureText];
+    }
+
+    if (!engineAlive) {
+        return [NSString stringWithFormat:@"当前：温控核心未运行\n温度保护开关虽然已打开，但没有检测到温控核心正在工作。\n请先注销一次，让温控核心重新加载。\n系统温度状态：%@", pressureText];
     }
 
     if (!boot) {
