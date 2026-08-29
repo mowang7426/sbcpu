@@ -2600,7 +2600,6 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     BOOL pressureProtectionEnabled = sbcputhermalGetBoolPref(@"thermalPressureAutoProtectionEnabled", YES);
     BOOL recoveryEnabled = sbcputhermalGetBoolPref(@"thermalNominalAutoRecoveryEnabled", YES);
     uint64_t engineHeartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
-    uint64_t engineLegacy = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineActiveNotif, 0);
     uint64_t nowMS = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
     // 只有最近 10 秒内有 thermalmonitord 心跳，才认为温控核心真实运行。
     BOOL engineAlive = engineHeartbeat > 0 && nowMS >= engineHeartbeat && (nowMS - engineHeartbeat) <= 10000;
