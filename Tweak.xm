@@ -1014,6 +1014,7 @@ static void applySystemRefreshRate(void) {
     // V3.0 不再强制 120Hz；保留函数仅兼容旧配置调用。
 }
 
+@implementation SBCPUFPSHelper
 
 - (void)startMonitoring {
     if (_displayLink) return;
