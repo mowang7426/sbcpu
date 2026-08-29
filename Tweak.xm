@@ -1150,11 +1150,34 @@ static void applySystemRefreshRate(void) {
 
 - (void)extractAndHandleRequest:(id)req {
     @try {
-        NSString *bundleID = [req valueForKey:@"sectionIdentifier"];
-        id content = [req valueForKey:@"content"];
-        NSString *title = [content valueForKey:@"title"];
-        if (!title || title.length == 0) title = [content valueForKey:@"subtitle"];
-        NSString *message = [content valueForKey:@"message"];
+        // iOS 17 的通知链路里，请求对象可能是 NCNotificationRequest，
+        // 也可能在某些路径上表现得更像 UNNotificationRequest。
+        // 不再只依赖 KVC 的 sectionIdentifier，按 selector/KVC 多级兜底。
+        NSString *bundleID = nil;
+        if ([req respondsToSelector:@selector(sectionIdentifier)]) {
+            @try { bundleID = [req performSelector:@selector(sectionIdentifier)]; } @catch (NSException *e) {}
+        }
+        if (!bundleID) {
+            @try { bundleID = [req valueForKey:@"sectionIdentifier"]; } @catch (NSException *e) {}
+        }
+        if (![bundleID isKindOfClass:[NSString class]] || bundleID.length == 0) {
+            @try { bundleID = [req valueForKey:@"bundleIdentifier"]; } @catch (NSException *e) {}
+        }
+        if (![bundleID isKindOfClass:[NSString class]] || bundleID.length == 0) {
+            @try { bundleID = [req valueForKey:@"sourceIdentifier"]; } @catch (NSException *e) {}
+        }
+
+        id content = nil;
+        @try { content = [req valueForKey:@"content"]; } @catch (NSException *e) {}
+        if (!content && [req respondsToSelector:@selector(request)]) {
+            @try { content = [[req performSelector:@selector(request)] valueForKey:@"content"]; } @catch (NSException *e) {}
+        }
+        NSString *title = nil;
+        NSString *message = nil;
+        @try { title = [content valueForKey:@"title"]; } @catch (NSException *e) {}
+        if (!title || title.length == 0) { @try { title = [content valueForKey:@"subtitle"]; } @catch (NSException *e) {} }
+        @try { message = [content valueForKey:@"message"]; } @catch (NSException *e) {}
+        if (!message || message.length == 0) { @try { message = [content valueForKey:@"body"]; } @catch (NSException *e) {} }
         
         NSDictionary *payload = nil;
         @try {
@@ -3249,7 +3272,59 @@ static void registerV160Observers(void) {
 - (void)pocketStateDidChange:(NSInteger)state { if (blockPocketTemp) %orig(0); else %orig(state); }
 %end
 
-// 🚀 终极通知拦截阵列
+// ============================================================
+// 游戏前台状态：进入 QQ 飞车等目标游戏时，立即展开 CPU 浮窗。
+// 这一条不再依赖 SpringBoard 自己的 interfaceOrientation，
+// 因为开启系统竖屏锁定后，游戏强制横屏时 SpringBoard 可能仍返回 Portrait。
+// ============================================================
+static BOOL SBCPUIsTargetGameBundle(NSString *bundleID) {
+    if (![bundleID isKindOfClass:[NSString class]] || bundleID.length == 0) return NO;
+    NSString *b = bundleID.lowercaseString;
+    return [b isEqualToString:@"com.tencent.speedmobile"] ||
+           [b isEqualToString:@"com.tencent.tmgp.speedmobile"] ||
+           [b isEqualToString:@"com.tencent.tmgp.qqspeed"] ||
+           [b containsString:@"qqspeed"];
+}
+
+%hook SpringBoard
+- (void)frontDisplayDidChange:(id)arg1 {
+    %orig;
+    if (!autoExpandLandscape || !floatingView) return;
+    NSString *bundleID = nil;
+    if ([arg1 respondsToSelector:@selector(bundleIdentifier)]) {
+        @try { bundleID = [arg1 performSelector:@selector(bundleIdentifier)]; } @catch (NSException *e) {}
+    }
+    if (!SBCPUIsTargetGameBundle(bundleID)) return;
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!floatingView || !autoExpandLandscape) return;
+        if (floatingView.isCollapsed && !floatingView.isShowingNotification &&
+            !settingsShowing && !detailShowing) {
+            [floatingView expandFromEdgeAnimated:YES];
+        }
+        // 游戏可能随后才完成横屏切换，延迟再次校正一次。
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (!floatingView || !autoExpandLandscape) return;
+            if (floatingView.isCollapsed && !floatingView.isShowingNotification &&
+                !settingsShowing && !detailShowing) {
+                [floatingView expandFromEdgeAnimated:YES];
+            }
+            updateFloatingSize();
+        });
+    });
+}
+%end
+
+// iOS 17 实际通知链路会经过 SBNotificationBannerDestination。
+// 直接在这里拿 NCNotificationRequest，比旧版只挂 NCNotificationDispatcher 更可靠。
+%hook SBNotificationBannerDestination
+- (void)postNotificationRequest:(id)arg1 forCoalescedNotification:(id)arg2 {
+    %orig;
+    [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1];
+}
+%end
+
+// 🚀 通知分发器兜底
 %hook NCNotificationDispatcher
 - (void)postNotificationWithRequest:(id)arg1 { %orig; [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1]; }
 - (void)receiveNotificationRequest:(id)arg1 { %orig; [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1]; }

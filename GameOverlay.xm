@@ -3,7 +3,7 @@
 #import <notify.h>
 
 // ============================================================
-// SBCPUGameOverlay V2.9.5.9
+// SBCPUGameOverlay V2.9.5.10
 // 真正挂到游戏自己的 UIWindow 上，跟随游戏 UI 一起旋转。
 // 不再创建独立 UIWindow，避免 iOS 17 + 系统竖屏锁定时出现
 // “黑色横向大胶囊 / 文字倒置 / 横屏尺寸仍按竖屏计算”的问题。
@@ -16,6 +16,8 @@ static UILabel *SBCPUGameCount = nil;
 static UIWindow *SBCPUGameHostWindow = nil;
 static NSUInteger SBCPUGameGeneration = 0;
 static BOOL SBCPUGameVisible = NO;
+static NSTimer *SBCPUGamePollTimer = nil;
+static NSTimeInterval SBCPULastBannerTimestamp = 0;
 
 static NSString * const kGameBannerPath = @"/var/mobile/Library/Preferences/com.yourname.sbcpufloating.gamebanner.plist";
 static const char *kGameBannerNotify = "com.yourname.sbcpufloating.gamebanner";
@@ -292,7 +294,21 @@ static void SBCPUShowGamePillFromDictionary(NSDictionary *data) {
 
 static void SBCPUReadAndShowGameBanner(void) {
     NSDictionary *data = [NSDictionary dictionaryWithContentsOfFile:kGameBannerPath];
-    if (data) SBCPUShowGamePillFromDictionary(data);
+    if (![data isKindOfClass:[NSDictionary class]]) return;
+
+    NSNumber *ts = [data[@"timestamp"] isKindOfClass:[NSNumber class]] ? data[@"timestamp"] : nil;
+    NSTimeInterval timestamp = ts ? ts.doubleValue : 0.0;
+    if (timestamp > 0.0 && timestamp <= SBCPULastBannerTimestamp) return;
+    if (timestamp > 0.0) SBCPULastBannerTimestamp = timestamp;
+    SBCPUShowGamePillFromDictionary(data);
+}
+
+static void SBCPUStartGameBannerPolling(void) {
+    if (SBCPUGamePollTimer) return;
+    SBCPUGamePollTimer = [NSTimer scheduledTimerWithTimeInterval:0.45 repeats:YES block:^(NSTimer *timer) {
+        (void)timer;
+        SBCPUReadAndShowGameBanner();
+    }];
 }
 
 static void SBCPURegisterGameBannerNotification(void) {
@@ -330,6 +346,13 @@ __attribute__((constructor)) static void SBCPUGameOverlayInit(void) {
             SBCPUCreateGamePillIfNeeded();
             SBCPUAttachGamePillToHostWindow();
             SBCPUReadAndShowGameBanner();
+            SBCPUStartGameBannerPolling();
         });
+
+        // 游戏启动/重建 UIWindow 时，定期重新寻找宿主窗口。
+        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) {
+            (void)timer;
+            SBCPUAttachGamePillToHostWindow();
+        }];
     });
 }

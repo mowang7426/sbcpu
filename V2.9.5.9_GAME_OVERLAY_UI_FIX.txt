@@ -1,3 +1,5 @@
+SBCPUFloating V2.9.5.10
+
 SBCPUFloating V2.9.5.9
 
 横屏 GameOverlay 侧边胶囊修复：
@@ -7,3 +9,11 @@ SBCPUFloating V2.9.5.9
 4. 横屏胶囊改为约 82pt 宽、360~430pt 高，更接近目标视频中的窄长侧边胶囊。
 5. 胶囊本身不旋转，只旋转内部文字/数字/图标，避免布局跑位。
 6. 顶部 CPU/FPS 浮窗保持不变。
+
+
+V2.9.5.10 通知/自动展开修复：
+1. 增加 SBNotificationBannerDestination.postNotificationRequest:forCoalescedNotification: 作为 iOS 17 通知入口。
+2. 通知 bundleID/title/message 增加多级兼容读取，兼容 NCNotificationRequest/UNNotificationRequest。
+3. 进入目标游戏时通过 SpringBoard frontDisplayDidChange 自动展开，不再依赖 SpringBoard orientation。
+4. 游戏进程增加共享 plist 轮询作为 Darwin notify 备用通道，避免 Darwin notify 丢失导致游戏内无反应。
+5. 游戏 UIWindow 每秒重新绑定，避免游戏切换场景后胶囊失去宿主。
