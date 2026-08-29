@@ -2596,20 +2596,44 @@ static NSString *sbcputhermalPressureChinese(SBCPUThermalPressureLevel pressure)
 }
 
 static NSString *sbcputhermalCurrentStatusDetail(void) {
-    uint64_t engine = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineActiveNotif, 0);
+    BOOL engineEnabled = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
+    BOOL pressureProtectionEnabled = sbcputhermalGetBoolPref(@"thermalPressureAutoProtectionEnabled", YES);
+    BOOL recoveryEnabled = sbcputhermalGetBoolPref(@"thermalNominalAutoRecoveryEnabled", YES);
+    uint64_t engine = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineActiveNotif, engineEnabled ? 1 : 0);
     uint64_t boot = sbcputhermalReadNotifyState(SBCPUThermalDiagBootSettledNotif, 0);
     uint64_t protection = sbcputhermalReadNotifyState(SBCPUThermalDiagProtectionNotif, 0);
     SBCPUThermalPressureLevel pressure = SBCPUThermalGetPressureLevel();
-    if (!engine || !sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES)) {
-        return @"当前：未开启\n温控核心没有运行，不会主动进行温度保护。";
+    NSString *pressureText = sbcputhermalPressureChinese(pressure);
+    NSString *mode = sbcputhermalGetStringPref(@"powerMode", @"fullPower");
+    BOOL lowPowerMode = [mode isEqualToString:@"lowPower"];
+
+    // 这里显示的是“实际温度压力 + 核心保护状态”，而不是只显示一个固定的 Nominal。
+    // 温控核心关闭时明确告诉用户不会主动保护；启动静默期结束后再显示真实状态。
+    if (!engineEnabled || !engine) {
+        return [NSString stringWithFormat:@"当前：温控未开启\n温控核心没有运行，不会主动调整功耗。\n系统温度状态：%@", pressureText];
     }
+
     if (!boot) {
-        return [NSString stringWithFormat:@"当前：正在启动\n温控核心正在准备中，请等待几秒。\n系统温度：%@", sbcputhermalPressureChinese(pressure)];
+        return [NSString stringWithFormat:@"当前：正在启动\n温控核心正在准备中，启动后约 8 秒开始正式保护。\n系统温度状态：%@", pressureText];
     }
+
     if (protection) {
-        return [NSString stringWithFormat:@"当前：保护中\n检测到设备温度压力较高，正在自动降低功耗。\n系统温度：%@", sbcputhermalPressureChinese(pressure)];
+        return [NSString stringWithFormat:@"当前：高温保护中\n检测到系统温度压力较高，正在自动降低功耗帮助降温。\n系统温度状态：%@", pressureText];
     }
-    return [NSString stringWithFormat:@"当前：正常\n温控核心正在工作，目前没有启动降功耗保护。\n系统温度：%@", sbcputhermalPressureChinese(pressure)];
+
+    if (pressure >= SBCPUThermalPressureLevelHeavy && pressure <= SBCPUThermalPressureLevelSleeping) {
+        if (pressureProtectionEnabled) {
+            return [NSString stringWithFormat:@"当前：检测到高温\n温度压力已经较高，正在准备进入保护。\n系统温度状态：%@", pressureText];
+        }
+        return [NSString stringWithFormat:@"当前：高温，但自动保护已关闭\n检测到系统温度压力较高，目前不会自动降低功耗。\n系统温度状态：%@", pressureText];
+    }
+
+    if (lowPowerMode) {
+        NSString *recoveryText = recoveryEnabled ? @"温度恢复正常后会自动恢复。" : @"已关闭温度恢复自动切换。";
+        return [NSString stringWithFormat:@"当前：低功耗运行\n你选择了省电模式，温控核心正在正常工作。%@\n系统温度状态：%@", recoveryText, pressureText];
+    }
+
+    return [NSString stringWithFormat:@"当前：正常运行\n温控核心正在正常工作，目前没有启动高温保护。\n系统温度状态：%@", pressureText];
 }
 
 // ==============================================
@@ -2652,12 +2676,28 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
 - (void)refreshThermalStatus {
     if (!self.isViewLoaded || !self.view.window) return;
-    NSIndexPath *path = [NSIndexPath indexPathForRow:8 inSection:6];
-    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
-    if (cell) {
-        cell.detailTextLabel.text = sbcputhermalCurrentStatusDetail();
-        cell.detailTextLabel.numberOfLines = 0;
-        [cell setNeedsLayout];
+
+    NSString *detail = sbcputhermalCurrentStatusDetail();
+    UITableViewCell *targetCell = nil;
+
+    // 不再依赖固定 section/row，避免以后新增设置项导致状态刷新错位。
+    for (UITableViewCell *cell in self.tableView.visibleCells) {
+        if ([cell.textLabel.text isEqualToString:@"温度保护当前状态"]) {
+            targetCell = cell;
+            break;
+        }
+    }
+
+    if (!targetCell) {
+        NSIndexPath *path = [NSIndexPath indexPathForRow:8 inSection:6];
+        targetCell = [self.tableView cellForRowAtIndexPath:path];
+    }
+
+    if (targetCell) {
+        targetCell.detailTextLabel.text = detail;
+        targetCell.detailTextLabel.numberOfLines = 0;
+        targetCell.detailTextLabel.lineBreakMode = NSLineBreakByWordWrapping;
+        [targetCell setNeedsLayout];
     }
 }
 
@@ -3247,7 +3287,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
     (void)tableView;
     if (indexPath.section == 6) {
-        if (indexPath.row == 8) return 118.0;
+        if (indexPath.row == 8) return 150.0;
         return (indexPath.row == 9) ? 72.0 : 64.0;
     }
     if (indexPath.section == 10) {
