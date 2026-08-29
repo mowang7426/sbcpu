@@ -2619,28 +2619,6 @@ static uint64_t sbcputhermalReadNotifyState(const char *name, uint64_t fallback)
     return state;
 }
 
-// RootHide 下部分进程的 Darwin notify 状态可能不在同一个可见空间。
-// 温控核心同时写入 /var/tmp 心跳，SpringBoard 优先读取这个跨进程心跳。
-static uint64_t sbcputhermalReadHeartbeatFile(void) {
-    uint64_t newest = 0;
-    for (NSString *path in SBCPUThermalHeartbeatPaths()) {
-        if (path.length == 0) continue;
-        FILE *fp = fopen(path.fileSystemRepresentation, "r");
-        if (!fp) continue;
-        unsigned long long value = 0;
-        int ok = fscanf(fp, "%llu", &value);
-        fclose(fp);
-        if (ok == 1 && (uint64_t)value > newest) newest = (uint64_t)value;
-    }
-    return newest;
-}
-
-static uint64_t sbcputhermalCurrentUnixMilliseconds(void) {
-    struct timeval tv = {0};
-    gettimeofday(&tv, NULL);
-    return ((uint64_t)tv.tv_sec * 1000ULL) + ((uint64_t)tv.tv_usec / 1000ULL);
-}
-
 static NSString *sbcputhermalPressureChinese(SBCPUThermalPressureLevel pressure) {
     switch (pressure) {
         case SBCPUThermalPressureLevelNominal: return @"正常";
