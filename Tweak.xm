@@ -7,7 +7,6 @@
 #import <mach/host_info.h>
 #import <mach/processor_info.h>
 #import <mach-o/dyld_images.h>
-#include <libproc.h>
 #include <limits.h>
 #import <signal.h>
 #import <IOKit/IOKitLib.h>
@@ -20,6 +19,7 @@
 #import <CoreMotion/CoreMotion.h>
 #import <notify.h>
 #import <objc/runtime.h>
+#import <dlfcn.h>
 #import "SBCPUThermalPaths.h"
 #import "SBCPUThermalPressure.h"
 
@@ -2684,32 +2684,120 @@ static void registerThermalHeartbeatListener(void) {
 // 直接找到 thermalmonitord，并读取它的 dyld 镜像列表；只要其中存在
 // SBCPUThermal.dylib，就认为温控核心已经真正加载到 thermalmonitord。
 // ============================================================================
+// ============================================================================
+// 温控核心真实加载检测（不依赖 libproc.h）
+//
+// iOS 16.5 Theos SDK 不提供 <libproc.h>，因此这里不直接 include 私有头文件。
+// 改为运行时加载 /usr/lib/libproc.dylib，并通过 proc_pidinfo +
+// proc_regionfilename 枚举 thermalmonitord 的内存区域路径。
+// 只要找到 SBCPUThermal.dylib，就认定温控核心已经加载。
+// ============================================================================
+#ifndef PROC_ALL_PIDS
+#define PROC_ALL_PIDS 1
+#endif
+#ifndef PROC_PIDTBSDINFO
+#define PROC_PIDTBSDINFO 3
+#endif
+#ifndef PROC_PIDREGIONINFO
+#define PROC_PIDREGIONINFO 7
+#endif
+#ifndef PROC_PIDPATHINFO_MAXSIZE
+#define PROC_PIDPATHINFO_MAXSIZE 4096
+#endif
+#ifndef MAXCOMLEN
+#define MAXCOMLEN 16
+#endif
+#ifndef MAXPATHLEN
+#define MAXPATHLEN 1024
+#endif
+
+typedef int (*SBCPUProcListPidsFn)(uint32_t type, uint32_t typeinfo, void *buffer, int buffersize);
+typedef int (*SBCPUProcNameFn)(int pid, void *buffer, uint32_t buffersize);
+typedef int (*SBCPUProcPidInfoFn)(int pid, int flavor, uint64_t arg, void *buffer, int buffersize);
+typedef int (*SBCPUProcRegionFilenameFn)(int pid, uint64_t address, void *buffer, uint32_t buffersize);
+
+typedef struct {
+    uint32_t pri_protection;
+    uint32_t pri_max_protection;
+    uint32_t pri_inheritance;
+    uint32_t pri_flags;
+    uint64_t pri_offset;
+    uint32_t pri_behavior;
+    uint32_t pri_user_wired_count;
+    uint32_t pri_user_tag;
+    uint32_t pri_pages_resident;
+    uint32_t pri_pages_shared_now_private;
+    uint32_t pri_pages_swapped_out;
+    uint32_t pri_pages_dirtied;
+    uint32_t pri_ref_count;
+    uint32_t pri_shadow_depth;
+    uint32_t pri_share_mode;
+    uint32_t pri_private_pages_resident;
+    uint32_t pri_shared_pages_resident;
+    uint32_t pri_obj_id;
+    uint32_t pri_depth;
+    uint64_t pri_address;
+    uint64_t pri_size;
+} SBCPUProcRegionInfo;
+
+typedef struct {
+    uint32_t pbi_flags;
+    uint32_t pbi_status;
+    uint32_t pbi_xstatus;
+    uint32_t pbi_pid;
+    uint32_t pbi_ppid;
+    uid_t pbi_uid;
+    gid_t pbi_gid;
+    uid_t pbi_ruid;
+    gid_t pbi_rgid;
+    uid_t pbi_svuid;
+    gid_t pbi_svgid;
+    uint32_t rfu_1;
+    char pbi_comm[MAXCOMLEN];
+    char pbi_name[2 * MAXCOMLEN];
+} SBCPUProcBSDInfo;
+
+static void *sbcputhermalLoadLibProc(void) {
+    static void *handle = NULL;
+    static BOOL attempted = NO;
+    if (!attempted) {
+        attempted = YES;
+        handle = dlopen("/usr/lib/libproc.dylib", RTLD_LAZY | RTLD_LOCAL);
+        if (!handle) handle = dlopen("/usr/lib/system/libproc.dylib", RTLD_LAZY | RTLD_LOCAL);
+    }
+    return handle;
+}
+
 static pid_t sbcputhermalFindThermalMonitorPID(void) {
-    int bytes = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
+    void *handle = sbcputhermalLoadLibProc();
+    if (!handle) return -1;
+
+    SBCPUProcListPidsFn proc_listpids_fn = (SBCPUProcListPidsFn)dlsym(handle, "proc_listpids");
+    SBCPUProcNameFn proc_name_fn = (SBCPUProcNameFn)dlsym(handle, "proc_name");
+    if (!proc_listpids_fn || !proc_name_fn) return -1;
+
+    int bytes = proc_listpids_fn(PROC_ALL_PIDS, 0, NULL, 0);
     if (bytes <= 0) return -1;
 
-    int count = bytes / (int)sizeof(pid_t);
-    size_t bufferSize = (size_t)count * sizeof(pid_t);
-    pid_t *pids = (pid_t *)malloc(bufferSize);
+    size_t bufferSize = (size_t)bytes + (128 * sizeof(pid_t));
+    pid_t *pids = (pid_t *)calloc(1, bufferSize);
     if (!pids) return -1;
 
-    int actualBytes = proc_listpids(PROC_ALL_PIDS, 0, pids, (int)bufferSize);
+    int actualBytes = proc_listpids_fn(PROC_ALL_PIDS, 0, pids, (int)bufferSize);
     pid_t found = -1;
     if (actualBytes > 0) {
-        int actualCount = actualBytes / (int)sizeof(pid_t);
-        for (int i = 0; i < actualCount; i++) {
+        int count = actualBytes / (int)sizeof(pid_t);
+        for (int i = 0; i < count; i++) {
             pid_t pid = pids[i];
             if (pid <= 0) continue;
-
             char name[PROC_PIDPATHINFO_MAXSIZE] = {0};
-            int nameLen = proc_name(pid, name, sizeof(name));
+            int nameLen = proc_name_fn(pid, name, sizeof(name));
             if (nameLen > 0 && strcmp(name, "thermalmonitord") == 0) {
                 found = pid;
                 break;
             }
         }
     }
-
     free(pids);
     return found;
 }
@@ -2717,78 +2805,46 @@ static pid_t sbcputhermalFindThermalMonitorPID(void) {
 static BOOL sbcputhermalThermalMonitorHasCore(BOOL *permissionLimited) {
     if (permissionLimited) *permissionLimited = NO;
 
-    pid_t pid = sbcputhermalFindThermalMonitorPID();
-    if (pid <= 0) return NO;
-
-    mach_port_t task = MACH_PORT_NULL;
-    kern_return_t kr = task_for_pid(mach_task_self(), pid, &task);
-    if (kr != KERN_SUCCESS || !MACH_PORT_VALID(task)) {
+    void *handle = sbcputhermalLoadLibProc();
+    if (!handle) {
         if (permissionLimited) *permissionLimited = YES;
         return NO;
     }
 
-    task_dyld_info_data_t dyldInfo = {0};
-    mach_msg_type_number_t count = TASK_DYLD_INFO_COUNT;
-    kr = task_info(task, TASK_DYLD_INFO, (task_info_t)&dyldInfo, &count);
-    if (kr != KERN_SUCCESS || dyldInfo.all_image_info_addr == 0) {
-        mach_port_deallocate(mach_task_self(), task);
+    SBCPUProcPidInfoFn proc_pidinfo_fn = (SBCPUProcPidInfoFn)dlsym(handle, "proc_pidinfo");
+    SBCPUProcRegionFilenameFn proc_regionfilename_fn = (SBCPUProcRegionFilenameFn)dlsym(handle, "proc_regionfilename");
+    if (!proc_pidinfo_fn || !proc_regionfilename_fn) {
+        if (permissionLimited) *permissionLimited = YES;
         return NO;
     }
 
-    struct dyld_all_image_infos infos = {0};
-    mach_vm_size_t outSize = 0;
-    kr = mach_vm_read_overwrite(task,
-                                (mach_vm_address_t)dyldInfo.all_image_info_addr,
-                                sizeof(infos),
-                                (mach_vm_address_t)&infos,
-                                &outSize);
-    if (kr != KERN_SUCCESS || outSize < sizeof(infos) || infos.infoArrayCount == 0 || infos.infoArray == NULL) {
-        mach_port_deallocate(mach_task_self(), task);
-        return NO;
-    }
+    pid_t pid = sbcputhermalFindThermalMonitorPID();
+    if (pid <= 0) return NO;
 
-    // 防止异常进程数据造成超大内存分配。
-    uint32_t imageCount = infos.infoArrayCount;
-    if (imageCount > 4096) imageCount = 4096;
+    uint64_t address = 0;
+    BOOL sawRegion = NO;
+    for (int guard = 0; guard < 200000; guard++) {
+        SBCPUProcRegionInfo region = {0};
+        int result = proc_pidinfo_fn(pid, PROC_PIDREGIONINFO, address, &region, (int)sizeof(region));
+        if (result < (int)sizeof(region)) break;
 
-    size_t arraySize = (size_t)imageCount * sizeof(struct dyld_image_info);
-    struct dyld_image_info *images = (struct dyld_image_info *)malloc(arraySize);
-    if (!images) {
-        mach_port_deallocate(mach_task_self(), task);
-        return NO;
-    }
+        sawRegion = YES;
+        if (region.pri_size == 0) break;
 
-    BOOL found = NO;
-    outSize = 0;
-    kr = mach_vm_read_overwrite(task,
-                                (mach_vm_address_t)infos.infoArray,
-                                arraySize,
-                                (mach_vm_address_t)images,
-                                &outSize);
-    if (kr == KERN_SUCCESS && outSize >= arraySize) {
-        for (uint32_t i = 0; i < imageCount; i++) {
-            if (images[i].imageFilePath == 0) continue;
-
-            char path[PATH_MAX] = {0};
-            mach_vm_size_t pathOut = 0;
-            kr = mach_vm_read_overwrite(task,
-                                        (mach_vm_address_t)images[i].imageFilePath,
-                                        sizeof(path) - 1,
-                                        (mach_vm_address_t)path,
-                                        &pathOut);
-            if (kr != KERN_SUCCESS || pathOut == 0) continue;
-
+        char path[MAXPATHLEN] = {0};
+        int pathLen = proc_regionfilename_fn(pid, region.pri_address, path, sizeof(path));
+        if (pathLen > 0) {
             path[sizeof(path) - 1] = '\0';
-            if (strstr(path, "SBCPUThermal.dylib") != NULL) {
-                found = YES;
-                break;
-            }
+            if (strstr(path, "SBCPUThermal.dylib") != NULL) return YES;
         }
+
+        uint64_t next = region.pri_address + region.pri_size;
+        if (next <= address) break;
+        address = next;
     }
 
-    free(images);
-    mach_port_deallocate(mach_task_self(), task);
-    return found;
+    if (!sawRegion && permissionLimited) *permissionLimited = YES;
+    return NO;
 }
 
 static BOOL sbcputhermalCoreActuallyLoaded(BOOL *permissionLimited) {
