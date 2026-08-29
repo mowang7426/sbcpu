@@ -26,29 +26,42 @@ static const char *kSBCPUThermalHeartbeatFileC = "/var/tmp/com.yourname.sbcpuflo
 
 static inline NSString *SBCPUThermalCurrentRootHideRoot(void);
 
-// RootHide 下统一解析温控心跳路径。SpringBoard 与 thermalmonitord 必须读取同一份
-// .jbroot-UUID 里的文件，否则会出现“核心实际运行，但界面显示未运行”。
-static inline NSString *SBCPUThermalCurrentHeartbeatPath(void) {
+/*
+ * 温控核心心跳：RootHide 下不要假设只有一个路径空间。
+ * 同时维护多个候选位置，生产端写入全部可写位置，SpringBoard 逐个读取。
+ * 这样即使 thermalmonitord 与 SpringBoard 的路径视图不同，也能识别核心。
+ */
+static inline NSArray<NSString *> *SBCPUThermalHeartbeatPaths(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+
+    NSString *raw = S(@"/var/tmp/com.yourname.sbcpufloating.thermal.heartbeat");
+    [paths addObject:raw];
+
+    NSString *varJB = S(@"/var/jb/var/tmp/com.yourname.sbcpufloating.thermal.heartbeat");
+    if (![paths containsObject:varJB]) [paths addObject:varJB];
 
     NSString *rootHideRoot = SBCPUThermalCurrentRootHideRoot();
     if (rootHideRoot.length > 0) {
-        NSString *candidate = [rootHideRoot stringByAppendingPathComponent:S("var/tmp/com.yourname.sbcpufloating.thermal.heartbeat")];
-        if ([fm fileExistsAtPath:candidate]) return candidate;
-        // 即使文件还不存在，也返回统一的 RootHide 路径，供生产端创建。
-        return candidate;
+        NSString *candidate = [rootHideRoot stringByAppendingPathComponent:
+            S(@"var/tmp/com.yourname.sbcpufloating.thermal.heartbeat")];
+        if (![paths containsObject:candidate]) [paths addObject:candidate];
     }
 
     const char *converted = jbroot(kSBCPUThermalHeartbeatFileC);
     if (converted && strlen(converted) > 0) {
         NSString *candidate = [NSString stringWithUTF8String:converted];
-        if (candidate.length > 0) return candidate;
+        if (candidate.length > 0 && ![paths containsObject:candidate])
+            [paths addObject:candidate];
     }
 
-    NSString *raw = [NSString stringWithUTF8String:kSBCPUThermalHeartbeatFileC];
-    NSString *varJB = [S("/var/jb") stringByAppendingPathComponent:S("var/tmp/com.yourname.sbcpufloating.thermal.heartbeat")];
-    if ([fm fileExistsAtPath:varJB]) return varJB;
-    return raw;
+    return paths;
+}
+
+/* 保留旧接口：调用方如果只需要一个首选路径，返回候选列表第一个。 */
+static inline NSString *SBCPUThermalCurrentHeartbeatPath(void) {
+    NSArray<NSString *> *paths = SBCPUThermalHeartbeatPaths();
+    return paths.firstObject ?: S(kSBCPUThermalHeartbeatFileC);
 }
 
 
