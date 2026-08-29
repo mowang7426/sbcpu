@@ -24,6 +24,33 @@ static const uint64_t kSBCPUThermalPowerModeStateLow = 1;
 // /var/tmp 由 thermalmonitord 与 SpringBoard 共同可见。
 static const char *kSBCPUThermalHeartbeatFileC = "/var/tmp/com.yourname.sbcpufloating.thermal.heartbeat";
 
+static inline NSString *SBCPUThermalCurrentRootHideRoot(void);
+
+// RootHide 下统一解析温控心跳路径。SpringBoard 与 thermalmonitord 必须读取同一份
+// .jbroot-UUID 里的文件，否则会出现“核心实际运行，但界面显示未运行”。
+static inline NSString *SBCPUThermalCurrentHeartbeatPath(void) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+
+    NSString *rootHideRoot = SBCPUThermalCurrentRootHideRoot();
+    if (rootHideRoot.length > 0) {
+        NSString *candidate = [rootHideRoot stringByAppendingPathComponent:S("var/tmp/com.yourname.sbcpufloating.thermal.heartbeat")];
+        if ([fm fileExistsAtPath:candidate]) return candidate;
+        // 即使文件还不存在，也返回统一的 RootHide 路径，供生产端创建。
+        return candidate;
+    }
+
+    const char *converted = jbroot(kSBCPUThermalHeartbeatFileC);
+    if (converted && strlen(converted) > 0) {
+        NSString *candidate = [NSString stringWithUTF8String:converted];
+        if (candidate.length > 0) return candidate;
+    }
+
+    NSString *raw = [NSString stringWithUTF8String:kSBCPUThermalHeartbeatFileC];
+    NSString *varJB = [S("/var/jb") stringByAppendingPathComponent:S("var/tmp/com.yourname.sbcpufloating.thermal.heartbeat")];
+    if ([fm fileExistsAtPath:varJB]) return varJB;
+    return raw;
+}
+
 
 // Darwin notify state 直接携带模式，避免 thermalmonitord 因偏好路径/缓存读到旧值。
 static inline int SBCPUThermalPostPowerMode(NSString *mode) {
