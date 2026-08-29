@@ -3,7 +3,7 @@
 #import <notify.h>
 
 // ============================================================
-// SBCPUGameOverlay V2.9.5.8
+// SBCPUGameOverlay V2.9.5.9
 // 真正挂到游戏自己的 UIWindow 上，跟随游戏 UI 一起旋转。
 // 不再创建独立 UIWindow，避免 iOS 17 + 系统竖屏锁定时出现
 // “黑色横向大胶囊 / 文字倒置 / 横屏尺寸仍按竖屏计算”的问题。
@@ -90,38 +90,43 @@ static void SBCPUApplyGamePillLayout(void) {
         // 重点：不旋转整个容器，只旋转里面的文字内容。
         // 尺寸按 iOS point 计算，避免旧版 82x420/630 造成过宽过长。
         // ========================================================
-        CGFloat width = 50.0;
-        CGFloat height = MIN(245.0, MAX(205.0, b.size.height - 120.0));
-        if (height > b.size.height - 20.0) height = MAX(180.0, b.size.height - 20.0);
+        // 参考目标效果：左侧是一个明显的窄长黑色侧边胶囊，
+        // 而不是 50pt 的“黑线”。iPhone 横屏高度约 375~430pt 时，
+        // 让胶囊高度约占屏幕 55%~75%。
+        CGFloat width = 82.0;
+        CGFloat minHeight = 360.0;
+        CGFloat maxHeight = MIN(430.0, b.size.height - 24.0);
+        CGFloat height = MAX(minHeight, maxHeight);
+        if (height > b.size.height - 12.0) height = MAX(280.0, b.size.height - 12.0);
 
         CGFloat x = 0.0;
-        CGFloat y = MAX(10.0, (b.size.height - height) * 0.5);
+        CGFloat y = MAX(6.0, (b.size.height - height) * 0.5);
 
         SBCPUGamePill.transform = CGAffineTransformIdentity;
         SBCPUGamePill.bounds = CGRectMake(0, 0, width, height);
         SBCPUGamePill.center = CGPointMake(x + width * 0.5, y + height * 0.5);
         SBCPUGamePill.layer.cornerRadius = width * 0.5;
 
-        // 蓝色菱形：保持原有视觉语言，放在侧边胶囊下半区。
+        // 蓝色菱形：放在侧边胶囊靠下的位置。
         SBCPUGameIcon.transform = CGAffineTransformMakeRotation((CGFloat)-M_PI_2);
-        SBCPUGameIcon.bounds = CGRectMake(0, 0, 26.0, 26.0);
-        SBCPUGameIcon.center = CGPointMake(width * 0.5, height - 47.0);
+        SBCPUGameIcon.bounds = CGRectMake(0, 0, 24.0, 24.0);
+        SBCPUGameIcon.center = CGPointMake(width * 0.5, height - 48.0);
 
-        // 应用名/通知标题：先按横向文字布局，再整体逆时针 90°。
-        // 旋转后的实际显示区域约为 20 x 150~175，正好位于窄胶囊中央。
+        // 关键修复：UILabel 自己旋转，但“胶囊容器”绝不旋转。
+        // 这样内容不会跑到屏幕底部，也不会形成一条空黑色横条。
         SBCPUGameApp.transform = CGAffineTransformMakeRotation((CGFloat)-M_PI_2);
-        CGFloat textWidth = MIN(175.0, MAX(135.0, height - 62.0));
+        CGFloat textWidth = MIN(300.0, MAX(220.0, height - 86.0));
         SBCPUGameApp.bounds = CGRectMake(0, 0, textWidth, 18.0);
-        SBCPUGameApp.center = CGPointMake(width * 0.5, height * 0.5 + 2.0);
+        SBCPUGameApp.center = CGPointMake(width * 0.5, height * 0.52);
         SBCPUGameApp.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightSemibold];
         SBCPUGameApp.adjustsFontSizeToFitWidth = YES;
-        SBCPUGameApp.minimumScaleFactor = 0.70;
+        SBCPUGameApp.minimumScaleFactor = 0.65;
 
-        // 数字：竖向显示，靠近底部。
+        // 数字保持同一阅读方向，位于最底部。
         SBCPUGameCount.transform = CGAffineTransformMakeRotation((CGFloat)-M_PI_2);
-        SBCPUGameCount.bounds = CGRectMake(0, 0, 28.0, 24.0);
+        SBCPUGameCount.bounds = CGRectMake(0, 0, 30.0, 24.0);
         SBCPUGameCount.center = CGPointMake(width * 0.5, height - 20.0);
-        SBCPUGameCount.font = [UIFont systemFontOfSize:18.0 weight:UIFontWeightBold];
+        SBCPUGameCount.font = [UIFont systemFontOfSize:19.0 weight:UIFontWeightBold];
 
     } else {
         // 竖屏：顶部小胶囊，保持原来的正常阅读方向。
@@ -164,6 +169,11 @@ static void SBCPUAttachGamePillToHostWindow(void) {
         }
 
         SBCPUApplyGamePillLayout();
+        // 只有正在显示通知时才让胶囊可见；初始化/切换窗口时保持隐藏。
+        if (!SBCPUGameVisible) {
+            SBCPUGamePill.hidden = YES;
+            SBCPUGamePill.alpha = 0.0;
+        }
     });
 }
 
@@ -175,6 +185,9 @@ static void SBCPUCreateGamePillIfNeeded(void) {
     SBCPUGamePill.layer.masksToBounds = YES;
     SBCPUGamePill.userInteractionEnabled = NO;
     SBCPUGamePill.accessibilityElementsHidden = YES;
+    // 不显示空壳：只有收到游戏通知时才显示侧边胶囊。
+    SBCPUGamePill.hidden = YES;
+    SBCPUGamePill.alpha = 0.0;
 
     SBCPUGameIcon = [[UILabel alloc] initWithFrame:CGRectZero];
     SBCPUGameIcon.textAlignment = NSTextAlignmentCenter;
@@ -225,6 +238,8 @@ static void SBCPUShowGamePillFromDictionary(NSDictionary *data) {
 
     dispatch_async(dispatch_get_main_queue(), ^{
         SBCPUCreateGamePillIfNeeded();
+        // 先标记可见，再附着窗口，避免 attach 的空壳保护逻辑把它隐藏。
+        SBCPUGameVisible = YES;
         SBCPUAttachGamePillToHostWindow();
 
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -261,7 +276,6 @@ static void SBCPUShowGamePillFromDictionary(NSDictionary *data) {
             SBCPUGamePill.hidden = NO;
             SBCPUGamePill.alpha = 0.0;
             SBCPUGamePill.transform = landscape ? CGAffineTransformMakeTranslation(-105.0, 0) : CGAffineTransformMakeTranslation(0, -75.0);
-            SBCPUGameVisible = YES;
             NSUInteger generation = ++SBCPUGameGeneration;
 
             [UIView animateWithDuration:0.34 delay:0 options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionBeginFromCurrentState animations:^{
