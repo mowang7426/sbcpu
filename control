@@ -1,9 +1,9 @@
 Package: com.sbcpu.floating
 Name: SB CPU Floating
-Version: 3.0
+Version: 3.1
 Architecture: iphoneos-arm64
 Maintainer: MoWang
 Author: MoWang
 Description: SpringBoard CPU Floating Monitor, Notification Manager with CPUthermal 1.6.4-53 thermal engine; preserves ChargeBoost and Force Fast Charge controls
 Section: Tweaks
-Depends: mobilesubstrate, preferenceloader, com.opa334.ccsupport
+Depends: mobilesubstrate, preferenceloader

@@ -1,4 +1,4 @@
-# SBCPUFloating V3.0 — CPUthermal 1.6.4-53 thermal-only integration
+# SBCPUFloating V3.1 — CPUthermal 1.6.4-53 thermal-only integration
 
 本版本以 `sbcpu-2.9.1 修复版 2` 为 UI/浮窗基线，移除旧的 SBCPU 温控控制链，并把 CPUthermal-1.6.4-53 的 `thermalmonitord` 核心温控引擎作为独立 `SBCPUThermal.dylib` target 集成。
 
@@ -36,7 +36,7 @@
 本包是源码合并版，当前环境没有完整 Theos/iPhoneOS SDK，因此没有声称已经在 GitHub Actions 中编译通过。首次测试建议只安装源码构建后的 DEB，并准备好原 tweak 作为回滚。
 
 
-## V3.0 thermal feature completion
+## V3.1 thermal feature completion
 - Thermal Pressure：实时读取 `com.apple.system.thermalpressurelevel`，达到 Heavy/Trapping/Sleeping 时自动临时进入低功耗保护。
 - Thermal Nominal 自动恢复：压力回到 Nominal 并稳定 5 秒后恢复用户选择的温控模式。
 - 锁屏自动低功耗：可在设置中关闭；默认开启，解锁后恢复用户模式。
