@@ -2677,6 +2677,14 @@ static void registerThermalHeartbeatListener(void) {
 static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut) {
     BOOL engineEnabled = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
 
+    // 总开关关闭时，核心可能主动停止心跳。
+    // 因此必须先判断开关，再判断 heartbeat，否则“已关闭”会被误报成“核心未加载”。
+    if (!engineEnabled) {
+        if (textOut) *textOut = @"温控：已关闭";
+        if (colorOut) *colorOut = [UIColor systemGrayColor];
+        return;
+    }
+
     uint64_t heartbeat = sbcputhermalReadHeartbeatFile();
     if (heartbeat == 0) heartbeat = g_lastThermalHeartbeatMS;
     if (heartbeat == 0) heartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
@@ -2684,14 +2692,8 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut) {
     BOOL engineAlive = heartbeat > 0 && nowMS >= heartbeat && (nowMS - heartbeat) <= 10000;
 
     if (!engineAlive) {
-        if (textOut) *textOut = engineEnabled ? @"温控：核心未加载" : @"温控：核心未加载";
+        if (textOut) *textOut = @"温控：核心未加载";
         if (colorOut) *colorOut = [UIColor systemGrayColor];
-        return;
-    }
-
-    if (!engineEnabled) {
-        if (textOut) *textOut = @"温控：核心已加载（保护关闭）";
-        if (colorOut) *colorOut = [UIColor systemBlueColor];
         return;
     }
 
