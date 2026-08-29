@@ -51,6 +51,12 @@ typedef NS_ENUM(NSInteger, SBCPUThermalNotifLevel) {
 __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_7_0)
 extern const char *const kOSThermalNotificationPressureLevelName;
 
+// SBCPUFloating 温控诊断状态（供设置页面实时显示，不参与温控控制）
+#define SBCPUThermalDiagEngineActiveNotif "com.yourname.sbcpufloating/thermal.engine.active"
+#define SBCPUThermalDiagBootSettledNotif "com.yourname.sbcpufloating/thermal.boot.settled"
+#define SBCPUThermalDiagProtectionNotif "com.yourname.sbcpufloating/thermal.protection.active"
+#define SBCPUThermalDiagPressureNotif "com.yourname.sbcpufloating/thermal.pressure"
+
 // ============================================================================
 // 获取热压力字符串描述
 // ============================================================================
