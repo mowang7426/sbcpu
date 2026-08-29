@@ -3186,12 +3186,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
 
 static void onCCNotificationReceived(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
-
-    // Control Center 点击只负责切换悬浮窗开关。
-    // 不再在 CC 动画期间完整执行 LoadPreferences()，避免重复触发
-    // 120Hz / FPS / 充电 / 温控等底层逻辑导致 SpringBoard 在切换瞬间崩溃。
-    isEnabled = getBoolPref(CFSTR("isEnabled"), YES);
-    applyVisibility();
+    LoadPreferences();
 }
 
 static void registerV160Observers(void) {
