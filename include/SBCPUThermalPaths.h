@@ -32,7 +32,6 @@ static inline NSString *SBCPUThermalCurrentRootHideRoot(void);
  * 这样即使 thermalmonitord 与 SpringBoard 的路径视图不同，也能识别核心。
  */
 static inline NSArray<NSString *> *SBCPUThermalHeartbeatPaths(void) {
-    NSFileManager *fm = [NSFileManager defaultManager];
     NSMutableArray<NSString *> *paths = [NSMutableArray array];
 
     NSString *raw = S("/var/tmp/com.yourname.sbcpufloating.thermal.heartbeat");
