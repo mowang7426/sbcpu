@@ -79,9 +79,6 @@ typedef struct {
 
 @class SBCPUDetailViewController;
 
-// 温控实时状态函数前置声明：该函数在文件后部实现，但会在 updateDataWithCPU: 中提前调用。
-static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
-
 @interface SBCPUFPSHelper : NSObject
 + (instancetype)sharedInstance;
 - (void)startMonitoring;
@@ -306,6 +303,12 @@ static void openDetailView(void);
 static void openSettings(void);
 static void checkHighCPU(double cpu);
 static void updateCPU(void);
+
+// 温控核心实时心跳：由 SBCPUThermal 通过 Darwin notify 每 3 秒发送。
+// 这里直接监听通知并保存最近一次心跳，避免反复 notify_register_check 导致状态读取不可靠。
+static volatile uint64_t g_lastThermalHeartbeatMS = 0;
+static int g_thermalHeartbeatNotifyToken = -1;
+static void registerThermalHeartbeatListener(void);
 
 #pragma mark - 4. 底层 C 函数实现
 
@@ -2623,6 +2626,29 @@ static NSString *sbcputhermalPressureChinese(SBCPUThermalPressureLevel pressure)
     }
 }
 
+static void registerThermalHeartbeatListener(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        int token = -1;
+        uint32_t result = notify_register_dispatch(SBCPUThermalDiagEngineHeartbeatNotif,
+                                                    &token,
+                                                    dispatch_get_main_queue(),
+                                                    ^(int receivedToken) {
+            uint64_t state = 0;
+            if (notify_get_state(receivedToken, &state) == NOTIFY_STATUS_OK && state > 0) {
+                g_lastThermalHeartbeatMS = state;
+            }
+        });
+        if (result == NOTIFY_STATUS_OK) {
+            g_thermalHeartbeatNotifyToken = token;
+            uint64_t state = 0;
+            if (notify_get_state(token, &state) == NOTIFY_STATUS_OK && state > 0) {
+                g_lastThermalHeartbeatMS = state;
+            }
+        }
+    });
+}
+
 static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut) {
     BOOL engineEnabled = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
 
@@ -2632,7 +2658,11 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut) {
         return;
     }
 
-    uint64_t heartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
+    uint64_t heartbeat = g_lastThermalHeartbeatMS;
+    if (heartbeat == 0) {
+        // 首次监听尚未收到通知时，保留一次状态读取作为启动阶段兜底。
+        heartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
+    }
     uint64_t nowMS = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
     BOOL engineAlive = heartbeat > 0 && nowMS >= heartbeat && (nowMS - heartbeat) <= 10000;
 
@@ -2685,9 +2715,12 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     BOOL engineEnabled = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
     BOOL pressureProtectionEnabled = sbcputhermalGetBoolPref(@"thermalPressureAutoProtectionEnabled", YES);
     BOOL recoveryEnabled = sbcputhermalGetBoolPref(@"thermalNominalAutoRecoveryEnabled", YES);
-    uint64_t engineHeartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
+    uint64_t engineHeartbeat = g_lastThermalHeartbeatMS;
+    if (engineHeartbeat == 0) {
+        engineHeartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
+    }
     uint64_t nowMS = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
-    // 只有最近 10 秒内有 thermalmonitord 心跳，才认为温控核心真实运行。
+    // 最近 10 秒内收到真实心跳，才认为温控核心正在运行。
     BOOL engineAlive = engineHeartbeat > 0 && nowMS >= engineHeartbeat && (nowMS - engineHeartbeat) <= 10000;
     uint64_t boot = sbcputhermalReadNotifyState(SBCPUThermalDiagBootSettledNotif, 0);
     uint64_t protection = sbcputhermalReadNotifyState(SBCPUThermalDiagProtectionNotif, 0);
@@ -3449,6 +3482,7 @@ static void registerV160Observers(void) {
     NSString *processName = [NSProcessInfo processInfo].processName;
     if ([processName isEqualToString:@"SpringBoard"]) {
         LoadPreferences();
+        registerThermalHeartbeatListener();
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onCCNotificationReceived, kPrefChangedNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             createCPUWindow();
