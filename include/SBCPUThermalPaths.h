@@ -35,16 +35,16 @@ static inline NSArray<NSString *> *SBCPUThermalHeartbeatPaths(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
     NSMutableArray<NSString *> *paths = [NSMutableArray array];
 
-    NSString *raw = S(@"/var/tmp/com.yourname.sbcpufloating.thermal.heartbeat");
+    NSString *raw = S("/var/tmp/com.yourname.sbcpufloating.thermal.heartbeat");
     [paths addObject:raw];
 
-    NSString *varJB = S(@"/var/jb/var/tmp/com.yourname.sbcpufloating.thermal.heartbeat");
+    NSString *varJB = S("/var/jb/var/tmp/com.yourname.sbcpufloating.thermal.heartbeat");
     if (![paths containsObject:varJB]) [paths addObject:varJB];
 
     NSString *rootHideRoot = SBCPUThermalCurrentRootHideRoot();
     if (rootHideRoot.length > 0) {
         NSString *candidate = [rootHideRoot stringByAppendingPathComponent:
-            S(@"var/tmp/com.yourname.sbcpufloating.thermal.heartbeat")];
+            S("var/tmp/com.yourname.sbcpufloating.thermal.heartbeat")];
         if (![paths containsObject:candidate]) [paths addObject:candidate];
     }
 
