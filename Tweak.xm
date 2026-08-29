@@ -79,6 +79,9 @@ typedef struct {
 
 @class SBCPUDetailViewController;
 
+// 前置声明：悬浮窗刷新函数定义在 Tweak.xm 后部，必须提前声明才能通过 Clang 的严格检查。
+static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
+
 @interface SBCPUFPSHelper : NSObject
 + (instancetype)sharedInstance;
 - (void)startMonitoring;
