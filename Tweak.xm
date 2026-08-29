@@ -79,6 +79,9 @@ typedef struct {
 
 @class SBCPUDetailViewController;
 
+// 温控实时状态函数前置声明：该函数在文件后部实现，但会在 updateDataWithCPU: 中提前调用。
+static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
+
 @interface SBCPUFPSHelper : NSObject
 + (instancetype)sharedInstance;
 - (void)startMonitoring;
