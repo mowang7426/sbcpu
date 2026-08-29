@@ -19,6 +19,12 @@ static const char *kSBCPUThermalFullPowerModeC = "fullPower";
 static const uint64_t kSBCPUThermalPowerModeStateFull = 0;
 static const uint64_t kSBCPUThermalPowerModeStateLow = 1;
 
+// 温控核心跨进程心跳文件：Darwin notify 在部分 RootHide/thermalmonitord
+// 组合环境中可能出现状态空间不同步，因此同时保留一个最简单的共享文件心跳。
+// /var/tmp 由 thermalmonitord 与 SpringBoard 共同可见。
+static const char *kSBCPUThermalHeartbeatFileC = "/var/tmp/com.yourname.sbcpufloating.thermal.heartbeat";
+
+
 // Darwin notify state 直接携带模式，避免 thermalmonitord 因偏好路径/缓存读到旧值。
 static inline int SBCPUThermalPostPowerMode(NSString *mode) {
     int token = 0;
