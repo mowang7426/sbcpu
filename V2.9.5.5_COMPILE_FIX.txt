@@ -1,5 +1,0 @@
-SBCPUFloating V2.9.5.5 compile fix
-
-Fixed the SBNotificationManager declaration in Tweak.xm.
-The previous build failed because @implementation SBNotificationManager had no matching @interface,
-which caused the cascading alloc/root-class errors shown by GitHub Actions.
