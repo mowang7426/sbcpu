@@ -2126,6 +2126,8 @@ static void applySystemRefreshRate(void) {
         _miniCpuLabel.text = (temp > 0) ? [NSString stringWithFormat:@"%.0f°", temp] : @"--°";
     } else if (collapsedDisplayMode == 3) {
         _miniCpuLabel.text = [NSString stringWithFormat:@"%.0fmA", current];
+    } else if (collapsedDisplayMode == 4) {
+        _miniCpuLabel.text = [NSString stringWithFormat:@"%ld%%", (long)MAX(0, MIN(100, battery))];
     }
     
     if (YES) {
@@ -2649,7 +2651,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else if (indexPath.row == 2) {
             cell.textLabel.text = @"折叠显示内容";
-            NSArray *modes = @[@"CPU 使用率", @"FPS 帧率", @"电池温度", @"电池电流"];
+            NSArray *modes = @[@"CPU 使用率", @"FPS 帧率", @"电池温度", @"电池电流", @"电池电量"];
             cell.detailTextLabel.text = (collapsedDisplayMode >= 0 && collapsedDisplayMode < modes.count) ? modes[collapsedDisplayMode] : modes[0];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else if (indexPath.row == 3) {
@@ -2834,7 +2836,10 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 9) {
             cell.textLabel.text = @"温控核心";
-            cell.detailTextLabel.text = @"CPUthermal 1.6.4-53";
+            cell.detailTextLabel.text = @"CPUthermal1.6.4\n由可爱的群主大大 Huayuarc 提供支持";
+            cell.detailTextLabel.numberOfLines = 2;
+            cell.detailTextLabel.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightRegular];
+            cell.detailTextLabel.adjustsFontSizeToFitWidth = NO;
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         }
     } else if (indexPath.section == 7) {
@@ -2913,7 +2918,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             [self presentViewController:alert animated:YES completion:nil];
         } else if (indexPath.row == 2) {
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"折叠显示内容" message:@"选择悬浮窗隐藏后显示的信息" preferredStyle:UIAlertControllerStyleActionSheet];
-            NSArray *titles = @[@"CPU 使用率", @"FPS 帧率", @"电池温度", @"电池电流"];
+            NSArray *titles = @[@"CPU 使用率", @"FPS 帧率", @"电池温度", @"电池电流", @"电池电量"];
             for (NSInteger i = 0; i < titles.count; i++) {
                 [alert addAction:[UIAlertAction actionWithTitle:titles[i] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
                     collapsedDisplayMode = i;
@@ -3108,6 +3113,14 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
 - (void)changeWechatEnable:(UISwitch *)sw { wechatEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeQqEnable:(UISwitch *)sw { qqEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeTimEnable:(UISwitch *)sw { timEnable = sw.isOn; SavePreferencesAndNotify(); }
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
+    (void)tableView;
+    if (indexPath.section == 6 && indexPath.row == 9) {
+        return 58.0;
+    }
+    return UITableViewAutomaticDimension;
+}
+
 - (void)changeHideContentLockScreen:(UISwitch *)sw { hideContentOnLockScreen = sw.isOn; SavePreferencesAndNotify(); }
 
 @end
