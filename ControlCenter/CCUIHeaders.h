@@ -1,7 +1,5 @@
 #import <UIKit/UIKit.h>
 
-NS_ASSUME_NONNULL_BEGIN
-
 @protocol CCUIContentModuleContentViewController <NSObject>
 @required
 - (CGFloat)preferredExpandedContentHeight;
@@ -47,5 +45,3 @@ NS_ASSUME_NONNULL_BEGIN
 @optional
 @property (nonatomic, strong, readonly) UIViewController *backgroundViewController;
 @end
-
-NS_ASSUME_NONNULL_END
