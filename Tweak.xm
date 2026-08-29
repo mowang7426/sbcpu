@@ -2575,7 +2575,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"SBCPUFloating V3.1";
+    self.title = @"SBCPUFloating V3.0";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeSettings)];
 }
 
@@ -2885,9 +2885,8 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             cell.accessoryView = sw;
         } else if (indexPath.row == 8) {
             cell.textLabel.text = @"Thermal Notification 状态";
-            cell.detailTextLabel.text = [NSString stringWithFormat:@"当前：%@", [NSString stringWithUTF8String:SBCPUThermalPressureString(pressure)]];
             SBCPUThermalPressureLevel pressure = SBCPUThermalGetPressureLevel();
-            cell.detailTextLabel.text = [NSString stringWithUTF8String:SBCPUThermalPressureString(pressure)];
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"当前：%@", [NSString stringWithUTF8String:SBCPUThermalPressureString(pressure)]];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 9) {
             cell.textLabel.text = @"温控核心";
