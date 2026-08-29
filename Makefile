@@ -14,7 +14,7 @@ SBCPUFloating_PRIVATE_FRAMEWORKS = PowerUI IOKit FrontBoardServices
 SBCPUFloating_INSTALL_TARGET_PROCESSES = SpringBoard
 
 # 2. 底层守护进程 (引入 IOKit 以支持硬件级拦截)
-SBCPUThermal_FILES = SBCPUThermal.xm SBCPUThermalRecovered.mm
+SBCPUThermal_FILES = SBCPUThermal.x SBCPUThermalRecovered.mm
 SBCPUThermal_CFLAGS = -fobjc-arc -Iinclude -Wno-deprecated-declarations -DTHEOS_INSIDE -fvisibility=hidden
 SBCPUThermal_LDFLAGS += -Wl,-x -Wl,-dead_strip
 SBCPUThermal_FRAMEWORKS = Foundation UIKit CoreFoundation IOKit
