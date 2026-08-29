@@ -1,0 +1,11 @@
+{
+    CFBundleIdentifier = "com.sbcpu.floating.cc";
+    CFBundleName = "SBCPUFloatingCC";
+    CFBundleDisplayName = "SB CPU Floating";
+    CFBundlePackageType = BNDL;
+    CFBundleVersion = "3.1";
+    CFBundleShortVersionString = "3.1";
+    NSPrincipalClass = SBCPUFloatingCC;
+    CCModuleIdentifier = "com.sbcpu.floating.cc";
+    CCModuleDisplayName = "SB CPU Floating";
+}
