@@ -6,6 +6,9 @@
 #import <mach/mach_time.h>
 #import <mach/host_info.h>
 #import <mach/processor_info.h>
+#import <mach-o/dyld_images.h>
+#include <libproc.h>
+#include <limits.h>
 #import <signal.h>
 #import <IOKit/IOKitLib.h>
 #import <sys/sysctl.h>
@@ -2674,26 +2677,157 @@ static void registerThermalHeartbeatListener(void) {
     });
 }
 
+
+// ============================================================================
+// 温控核心真实加载检测
+// 不再依赖心跳文件 / Darwin notify 判断“核心是否运行”。
+// 直接找到 thermalmonitord，并读取它的 dyld 镜像列表；只要其中存在
+// SBCPUThermal.dylib，就认为温控核心已经真正加载到 thermalmonitord。
+// ============================================================================
+static pid_t sbcputhermalFindThermalMonitorPID(void) {
+    int bytes = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
+    if (bytes <= 0) return -1;
+
+    int count = bytes / (int)sizeof(pid_t);
+    size_t bufferSize = (size_t)count * sizeof(pid_t);
+    pid_t *pids = (pid_t *)malloc(bufferSize);
+    if (!pids) return -1;
+
+    int actualBytes = proc_listpids(PROC_ALL_PIDS, 0, pids, (int)bufferSize);
+    pid_t found = -1;
+    if (actualBytes > 0) {
+        int actualCount = actualBytes / (int)sizeof(pid_t);
+        for (int i = 0; i < actualCount; i++) {
+            pid_t pid = pids[i];
+            if (pid <= 0) continue;
+
+            char name[PROC_PIDPATHINFO_MAXSIZE] = {0};
+            int nameLen = proc_name(pid, name, sizeof(name));
+            if (nameLen > 0 && strcmp(name, "thermalmonitord") == 0) {
+                found = pid;
+                break;
+            }
+        }
+    }
+
+    free(pids);
+    return found;
+}
+
+static BOOL sbcputhermalThermalMonitorHasCore(BOOL *permissionLimited) {
+    if (permissionLimited) *permissionLimited = NO;
+
+    pid_t pid = sbcputhermalFindThermalMonitorPID();
+    if (pid <= 0) return NO;
+
+    mach_port_t task = MACH_PORT_NULL;
+    kern_return_t kr = task_for_pid(mach_task_self(), pid, &task);
+    if (kr != KERN_SUCCESS || !MACH_PORT_VALID(task)) {
+        if (permissionLimited) *permissionLimited = YES;
+        return NO;
+    }
+
+    task_dyld_info_data_t dyldInfo = {0};
+    mach_msg_type_number_t count = TASK_DYLD_INFO_COUNT;
+    kr = task_info(task, TASK_DYLD_INFO, (task_info_t)&dyldInfo, &count);
+    if (kr != KERN_SUCCESS || dyldInfo.all_image_info_addr == 0) {
+        mach_port_deallocate(mach_task_self(), task);
+        return NO;
+    }
+
+    struct dyld_all_image_infos infos = {0};
+    mach_vm_size_t outSize = 0;
+    kr = mach_vm_read_overwrite(task,
+                                (mach_vm_address_t)dyldInfo.all_image_info_addr,
+                                sizeof(infos),
+                                (mach_vm_address_t)&infos,
+                                &outSize);
+    if (kr != KERN_SUCCESS || outSize < sizeof(infos) || infos.infoArrayCount == 0 || infos.infoArray == NULL) {
+        mach_port_deallocate(mach_task_self(), task);
+        return NO;
+    }
+
+    // 防止异常进程数据造成超大内存分配。
+    uint32_t imageCount = infos.infoArrayCount;
+    if (imageCount > 4096) imageCount = 4096;
+
+    size_t arraySize = (size_t)imageCount * sizeof(struct dyld_image_info);
+    struct dyld_image_info *images = (struct dyld_image_info *)malloc(arraySize);
+    if (!images) {
+        mach_port_deallocate(mach_task_self(), task);
+        return NO;
+    }
+
+    BOOL found = NO;
+    outSize = 0;
+    kr = mach_vm_read_overwrite(task,
+                                (mach_vm_address_t)infos.infoArray,
+                                arraySize,
+                                (mach_vm_address_t)images,
+                                &outSize);
+    if (kr == KERN_SUCCESS && outSize >= arraySize) {
+        for (uint32_t i = 0; i < imageCount; i++) {
+            if (images[i].imageFilePath == 0) continue;
+
+            char path[PATH_MAX] = {0};
+            mach_vm_size_t pathOut = 0;
+            kr = mach_vm_read_overwrite(task,
+                                        (mach_vm_address_t)images[i].imageFilePath,
+                                        sizeof(path) - 1,
+                                        (mach_vm_address_t)path,
+                                        &pathOut);
+            if (kr != KERN_SUCCESS || pathOut == 0) continue;
+
+            path[sizeof(path) - 1] = '\0';
+            if (strstr(path, "SBCPUThermal.dylib") != NULL) {
+                found = YES;
+                break;
+            }
+        }
+    }
+
+    free(images);
+    mach_port_deallocate(mach_task_self(), task);
+    return found;
+}
+
+static BOOL sbcputhermalCoreActuallyLoaded(BOOL *permissionLimited) {
+    // dyld/task 扫描比读取 notify/心跳开销更高，因此最多每秒真正扫描一次。
+    // 悬浮窗仍会持续刷新，缓存只会带来最多约 1 秒的状态延迟。
+    static CFTimeInterval lastCheck = 0;
+    static BOOL lastLoaded = NO;
+    static BOOL lastPermissionLimited = NO;
+
+    CFTimeInterval now = CFAbsoluteTimeGetCurrent();
+    if (lastCheck > 0 && (now - lastCheck) < 1.0) {
+        if (permissionLimited) *permissionLimited = lastPermissionLimited;
+        return lastLoaded;
+    }
+
+    lastLoaded = sbcputhermalThermalMonitorHasCore(&lastPermissionLimited);
+    lastCheck = now;
+    if (permissionLimited) *permissionLimited = lastPermissionLimited;
+    return lastLoaded;
+}
+
 static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut) {
     BOOL engineEnabled = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
 
-    // 总开关关闭时，核心可能主动停止心跳。
-    // 因此必须先判断开关，再判断 heartbeat，否则“已关闭”会被误报成“核心未加载”。
-    if (!engineEnabled) {
-        if (textOut) *textOut = @"温控：已关闭";
-        if (colorOut) *colorOut = [UIColor systemGrayColor];
+    // 核心状态只认 thermalmonitord 的真实 dyld 镜像列表。
+    BOOL permissionLimited = NO;
+    BOOL engineAlive = sbcputhermalCoreActuallyLoaded(&permissionLimited);
+
+    if (!engineAlive) {
+        if (textOut) {
+            *textOut = permissionLimited ? @"温控：无法读取核心状态" : @"温控：核心未运行";
+        }
+        if (colorOut) *colorOut = permissionLimited ? [UIColor systemOrangeColor] : [UIColor systemGrayColor];
         return;
     }
 
-    uint64_t heartbeat = sbcputhermalReadHeartbeatFile();
-    if (heartbeat == 0) heartbeat = g_lastThermalHeartbeatMS;
-    if (heartbeat == 0) heartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
-    uint64_t nowMS = sbcputhermalCurrentUnixMilliseconds();
-    BOOL engineAlive = heartbeat > 0 && nowMS >= heartbeat && (nowMS - heartbeat) <= 10000;
-
-    if (!engineAlive) {
-        if (textOut) *textOut = @"温控：核心未加载";
-        if (colorOut) *colorOut = [UIColor systemGrayColor];
+    if (!engineEnabled) {
+        if (textOut) *textOut = @"温控：核心已加载（保护关闭）";
+        if (colorOut) *colorOut = [UIColor systemBlueColor];
         return;
     }
 
@@ -2741,12 +2875,9 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     BOOL engineEnabled = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
     BOOL pressureProtectionEnabled = sbcputhermalGetBoolPref(@"thermalPressureAutoProtectionEnabled", YES);
     BOOL recoveryEnabled = sbcputhermalGetBoolPref(@"thermalNominalAutoRecoveryEnabled", YES);
-    uint64_t engineHeartbeat = sbcputhermalReadHeartbeatFile();
-    if (engineHeartbeat == 0) engineHeartbeat = g_lastThermalHeartbeatMS;
-    if (engineHeartbeat == 0) engineHeartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
-    uint64_t nowMS = sbcputhermalCurrentUnixMilliseconds();
-    // 最近 10 秒内收到真实跨进程心跳，才认为温控核心正在运行。
-    BOOL engineAlive = engineHeartbeat > 0 && nowMS >= engineHeartbeat && (nowMS - engineHeartbeat) <= 10000;
+    // 这里同样只认 thermalmonitord 的真实 dyld 镜像列表。
+    BOOL permissionLimited = NO;
+    BOOL engineAlive = sbcputhermalCoreActuallyLoaded(&permissionLimited);
     uint64_t boot = sbcputhermalReadNotifyState(SBCPUThermalDiagBootSettledNotif, 0);
     uint64_t protection = sbcputhermalReadNotifyState(SBCPUThermalDiagProtectionNotif, 0);
     SBCPUThermalPressureLevel pressure = SBCPUThermalGetPressureLevel();
@@ -2756,7 +2887,10 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
     // 这里显示的是“核心是否加载 + 实际温度压力 + 保护状态”。
     if (!engineAlive) {
-        return [NSString stringWithFormat:@"当前：温控核心未运行\n温度保护开关虽然已打开，但没有检测到温控核心正在工作。\n请先注销一次，让温控核心重新加载。\n系统温度状态：%@", pressureText];
+        if (permissionLimited) {
+            return [NSString stringWithFormat:@"当前：暂时无法读取核心状态\n已经找到 thermalmonitord，但系统拒绝读取它的已加载模块列表。\n这不代表温控核心没有运行。\n系统温度状态：%@", pressureText];
+        }
+        return [NSString stringWithFormat:@"当前：温控核心未运行\n没有在 thermalmonitord 中找到 SBCPUThermal.dylib。\n请检查温控核心是否已经加载。\n系统温度状态：%@", pressureText];
     }
 
     if (!engineEnabled) {
