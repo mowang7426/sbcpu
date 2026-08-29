@@ -53,6 +53,9 @@ extern const char *const kOSThermalNotificationPressureLevelName;
 
 // SBCPUFloating 温控诊断状态（供设置页面实时显示，不参与温控控制）
 #define SBCPUThermalDiagEngineActiveNotif "com.yourname.sbcpufloating/thermal.engine.active"
+// 运行心跳：值为 thermalmonitord 最近一次心跳的 Unix 时间戳（毫秒）。
+// 设置页面用它判断温控核心是否真的还在运行，避免旧的 0/1 状态误导用户。
+#define SBCPUThermalDiagEngineHeartbeatNotif "com.yourname.sbcpufloating/thermal.engine.heartbeat"
 #define SBCPUThermalDiagBootSettledNotif "com.yourname.sbcpufloating/thermal.boot.settled"
 #define SBCPUThermalDiagProtectionNotif "com.yourname.sbcpufloating/thermal.protection.active"
 #define SBCPUThermalDiagPressureNotif "com.yourname.sbcpufloating/thermal.pressure"
