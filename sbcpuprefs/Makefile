@@ -25,10 +25,3 @@ internal-stage::
 	$(ECHO_NOTHING)cp entry.plist $(THEOS_STAGING_DIR)/Library/PreferenceLoader/Preferences/SBCPUPrefs.plist$(ECHO_END)
 	$(ECHO_NOTHING)cp Resources/icon.PNG $(THEOS_STAGING_DIR)/Library/PreferenceLoader/Preferences/icon.PNG$(ECHO_END)
 
-
-
-# The parent aggregate Makefile calls `make clean` in every subproject.
-# bundle.mk does not provide a clean target on this Theos setup, so define
-# one explicitly to keep rootless/roothide rebuilds working.
-clean::
-	$(ECHO_NOTHING)rm -rf .theos packages$(ECHO_END)
