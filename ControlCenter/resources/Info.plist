@@ -2,10 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleShortVersionString</key><string>3.1</string>
+    <key>CFBundleShortVersionString</key><string>3.1.2</string>
     <key>CFBundleIdentifier</key><string>com.sbcpu.floating.ccmodule</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-    <key>CFBundleVersion</key><string>301</string>
+    <key>CFBundleVersion</key><string>312</string>
     <key>CFBundleExecutable</key><string>SBCPUFloatingCC</string>
     <key>CFBundleDisplayName</key><string>SBCPUFloating</string>
     <key>CFBundleName</key><string>SBCPUFloatingCC</string>
