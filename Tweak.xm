@@ -138,6 +138,8 @@ typedef struct {
 @property (nonatomic, strong) UIView *bottomCapsule;
 @property (nonatomic, strong) UIView *batteryProgressView; 
 @property (nonatomic, strong) UILabel *statusLabel;
+// 实时温控状态：直接读取 SBCPUThermal 的诊断通知，不依赖设置页面缓存。
+@property (nonatomic, strong) UILabel *thermalStatusLabel;
 @property (nonatomic, strong) UIView *collapsedContainerView;
 @property (nonatomic, strong) UIView *statusDot;
 @property (nonatomic, strong) UILabel *miniCpuLabel;
@@ -1434,6 +1436,16 @@ static void applySystemRefreshRate(void) {
         _statusLabel.textAlignment = NSTextAlignmentCenter;
         [_bottomCapsule addSubview:_statusLabel];
 
+        // 实时温控状态显示，与充电状态分开，避免充电文字覆盖温控信息。
+        _thermalStatusLabel = [[UILabel alloc] init];
+        _thermalStatusLabel.text = @"温控：检测中";
+        _thermalStatusLabel.textColor = [UIColor systemBlueColor];
+        _thermalStatusLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightSemibold];
+        _thermalStatusLabel.textAlignment = NSTextAlignmentCenter;
+        _thermalStatusLabel.adjustsFontSizeToFitWidth = YES;
+        _thermalStatusLabel.minimumScaleFactor = 0.75f;
+        [_performanceContainer addSubview:_thermalStatusLabel];
+
         _collapsedContainerView = [[UIView alloc] init];
         _collapsedContainerView.hidden = YES;
         _collapsedContainerView.alpha = 0.0;
@@ -1768,6 +1780,11 @@ static void applySystemRefreshRate(void) {
         currentY += 14.0f;
     }
 
+    // 温控状态独立一行；updateCPU() 每秒调用 updateDataWithCPU，因此这里会实时刷新。
+    currentY += 2.0f;
+    _thermalStatusLabel.frame = CGRectMake(12.0f, currentY, finalW - 24.0f, 16.0f);
+    currentY += 16.0f;
+
     if (showCombinedMode) {
         self.horizontalDiv.hidden = NO;
         self.notificationContainer.hidden = NO;
@@ -2089,6 +2106,14 @@ static void applySystemRefreshRate(void) {
     _batteryValueLabel.text = [NSString stringWithFormat:@"%ld%%", (long)battery];
     _tempValueLabel.text = (temp > 0) ? [NSString stringWithFormat:@"%.1f°C", temp] : @"--°C";
     _currentValueLabel.text = [NSString stringWithFormat:@"%.0f mA", current];
+
+    // 直接读取 SBCPUThermal 的核心心跳、保护状态和诊断热压力。
+    // 不读取设置页面的静态文字，所以浮窗每次刷新都会显示最新状态。
+    NSString *thermalText = nil;
+    UIColor *thermalColor = nil;
+    sbcputhermalFloatingStatus(&thermalText, &thermalColor);
+    _thermalStatusLabel.text = thermalText ?: @"温控：检测中";
+    _thermalStatusLabel.textColor = thermalColor ?: [UIColor systemBlueColor];
     
     if (YES) {
         if (forceFastChargeEnable && isCharging) {
@@ -2592,6 +2617,64 @@ static NSString *sbcputhermalPressureChinese(SBCPUThermalPressureLevel pressure)
         case SBCPUThermalPressureLevelSleeping: return @"极端高温";
         case SBCPUThermalPressureLevelError: return @"读取失败";
         default: return @"正在检测";
+    }
+}
+
+static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut) {
+    BOOL engineEnabled = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
+
+    if (!engineEnabled) {
+        if (textOut) *textOut = @"温控：已关闭";
+        if (colorOut) *colorOut = [UIColor systemGrayColor];
+        return;
+    }
+
+    uint64_t heartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
+    uint64_t nowMS = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
+    BOOL engineAlive = heartbeat > 0 && nowMS >= heartbeat && (nowMS - heartbeat) <= 10000;
+
+    if (!engineAlive) {
+        if (textOut) *textOut = @"温控：核心未运行";
+        if (colorOut) *colorOut = [UIColor systemGrayColor];
+        return;
+    }
+
+    uint64_t boot = sbcputhermalReadNotifyState(SBCPUThermalDiagBootSettledNotif, 0);
+    if (!boot) {
+        if (textOut) *textOut = @"温控：启动中";
+        if (colorOut) *colorOut = [UIColor systemBlueColor];
+        return;
+    }
+
+    uint64_t rawPressure = sbcputhermalReadNotifyState(SBCPUThermalDiagPressureNotif, 999);
+    SBCPUThermalPressureLevel pressure = SBCPUThermalPressureLevelUnknown;
+    switch (rawPressure) {
+        case 0:  pressure = SBCPUThermalPressureLevelNominal; break;
+        case 10: pressure = SBCPUThermalPressureLevelLight; break;
+        case 20: pressure = SBCPUThermalPressureLevelModerate; break;
+        case 30: pressure = SBCPUThermalPressureLevelHeavy; break;
+        case 40: pressure = SBCPUThermalPressureLevelTrapping; break;
+        case 50: pressure = SBCPUThermalPressureLevelSleeping; break;
+        default: pressure = SBCPUThermalPressureLevelUnknown; break;
+    }
+
+    BOOL protectionActive = sbcputhermalReadNotifyState(SBCPUThermalDiagProtectionNotif, 0) != 0;
+
+    if (protectionActive || pressure >= SBCPUThermalPressureLevelHeavy) {
+        if (textOut) *textOut = protectionActive ? @"温控：高温保护中" : @"温控：高温预警";
+        if (colorOut) *colorOut = [UIColor systemRedColor];
+    } else if (pressure == SBCPUThermalPressureLevelModerate) {
+        if (textOut) *textOut = @"温控：中度升温";
+        if (colorOut) *colorOut = [UIColor systemOrangeColor];
+    } else if (pressure == SBCPUThermalPressureLevelLight) {
+        if (textOut) *textOut = @"温控：轻微升温";
+        if (colorOut) *colorOut = [UIColor systemOrangeColor];
+    } else if (pressure == SBCPUThermalPressureLevelNominal) {
+        if (textOut) *textOut = @"温控：正常";
+        if (colorOut) *colorOut = [UIColor systemGreenColor];
+    } else {
+        if (textOut) *textOut = @"温控：检测中";
+        if (colorOut) *colorOut = [UIColor systemBlueColor];
     }
 }
 
