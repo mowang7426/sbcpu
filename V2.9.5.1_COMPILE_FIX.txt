@@ -1,9 +1,0 @@
-V2.9.5.1 Compile Fix
-
-修复 GitHub Actions 编译报错：
-Tweak.xm:180/183/216/217: use of undeclared identifier 'cpuWindow'
-
-原因：游戏 Banner 的 C 函数位于 cpuWindow 全局变量定义之前。
-修复：将 static UIWindow *cpuWindow = nil; 前置到游戏 Banner 函数之前，并删除后面的重复定义。
-
-功能逻辑不变。
