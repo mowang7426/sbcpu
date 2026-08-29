@@ -1,26 +1,44 @@
 #import "SBCPUFloatingCCModuleViewController.h"
 #import <Foundation/Foundation.h>
 #import <notify.h>
-#import "SBCPUThermalPaths.h"
 
-// 与 CPUthermal 1.6.4-53 的 Control Center 模块使用同一套注册/菜单机制，
-// 但这里的开关只控制 SBCPUFloating 自己的 isEnabled，不改变温控模式。
-
-static const char *kSBCPUFloatingPrefKey = "isEnabled";
-static const char *kSBCPUFloatingNotify = "com.yourname.sbcpufloating.prefschanged";
+// Control Center 模块单独使用 CFPreferences 读写，与 SBCPUFloating 的
+// LoadPreferences()/setBoolPref() 使用同一套偏好域，避免在 Control Center
+// 进程中调用 RootHide 路径扫描、文件迁移等复杂逻辑。
+static CFStringRef kSBCPUFloatingCCPrefAppID = CFSTR("com.yourname.sbcpufloating");
+static CFStringRef kSBCPUFloatingCCPrefEnabledKey = CFSTR("isEnabled");
+static CFStringRef kSBCPUFloatingCCNotify = CFSTR("com.yourname.sbcpufloating.prefschanged");
 
 static BOOL SBCPUFloatingReadEnabled(void) {
-    NSDictionary *prefs = SBCPUThermalReadPrefs();
-    id value = prefs[S(kSBCPUFloatingPrefKey)];
-    return value ? [value boolValue] : YES;
+    CFPropertyListRef value = CFPreferencesCopyValue(
+        kSBCPUFloatingCCPrefEnabledKey,
+        kSBCPUFloatingCCPrefAppID,
+        kCFPreferencesCurrentUser,
+        kCFPreferencesAnyHost);
+
+    if (!value) return YES;
+
+    BOOL enabled = YES;
+    if (CFGetTypeID(value) == CFBooleanGetTypeID()) {
+        enabled = CFBooleanGetValue((CFBooleanRef)value);
+    } else if (CFGetTypeID(value) == CFNumberGetTypeID()) {
+        int n = 0;
+        CFNumberGetValue((CFNumberRef)value, kCFNumberIntType, &n);
+        enabled = (n != 0);
+    }
+    CFRelease(value);
+    return enabled;
 }
 
 static void SBCPUFloatingWriteEnabled(BOOL enabled) {
-    NSMutableDictionary *prefs = SBCPUThermalReadMutablePrefs();
-    if (!prefs) prefs = [NSMutableDictionary dictionary];
-    prefs[S(kSBCPUFloatingPrefKey)] = [NSNumber numberWithBool:enabled];
-    SBCPUThermalWritePrefs(prefs);
-    notify_post(kSBCPUFloatingNotify);
+    CFPreferencesSetValue(
+        kSBCPUFloatingCCPrefEnabledKey,
+        enabled ? kCFBooleanTrue : kCFBooleanFalse,
+        kSBCPUFloatingCCPrefAppID,
+        kCFPreferencesCurrentUser,
+        kCFPreferencesAnyHost);
+    CFPreferencesAppSynchronize(kSBCPUFloatingCCPrefAppID);
+    notify_post("com.yourname.sbcpufloating.prefschanged");
 }
 
 @interface SBCPUFloatingCCModuleViewController ()
@@ -135,7 +153,7 @@ static void SBCPUFloatingWriteEnabled(BOOL enabled) {
     CCUIMenuModuleItem *item = [[CCUIMenuModuleItem alloc]
         initWithTitle:S("SBCPUFloating")
         identifier:S("sbcpufloating-toggle")
-        handler:^{ [weakSelf toggleFloating]; }];
+        handler:^{ [weakSelf buttonTapped:nil forEvent:nil]; }];
 
     if ([item respondsToSelector:@selector(setSubtitle:)]) {
         [item setSubtitle:S("点击开启 / 关闭悬浮窗")];
@@ -179,15 +197,19 @@ static void SBCPUFloatingWriteEnabled(BOOL enabled) {
     self.glyphOverlay.image = colored;
 }
 
-- (void)toggleFloating {
+- (void)buttonTapped:(id)arg forEvent:(id)event {
+    (void)arg;
+    (void)event;
+
+    // 这是 Control Center 的原生模块点击入口。
+    // 只修改 isEnabled，不主动 dismiss、不创建窗口、不调用 RootHide 文件路径逻辑。
     BOOL enabled = !SBCPUFloatingReadEnabled();
     SBCPUFloatingWriteEnabled(enabled);
     [self updateState];
+}
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        [self dismissViewControllerAnimated:YES completion:nil];
-    });
+- (void)toggleFloating {
+    [self buttonTapped:nil forEvent:nil];
 }
 
 @end

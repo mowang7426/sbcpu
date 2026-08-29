@@ -37,6 +37,7 @@
 - (void)setUseTrailingCheckmarkLayout:(BOOL)useTrailingCheckmarkLayout;
 - (void)setHideGlyphInHeader:(BOOL)hideGlyphInHeader;
 - (void)setShouldProvideOwnPlatter:(BOOL)shouldProvideOwnPlatter;
+- (void)buttonTapped:(id)arg forEvent:(id)event;
 @end
 
 @protocol CCUIContentModule <NSObject>
