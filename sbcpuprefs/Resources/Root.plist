@@ -62,7 +62,7 @@
 			<key>label</key>
 			<string>▣ CPUthermal 温控核心</string>
 			<key>footerText</key>
-			<string>集成 CPUthermal 1.6.4-53 温控核心：支持 Thermal Pressure 自动保护、启动 8 秒保护、锁屏低功耗/解锁恢复、Nominal 自动恢复、防温控暗屏和高温温度计警告控制。</string>
+			<string>内置温度保护功能：设备温度压力太高时可自动降低功耗；熄屏可自动省电，温度恢复正常后自动恢复。设置页面会实时显示当前保护状态。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
