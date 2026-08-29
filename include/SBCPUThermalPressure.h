@@ -6,12 +6,6 @@
 #import <dlfcn.h>
 #import <os/base.h>
 
-#ifdef __cplusplus
-#define SBCPU_DLSYM_CAST(type, value) reinterpret_cast<type>(value)
-#else
-#define SBCPU_DLSYM_CAST(type, value) ((type)(value))
-#endif
-
 // ============================================================================
 // 热压力级别枚举（对应 OSThermalPressureLevel）
 // 移植自 Battman thermal.h
@@ -231,7 +225,7 @@ static inline int SBCPUThermalGetCurrentNotifLevel(void) {
     dispatch_once(&onceToken, ^{
         void *handle = SBCPUThermalLoadThermalNotificationLib();
         if (handle) {
-            func = SBCPU_DLSYM_CAST(int (*)(void), dlsym(handle, "OSThermalNotificationCurrentLevel"));
+            func = (int (*)(void))dlsym(handle, "OSThermalNotificationCurrentLevel");
         }
     });
     if (!func) return -1;
@@ -245,7 +239,7 @@ static inline int SBCPUThermalNotifLevelForBehavior(int behavior) {
     dispatch_once(&onceToken, ^{
         void *handle = SBCPUThermalLoadThermalNotificationLib();
         if (handle) {
-            func = SBCPU_DLSYM_CAST(int (*)(int), dlsym(handle, "_OSThermalNotificationLevelForBehavior"));
+            func = (int (*)(int))dlsym(handle, "_OSThermalNotificationLevelForBehavior");
         }
     });
     if (!func) return -1;
@@ -259,7 +253,7 @@ static inline void SBCPUThermalSetNotifLevelForBehavior(int level) {
     dispatch_once(&onceToken, ^{
         void *handle = SBCPUThermalLoadThermalNotificationLib();
         if (handle) {
-            func = SBCPU_DLSYM_CAST(void (*)(int), dlsym(handle, "_OSThermalNotificationSetLevelForBehavior"));
+            func = (void (*)(int))dlsym(handle, "_OSThermalNotificationSetLevelForBehavior");
         }
     });
     if (func) {
@@ -315,7 +309,5 @@ static inline void SBCPUThermalLogPressureStatus(void) {
           SBCPUThermalPressureString(pressure), (long)pressure,
           maxTemp, solarState, notifLevel);
 }
-
-#undef SBCPU_DLSYM_CAST
 
 #endif /* CPUTHERMAL_THERMAL_PRESSURE_H */
