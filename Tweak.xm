@@ -79,7 +79,11 @@ typedef struct {
 
 @class SBCPUDetailViewController;
 
-@interface SBCPUFPSHelper : NSObject
+@interface SBCPUFPSHelper : NSObject {
+    CADisplayLink *_displayLink;
+    CFTimeInterval _lastTimestamp;
+    NSInteger _frameCount;
+}
 + (instancetype)sharedInstance;
 - (void)startMonitoring;
 - (void)stopMonitoring;
@@ -88,6 +92,7 @@ typedef struct {
 - (void)stopDriverAnimation;
 @property (nonatomic, assign) double currentFPS;
 @property (nonatomic, strong) CALayer *driverLayer;
+
 @end
 
 // 独立的消息数据模型
