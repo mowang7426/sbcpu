@@ -17,6 +17,7 @@
 #import <CoreMotion/CoreMotion.h>
 #import <notify.h>
 #import <objc/runtime.h>
+#import "SBCPUThermalPaths.h"
 
 #ifndef kIOMainPortDefault
 #define kIOMainPortDefault kIOMasterPortDefault
@@ -24,7 +25,6 @@
 
 #define kPrefAppID CFSTR("com.yourname.sbcpufloating")
 #define kPrefChangedNotification CFSTR("com.yourname.sbcpufloating.prefschanged")
-#define NOTIFY_CPU_MODE "com.yourname.sbcpufloating.cpumode"
 
 #pragma mark - 1. 👑 幽灵代理类 (欺骗 Objective-C++ 编译器)
 
@@ -228,18 +228,10 @@ static BOOL rememberPositionEnable = YES;
 static BOOL showCpuFrequency = YES;
 static BOOL showFps = YES;                       
 static BOOL force120HzEnable = NO;               
-static BOOL thermalProtectionEnable = YES;       
 
-static NSInteger insulationCpuMode = 0;           
-static BOOL blockThermalDimming = YES;        
-static BOOL blockThermalAlert = YES;          
-static BOOL blockPocketTemp = YES;            
-static BOOL forceSunlightHBM = NO;            
 
-static BOOL smartChargeLimitEnable = NO;
-static float smartChargeLimitTemp = 38.0f;
 static BOOL chargeBoostEnable = NO;
-static BOOL forceFastChargeEnable = NO; // 🔥 新增：强制满血快充
+static BOOL forceFastChargeEnable = NO; // 保留原有强制满血快充开关
 
 static double lastChargeWatts = 0.0;
 static double previousChargeWatts = 0.0;
@@ -247,7 +239,6 @@ static double chargeBoostBaselineWatts = 0.0;
 static CFAbsoluteTime chargeBoostStartTime = 0;
 static BOOL chargeBoostVerified = NO;
 static NSString *chargeBoostStatus = nil;
-static BOOL isCurrentlyChargeInhibited = NO;
 static BOOL chargeLimit100Applied = NO;
 static BOOL chargeLimitOriginalSaved = NO;
 static NSInteger chargeLimitOriginalValue = 0;
@@ -288,7 +279,6 @@ static void applyFloatingAlpha(void);
 static void applySystemRefreshRate(void);
 static void LoadPreferences(void);
 static void SavePreferencesAndNotify(void);
-static void setHardwareChargingInhibit(BOOL inhibit);
 static void applyExperimentalChargeLimit100(BOOL enable);
 static NSString *getChargeBoostStatus(double watts, double temp, NSInteger battery, BOOL charging);
 static NSString *getNetworkType(void);
@@ -296,7 +286,6 @@ static NSDictionary *getRealBatteryDetails(void);
 static double getBatteryTemperatureInternal(void);
 static double getBatteryCurrentInternal(void);
 static BOOL isChargingInternal(void);
-static BOOL isDeviceOverheated(void);
 static double getSpringBoardCPUUsage(void);
 static double getTotalCPUUsage(void);
 static double getRealCPUFrequency(double currentCpuUsage);
@@ -428,20 +417,11 @@ static void LoadPreferences(void) {
     showCpuFrequency = getBoolPref(CFSTR("showCpuFrequency"), YES);
     showFps = getBoolPref(CFSTR("showFps"), YES);
     force120HzEnable = getBoolPref(CFSTR("force120HzEnable"), NO);
-    thermalProtectionEnable = getBoolPref(CFSTR("thermalProtectionEnable"), YES);
     
     showBatteryPercent = getBoolPref(CFSTR("showBatteryPercent"), YES);
     showBatteryTemperature = getBoolPref(CFSTR("showBatteryTemperature"), YES);
     showBatteryCurrent = getBoolPref(CFSTR("showBatteryCurrent"), YES);
     
-    insulationCpuMode = getIntPref(CFSTR("insulationCpuMode"), 0);
-    blockThermalDimming = getBoolPref(CFSTR("blockThermalDimming"), YES);
-    blockThermalAlert = getBoolPref(CFSTR("blockThermalAlert"), YES);
-    blockPocketTemp = getBoolPref(CFSTR("blockPocketTemp"), YES);
-    forceSunlightHBM = getBoolPref(CFSTR("forceSunlightHBM"), NO);
-    
-    smartChargeLimitEnable = getBoolPref(CFSTR("smartChargeLimitEnable"), NO);
-    smartChargeLimitTemp = getFloatPref(CFSTR("smartChargeLimitTemp"), 38.0f);
     chargeBoostEnable = getBoolPref(CFSTR("chargeBoostEnable"), NO);
     forceFastChargeEnable = getBoolPref(CFSTR("forceFastChargeEnable"), NO);
     
@@ -460,15 +440,6 @@ static void LoadPreferences(void) {
             [[SBCPUFPSHelper sharedInstance] stopMonitoring];
         }
         applySystemRefreshRate(); 
-        int token;
-        if (notify_register_check(NOTIFY_CPU_MODE, &token) == NOTIFY_STATUS_OK) {
-            uint64_t state = (insulationCpuMode & 0xFF) | 
-                             ((blockThermalDimming ? 1ULL : 0) << 8) | 
-                             ((forceFastChargeEnable ? 1ULL : 0) << 9);
-            notify_set_state(token, state);
-            notify_post(NOTIFY_CPU_MODE);
-            notify_cancel(token);
-        }
     }
 }
 
@@ -493,19 +464,11 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("showCpuFrequency"), showCpuFrequency);
     setBoolPref(CFSTR("showFps"), showFps);
     setBoolPref(CFSTR("force120HzEnable"), force120HzEnable);
-    setBoolPref(CFSTR("thermalProtectionEnable"), thermalProtectionEnable);
     setBoolPref(CFSTR("showBatteryPercent"), showBatteryPercent);
     setBoolPref(CFSTR("showBatteryTemperature"), showBatteryTemperature);
     setBoolPref(CFSTR("showBatteryCurrent"), showBatteryCurrent);
-    setIntPref(CFSTR("insulationCpuMode"), insulationCpuMode);
-    setBoolPref(CFSTR("blockThermalDimming"), blockThermalDimming);
-    setBoolPref(CFSTR("blockThermalAlert"), blockThermalAlert);
-    setBoolPref(CFSTR("blockPocketTemp"), blockPocketTemp);
-    setBoolPref(CFSTR("forceSunlightHBM"), forceSunlightHBM);
-    setBoolPref(CFSTR("smartChargeLimitEnable"), smartChargeLimitEnable);
-    setFloatPref(CFSTR("smartChargeLimitTemp"), smartChargeLimitTemp);
     setBoolPref(CFSTR("chargeBoostEnable"), chargeBoostEnable);
-    setBoolPref(CFSTR("forceFastChargeEnable"), forceFastChargeEnable); 
+    setBoolPref(CFSTR("forceFastChargeEnable"), forceFastChargeEnable);
     setBoolPref(CFSTR("notificationEnable"), notificationEnable);
     setBoolPref(CFSTR("wechatEnable"), wechatEnable);
     setBoolPref(CFSTR("qqEnable"), qqEnable);
@@ -524,31 +487,8 @@ static void SavePreferencesAndNotify(void) {
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), kPrefChangedNotification, NULL, NULL, YES);
     
     if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
-        int token;
-        if (notify_register_check(NOTIFY_CPU_MODE, &token) == NOTIFY_STATUS_OK) {
-            uint64_t state = (insulationCpuMode & 0xFF) | 
-                             ((blockThermalDimming ? 1ULL : 0) << 8) | 
-                             ((forceFastChargeEnable ? 1ULL : 0) << 9);
-            notify_set_state(token, state);
-            notify_post(NOTIFY_CPU_MODE);
-            notify_cancel(token);
-        }
     }
 }
-
-static void setHardwareChargingInhibit(BOOL inhibit) {
-    io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBatteryManager"));
-    if (service) {
-        IORegistryEntrySetCFProperty(service, CFSTR("ChargeInhibit"), inhibit ? kCFBooleanTrue : kCFBooleanFalse);
-        IOObjectRelease(service);
-    }
-    io_service_t pmuService = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleDialogPMU"));
-    if (pmuService) {
-        IORegistryEntrySetCFProperty(pmuService, CFSTR("ChargeInhibit"), inhibit ? kCFBooleanTrue : kCFBooleanFalse);
-        IOObjectRelease(pmuService);
-    }
-}
-
 
 /*
  * Experimental charging-target helper.
@@ -702,13 +642,6 @@ static BOOL isChargingInternal(void) {
     return charging;
 }
 
-static BOOL isDeviceOverheated(void) {
-    if (@available(iOS 11.0, *)) {
-        if ([NSProcessInfo processInfo].thermalState >= NSProcessInfoThermalStateSerious) return YES;
-    }
-    return getBatteryTemperatureInternal() >= 43.0;
-}
-
 static double getSpringBoardCPUUsage(void) {
     kern_return_t kr;
     thread_array_t thread_list;
@@ -760,8 +693,6 @@ static double getTotalCPUUsage(void) {
 static double getRealCPUFrequency(double currentCpuUsage) {
     DeviceSpec spec = getDeviceSpec();
     double maxFreq = spec.maxFreqMHz > 0 ? spec.maxFreqMHz : 3468.0;
-
-    if (insulationCpuMode == 1) maxFreq = maxFreq * 0.45;
 
     double minFreq = 600.0; 
     double loadFactor = sqrt(currentCpuUsage / 100.0);
@@ -1018,25 +949,7 @@ static void updateCPU(void) {
         } else if (!chargeBoostEnable && chargeLimit100Applied) {
             applyExperimentalChargeLimit100(NO);
         }
-
-        if (smartChargeLimitEnable && temp > 0) {
-            if (temp >= smartChargeLimitTemp) {
-                setHardwareChargingInhibit(YES);
-                isCurrentlyChargeInhibited = YES;
-            } else if (temp <= (smartChargeLimitTemp - 1.0f)) {
-                setHardwareChargingInhibit(NO);
-                isCurrentlyChargeInhibited = NO;
-            } else {
-                setHardwareChargingInhibit(isCurrentlyChargeInhibited); 
-            }
-        } else if (!smartChargeLimitEnable) {
-            if (isCurrentlyChargeInhibited) {
-                setHardwareChargingInhibit(NO);
-                isCurrentlyChargeInhibited = NO;
-            }
-        }
-
-        if (charging && !previousChargingState) {
+if (charging && !previousChargingState) {
             if (floatingView.isCollapsed && !floatingView.isShowingNotification) {
                 [floatingView expandFromEdgeAnimated:YES];
             }
@@ -1069,15 +982,11 @@ static void updateCPU(void) {
             }
         }
         chargeBoostStatus = [getChargeBoostStatus(chargeWatts, temp, battery, charging) copy];
-
+        // 保留原有充电状态显示：强制满血快充 > 充电增强 > 普通状态。
         if (forceFastChargeEnable && charging) {
             floatingView.statusLabel.text = [NSString stringWithFormat:@"🔥 强制满血快充 · %.1fW", chargeWatts];
             floatingView.statusLabel.textColor = [UIColor systemRedColor];
-            floatingView.statusDot.backgroundColor = [UIColor systemRedColor];
-        } else if (isCurrentlyChargeInhibited) {
-            floatingView.statusLabel.text = @"⚠️ 高温断充保护中";
-            floatingView.statusLabel.textColor = [UIColor systemOrangeColor];
-            floatingView.statusDot.backgroundColor = [UIColor systemOrangeColor];
+            floatingView.statusDot.backgroundColor = floatingView.statusLabel.textColor;
         } else if (chargeBoostEnable && charging) {
             NSString *verify = @"监测中";
             if (chargeBoostVerified) verify = @"检测到功率提升";
@@ -1100,7 +1009,7 @@ static void updateCPU(void) {
 }
 
 static void applySystemRefreshRate(void) {
-    BOOL apply120 = force120HzEnable && (!thermalProtectionEnable || !isDeviceOverheated());
+    BOOL apply120 = force120HzEnable;
     
     Class serverClass = NSClassFromString(@"CAWindowServer");
     if (serverClass && [serverClass respondsToSelector:@selector(serverIfRunning)]) {
@@ -1279,7 +1188,7 @@ static void applySystemRefreshRate(void) {
 - (void)updateFrameRate {
     if (!_displayLink) return;
 
-    BOOL apply120 = force120HzEnable && (!thermalProtectionEnable || !isDeviceOverheated());
+    BOOL apply120 = force120HzEnable;
 
     if (@available(iOS 15.0, *)) {
         float targetFps = apply120 ? 120.0f : 60.0f;
@@ -2169,8 +2078,13 @@ static void applySystemRefreshRate(void) {
     _tempValueLabel.text = (temp > 0) ? [NSString stringWithFormat:@"%.1f°C", temp] : @"--°C";
     _currentValueLabel.text = [NSString stringWithFormat:@"%.0f mA", current];
     
-    if (!isCurrentlyChargeInhibited && !forceFastChargeEnable) {
-        if (chargeBoostEnable && isCharging) {
+    if (YES) {
+        if (forceFastChargeEnable && isCharging) {
+            NSDictionary *chargeInfo = getRealBatteryDetails();
+            double watts = [chargeInfo[@"CalculatedWatts"] doubleValue];
+            _statusLabel.text = [NSString stringWithFormat:@"🔥 强制满血快充 · %.1fW", MAX(0.0, watts)];
+            _statusLabel.textColor = [UIColor systemRedColor];
+        } else if (chargeBoostEnable && isCharging) {
             NSDictionary *chargeInfo = getRealBatteryDetails();
             double watts = [chargeInfo[@"CalculatedWatts"] doubleValue];
             NSString *verify = chargeBoostVerified ? @"已验证功率提升" : @"实时验证中";
@@ -2202,10 +2116,12 @@ static void applySystemRefreshRate(void) {
         _miniCpuLabel.text = [NSString stringWithFormat:@"%.0fmA", current];
     }
     
-    if (!isCurrentlyChargeInhibited && !forceFastChargeEnable) {
+    if (YES) {
         UIColor *statusColor = [UIColor darkGrayColor];
-        if (isCharging) statusColor = chargeBoostEnable ? [UIColor systemBlueColor] : [UIColor colorWithRed:0.0f green:0.8f blue:0.4f alpha:1.0f];
-        else if (cpu >= 80.0 || temp >= 42.0) statusColor = [UIColor systemRedColor];
+        if (isCharging) {
+            if (forceFastChargeEnable) statusColor = [UIColor systemRedColor];
+            else statusColor = chargeBoostEnable ? [UIColor systemBlueColor] : [UIColor colorWithRed:0.0f green:0.8f blue:0.4f alpha:1.0f];
+        } else if (cpu >= 80.0 || temp >= 42.0) statusColor = [UIColor systemRedColor];
         else if (temp >= 38.0) statusColor = [UIColor systemOrangeColor];
         _statusDot.backgroundColor = statusColor;
     }
@@ -2607,13 +2523,45 @@ static void applySystemRefreshRate(void) {
 @end
 
 // ==============================================
+// CPUthermal merged-engine preference bridge
+// 与 CPUthermal 引擎共享同一份 RootHide/rootless 偏好文件。
+// ==============================================
+static NSMutableDictionary *sbcputhermalPrefsMutable(void) {
+    NSMutableDictionary *d = SBCPUThermalReadMutablePrefs();
+    return d ? [d mutableCopy] : [NSMutableDictionary dictionary];
+}
+static BOOL sbcputhermalGetBoolPref(NSString *key, BOOL def) {
+    NSDictionary *d = SBCPUThermalReadPrefs();
+    id v = d[key];
+    return v ? [v boolValue] : def;
+}
+static NSString *sbcputhermalGetStringPref(NSString *key, NSString *def) {
+    NSDictionary *d = SBCPUThermalReadPrefs();
+    id v = d[key];
+    return [v isKindOfClass:[NSString class]] ? v : def;
+}
+static void sbcputhermalSetPref(NSString *key, id value) {
+    NSMutableDictionary *d = sbcputhermalPrefsMutable();
+    if (value) d[key] = value;
+    else [d removeObjectForKey:key];
+    SBCPUThermalWritePrefs(d);
+    notify_post("com.yourname.sbcpufloating/settingsChanged");
+}
+static void sbcputhermalSetBoolPref(NSString *key, BOOL value) {
+    sbcputhermalSetPref(key, [NSNumber numberWithBool:value]);
+}
+static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
+    sbcputhermalSetPref(key, value);
+}
+
+// ==============================================
 // 100% 完整保留的设置中心
 // ==============================================
 @implementation SBCPUSettingsController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"SBCPUFloating V2.9";
+    self.title = @"SBCPUFloating V2.9.3";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeSettings)];
 }
 
@@ -2637,9 +2585,9 @@ static void applySystemRefreshRate(void) {
     if (section == 2) return 5;
     if (section == 3) return 6; // 通知管理
     if (section == 4) return 3;
-    if (section == 5) return 2;
+    if (section == 5) return 1;
     if (section == 6) return 5;
-    if (section == 7) return 4; 
+    if (section == 7) return 2; 
     if (section == 8) return 6;
     if (section == 9) return 5; // 📖 功能说明行数
     return 0;
@@ -2653,8 +2601,8 @@ static void applySystemRefreshRate(void) {
     if (section == 3) return @"💬 消息与通知管理";
     if (section == 4) return @"🧠 智能选项";
     if (section == 5) return @"🎮 性能与高刷锁定";
-    if (section == 6) return @"🌡️ Insulation (温控核心)"; 
-    if (section == 7) return @"🔌 电池温控与断充";
+    if (section == 6) return @"🌡️ CPUthermal 温控核心"; 
+    if (section == 7) return @"🔌 充电增强";
     if (section == 8) return @"📍 位置与显示";
     if (section == 9) return @"📖 功能与使用说明"; 
     return @"";
@@ -2810,69 +2758,49 @@ static void applySystemRefreshRate(void) {
             sw.on = force120HzEnable;
             [sw addTarget:self action:@selector(changeForce120Hz:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
-        } else if (indexPath.row == 1) {
-            cell.textLabel.text = @"智能温控降频保护";
-            UISwitch *sw = [UISwitch new];
-            sw.on = thermalProtectionEnable;
-            [sw addTarget:self action:@selector(changeThermalProtection:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = sw;
         }
     } else if (indexPath.section == 6) {
         if (indexPath.row == 0) {
-            cell.textLabel.text = @"CPU 模式";
-            NSArray *modes = @[@"苹果原生温控", @"模拟低电频率", @"防止温控降频"];
-            cell.detailTextLabel.text = (insulationCpuMode >= 0 && insulationCpuMode < modes.count) ? modes[insulationCpuMode] : modes[0];
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        } else if (indexPath.row == 1) {
-            cell.textLabel.text = @"拦截温控暗屏";
+            cell.textLabel.text = @"CPUthermal 温控引擎";
             UISwitch *sw = [UISwitch new];
-            sw.on = blockThermalDimming;
-            [sw addTarget:self action:@selector(changeInsulationDimming:) forControlEvents:UIControlEventValueChanged];
+            sw.on = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
+            [sw addTarget:self action:@selector(changeThermalEngine:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
+        } else if (indexPath.row == 1) {
+            cell.textLabel.text = @"温控模式";
+            NSString *mode = sbcputhermalGetStringPref(@"powerMode", @"fullPower");
+            cell.detailTextLabel.text = [mode isEqualToString:@"lowPower"] ? @"低功耗" : @"解除温控";
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else if (indexPath.row == 2) {
-            cell.textLabel.text = @"拦截温度计弹窗";
+            cell.textLabel.text = @"防温控暗屏";
             UISwitch *sw = [UISwitch new];
-            sw.on = blockThermalAlert;
-            [sw addTarget:self action:@selector(changeInsulationThermometer:) forControlEvents:UIControlEventValueChanged];
+            sw.on = sbcputhermalGetBoolPref(@"thermalPreventDimmingEnabled", NO);
+            [sw addTarget:self action:@selector(changeThermalDimming:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 3) {
-            cell.textLabel.text = @"拦截口袋高温";
+            cell.textLabel.text = @"屏蔽高温温度计警告";
             UISwitch *sw = [UISwitch new];
-            sw.on = blockPocketTemp;
-            [sw addTarget:self action:@selector(changeInsulationPocket:) forControlEvents:UIControlEventValueChanged];
+            sw.on = sbcputhermalGetBoolPref(@"thermalBlockNotifPopup", NO);
+            [sw addTarget:self action:@selector(changeThermalPopup:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 4) {
-            cell.textLabel.text = @"拦截阳光限制";
-            UISwitch *sw = [UISwitch new];
-            sw.on = forceSunlightHBM;
-            [sw addTarget:self action:@selector(changeInsulationSunlight:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = sw;
+            cell.textLabel.text = @"温控核心";
+            cell.detailTextLabel.text = @"CPUthermal 1.6.4-53";
         }
     } else if (indexPath.section == 7) {
         if (indexPath.row == 0) {
-            cell.textLabel.text = @"开启高温智能断充";
-            UISwitch *sw = [UISwitch new];
-            sw.on = smartChargeLimitEnable;
-            [sw addTarget:self action:@selector(changeSmartChargeLimit:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = sw;
-        } else if (indexPath.row == 1) {
-            cell.textLabel.text = @"断充温度阈值";
-            cell.detailTextLabel.text = [NSString stringWithFormat:@"%.1f°C", smartChargeLimitTemp];
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        } else if (indexPath.row == 2) {
             cell.textLabel.text = @"充电增强（实时验证）";
             UISwitch *sw = [UISwitch new];
             sw.on = chargeBoostEnable;
             [sw addTarget:self action:@selector(changeChargeBoost:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
-        }
-        else if (indexPath.row == 3) {
-            cell.textLabel.text = @"🔥 强制满血快充 (无视温控)"; 
-            cell.textLabel.textColor = [UIColor systemRedColor];
-            UISwitch *sw = [UISwitch new]; 
-            sw.on = forceFastChargeEnable; 
-            [sw addTarget:self action:@selector(changeForceFastCharge:) forControlEvents:UIControlEventValueChanged]; 
-            cell.accessoryView = sw; 
+        } else if (indexPath.row == 1) {
+            cell.textLabel.text = @"🔥 强制满血快充";
+            cell.detailTextLabel.text = @"保留原有快充控制";
+            UISwitch *sw = [UISwitch new];
+            sw.on = forceFastChargeEnable;
+            [sw addTarget:self action:@selector(changeForceFastCharge:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
         }
     } else if (indexPath.section == 8) {
         if (indexPath.row == 0) {
@@ -3000,28 +2928,15 @@ static void applySystemRefreshRate(void) {
             [self presentViewController:alert animated:YES completion:nil];
         }
     } else if (indexPath.section == 6) {
-        if (indexPath.row == 0) {
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"CPU 模式" message:@"选择系统级温控干预级别" preferredStyle:UIAlertControllerStyleActionSheet];
-            NSArray *titles = @[@"苹果原生温控", @"模拟低电频率", @"防止温控降频"];
-            for (NSInteger i = 0; i < titles.count; i++) {
-                [alert addAction:[UIAlertAction actionWithTitle:titles[i] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-                    insulationCpuMode = i;
-                    SavePreferencesAndNotify();
-                    [self.tableView reloadData];
-                }]];
-            }
-            [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-            [self presentViewController:alert animated:YES completion:nil];
-        }
-    } else if (indexPath.section == 7) {
         if (indexPath.row == 1) {
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"断充温度阈值" message:@"选择电池达到多少度时强制旁路供电" preferredStyle:UIAlertControllerStyleActionSheet];
-            NSArray *titles = @[@"35.0°C", @"36.0°C", @"37.0°C", @"38.0°C", @"39.0°C", @"40.0°C", @"41.0°C", @"42.0°C", @"43.0°C"];
-            NSArray *values = @[@35.0, @36.0, @37.0, @38.0, @39.0, @40.0, @41.0, @42.0, @43.0];
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"温控模式"
+                                                                             message:@"选择 CPUthermal 1.6.4-53 温控核心的运行模式"
+                                                                      preferredStyle:UIAlertControllerStyleActionSheet];
+            NSArray *titles = @[@"低功耗", @"解除温控"];
+            NSArray *values = @[@"lowPower", @"fullPower"];
             for (NSInteger i = 0; i < titles.count; i++) {
                 [alert addAction:[UIAlertAction actionWithTitle:titles[i] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-                    smartChargeLimitTemp = [values[i] floatValue];
-                    SavePreferencesAndNotify();
+                    sbcputhermalSetStringPref(@"powerMode", values[i]);
                     [self.tableView reloadData];
                 }]];
             }
@@ -3082,17 +2997,11 @@ static void applySystemRefreshRate(void) {
 - (void)changeSmartDock:(UISwitch *)sw { smartDockEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeRememberPosition:(UISwitch *)sw { rememberPositionEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeForce120Hz:(UISwitch *)sw { force120HzEnable = sw.isOn; SavePreferencesAndNotify(); }
-- (void)changeThermalProtection:(UISwitch *)sw { thermalProtectionEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeShowCpuFreq:(UISwitch *)sw { showCpuFrequency = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowFps:(UISwitch *)sw { showFps = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowBattery:(UISwitch *)sw { showBatteryPercent = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowTemp:(UISwitch *)sw { showBatteryTemperature = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowCurrent:(UISwitch *)sw { showBatteryCurrent = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
-- (void)changeInsulationDimming:(UISwitch *)sw { blockThermalDimming = sw.isOn; SavePreferencesAndNotify(); }
-- (void)changeInsulationThermometer:(UISwitch *)sw { blockThermalAlert = sw.isOn; SavePreferencesAndNotify(); }
-- (void)changeInsulationPocket:(UISwitch *)sw { blockPocketTemp = sw.isOn; SavePreferencesAndNotify(); }
-- (void)changeInsulationSunlight:(UISwitch *)sw { forceSunlightHBM = sw.isOn; SavePreferencesAndNotify(); }
-- (void)changeSmartChargeLimit:(UISwitch *)sw { smartChargeLimitEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeChargeBoost:(UISwitch *)sw {
     chargeBoostEnable = sw.isOn;
     chargeBoostStartTime = sw.isOn ? CFAbsoluteTimeGetCurrent() : 0;
@@ -3104,17 +3013,20 @@ static void applySystemRefreshRate(void) {
     SavePreferencesAndNotify();
 }
 
-// 🔥 新增：带有风险提醒的强制快充开关
 - (void)changeForceFastCharge:(UISwitch *)sw {
     forceFastChargeEnable = sw.isOn;
     if (sw.isOn) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚠️ 极度危险警告" message:@"您正在强制抛弃苹果原厂充电温控！\n\n这可能导致手机充电时极度发烫，极大增加电池鼓包、主板烧毁风险。\n\n⚠️强烈建议仅在配合【半导体制冷散热背夹】时使用此功能！" preferredStyle:UIAlertControllerStyleAlert];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚠️ 极度危险警告"
+                                                                         message:@"强制快充会绕过部分原厂充电限制，充电时可能明显升温。仅建议在充分散热条件下使用。"
+                                                                  preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
+            (void)action;
             sw.on = NO;
             forceFastChargeEnable = NO;
             SavePreferencesAndNotify();
         }]];
         [alert addAction:[UIAlertAction actionWithTitle:@"我知晓风险并开启" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+            (void)action;
             SavePreferencesAndNotify();
         }]];
         [self presentViewController:alert animated:YES completion:nil];
@@ -3123,6 +3035,15 @@ static void applySystemRefreshRate(void) {
     }
 }
 
+- (void)changeThermalEngine:(UISwitch *)sw {
+    sbcputhermalSetBoolPref(@"thermalEngineEnabled", sw.isOn);
+}
+- (void)changeThermalDimming:(UISwitch *)sw {
+    sbcputhermalSetBoolPref(@"thermalPreventDimmingEnabled", sw.isOn);
+}
+- (void)changeThermalPopup:(UISwitch *)sw {
+    sbcputhermalSetBoolPref(@"thermalBlockNotifPopup", sw.isOn);
+}
 - (void)changeNotificationEnable:(UISwitch *)sw { notificationEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeWechatEnable:(UISwitch *)sw { wechatEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeQqEnable:(UISwitch *)sw { qqEnable = sw.isOn; SavePreferencesAndNotify(); }
@@ -3166,65 +3087,6 @@ static void registerV160Observers(void) {
         }];
     });
 }
-
-#pragma mark - 9. 👑 移植绝杀版温控防线：完美阻止系统暗屏与降频！
-
-%hook SBDisplayBrightnessController
-- (void)setBrightnessLevel:(double)arg1 forReason:(id)arg2 {
-    if (blockThermalDimming && [arg2 isKindOfClass:[NSString class]] && ([(NSString*)arg2 containsString:@"Thermal"] || [(NSString*)arg2 containsString:@"Limit"])) return;
-    %orig;
-}
-%end
-
-%hook BrightnessSystemClient
-- (BOOL)setProperty:(id)arg1 forKey:(id)arg2 {
-    if (blockThermalDimming && [arg2 isKindOfClass:[NSString class]]) {
-        NSString *key = [NSString stringWithFormat:@"%@", arg2];
-        if ([key.lowercaseString containsString:@"thermal"] || 
-            [key.lowercaseString containsString:@"mitigation"] || 
-            [key.lowercaseString containsString:@"limit"]) return YES; 
-    }
-    return %orig;
-}
-%end
-
-%hook CBClient
-- (BOOL)setProperty:(id)arg1 forKey:(id)arg2 {
-    if (blockThermalDimming && [arg2 isKindOfClass:[NSString class]]) {
-        NSString *key = [NSString stringWithFormat:@"%@", arg2];
-        if ([key.lowercaseString containsString:@"thermal"] || 
-            [key.lowercaseString containsString:@"mitigation"] || 
-            [key.lowercaseString containsString:@"limit"]) return YES; 
-    }
-    return %orig;
-}
-%end
-
-%hook CBDisplayStateClient
-- (BOOL)setProperty:(id)arg1 forKey:(id)arg2 {
-    if (blockThermalDimming && [arg2 isKindOfClass:[NSString class]]) {
-        NSString *key = [NSString stringWithFormat:@"%@", arg2];
-        if ([key.lowercaseString containsString:@"thermal"] || 
-            [key.lowercaseString containsString:@"mitigation"] || 
-            [key.lowercaseString containsString:@"limit"]) return YES; 
-    }
-    return %orig;
-}
-%end
-
-%hook SBBacklightController
-- (void)setThermalWarningState:(NSInteger)state { if (blockThermalDimming) %orig(0); else %orig(state); }
-- (void)_updateBrightnessForSunlightLoad:(BOOL)arg1 { if (forceSunlightHBM) %orig(NO); else %orig(arg1); }
-%end
-
-%hook SBThermalController
-- (void)showThermalAlertIfNecessary { if (blockThermalAlert) return; %orig; }
-- (BOOL)isThermalBlocked { if (blockThermalAlert) return NO; return %orig; }
-%end
-
-%hook SBPocketStateMonitor
-- (void)pocketStateDidChange:(NSInteger)state { if (blockPocketTemp) %orig(0); else %orig(state); }
-%end
 
 // 🚀 终极通知拦截阵列
 %hook NCNotificationDispatcher
