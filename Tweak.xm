@@ -2569,14 +2569,96 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
 }
 
 // ==============================================
+// 温控状态诊断：只读系统通知状态，不参与温控控制
+// ==============================================
+static uint64_t sbcputhermalReadNotifyState(const char *name, uint64_t fallback) {
+    int token = -1;
+    uint64_t state = fallback;
+    if (!name) return fallback;
+    if (notify_register_check(name, &token) == NOTIFY_STATUS_OK) {
+        if (notify_get_state(token, &state) != NOTIFY_STATUS_OK) state = fallback;
+        notify_cancel(token);
+    }
+    return state;
+}
+
+static NSString *sbcputhermalPressureChinese(SBCPUThermalPressureLevel pressure) {
+    switch (pressure) {
+        case SBCPUThermalPressureLevelNominal: return @"正常";
+        case SBCPUThermalPressureLevelLight: return @"轻微升温";
+        case SBCPUThermalPressureLevelModerate: return @"中度升温";
+        case SBCPUThermalPressureLevelHeavy: return @"高温";
+        case SBCPUThermalPressureLevelTrapping: return @"严重高温";
+        case SBCPUThermalPressureLevelSleeping: return @"极端高温";
+        case SBCPUThermalPressureLevelError: return @"读取失败";
+        default: return @"正在检测";
+    }
+}
+
+static NSString *sbcputhermalCurrentStatusDetail(void) {
+    uint64_t engine = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineActiveNotif, 0);
+    uint64_t boot = sbcputhermalReadNotifyState(SBCPUThermalDiagBootSettledNotif, 0);
+    uint64_t protection = sbcputhermalReadNotifyState(SBCPUThermalDiagProtectionNotif, 0);
+    SBCPUThermalPressureLevel pressure = SBCPUThermalGetPressureLevel();
+    if (!engine || !sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES)) {
+        return @"当前：未开启\n温控核心没有运行，不会主动进行温度保护。";
+    }
+    if (!boot) {
+        return [NSString stringWithFormat:@"当前：正在启动\n温控核心正在准备中，请等待几秒。\n系统温度：%@", sbcputhermalPressureChinese(pressure)];
+    }
+    if (protection) {
+        return [NSString stringWithFormat:@"当前：保护中\n检测到设备温度压力较高，正在自动降低功耗。\n系统温度：%@", sbcputhermalPressureChinese(pressure)];
+    }
+    return [NSString stringWithFormat:@"当前：正常\n温控核心正在工作，目前没有启动降功耗保护。\n系统温度：%@", sbcputhermalPressureChinese(pressure)];
+}
+
+// ==============================================
 // 100% 完整保留的设置中心
 // ==============================================
 @implementation SBCPUSettingsController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"SBCPUFloating V3.0";
+    self.title = @"SBCPUFloating V3.1";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeSettings)];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self refreshThermalStatus];
+    [self startThermalStatusTimer];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    [self stopThermalStatusTimer];
+}
+
+- (void)startThermalStatusTimer {
+    [self stopThermalStatusTimer];
+    __weak typeof(self) weakSelf = self;
+    objc_setAssociatedObject(self, @selector(startThermalStatusTimer), [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) {
+        (void)timer;
+        __strong typeof(weakSelf) self = weakSelf;
+        [self refreshThermalStatus];
+    }], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+- (void)stopThermalStatusTimer {
+    NSTimer *timer = objc_getAssociatedObject(self, @selector(startThermalStatusTimer));
+    [timer invalidate];
+    objc_setAssociatedObject(self, @selector(startThermalStatusTimer), nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+- (void)refreshThermalStatus {
+    if (!self.isViewLoaded || !self.view.window) return;
+    NSIndexPath *path = [NSIndexPath indexPathForRow:8 inSection:6];
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
+    if (cell) {
+        cell.detailTextLabel.text = sbcputhermalCurrentStatusDetail();
+        cell.detailTextLabel.numberOfLines = 0;
+        [cell setNeedsLayout];
+    }
 }
 
 - (void)closeSettings {
@@ -2616,11 +2698,11 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
     if (section == 3) return @"💬 消息与通知管理";
     if (section == 4) return @"🧠 智能选项";
     if (section == 5) return @"🎮 性能与高刷锁定";
-    if (section == 6) return @"🌡️ CPUthermal 温控核心"; 
+    if (section == 6) return @"🌡️ 温度保护"; 
     if (section == 7) return @"🔌 充电增强";
     if (section == 8) return @"📍 位置与显示";
     if (section == 9) return @"📖 功能与使用说明";
-    if (section == 10) return @"🌡️ 温控功能说明（这些功能是做什么的）"; 
+    if (section == 10) return @"🌡️ 温度保护功能说明"; 
     return @"";
 }
 
@@ -2660,24 +2742,24 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
         cell.textLabel.numberOfLines = 0;
 
         NSArray *titles = @[
-            @"Thermal Pressure 自动保护",
-            @"锁屏自动低功耗",
-            @"Thermal Nominal 自动恢复",
-            @"启动 8 秒温控保护",
-            @"防温控暗屏",
-            @"屏蔽高温温度计警告",
-            @"Thermal Notification 状态",
-            @"温控模式"
+            @"过热自动保护",
+            @"锁屏省电保护",
+            @"温度正常后自动恢复",
+            @"启动后等待 8 秒",
+            @"防止温控导致暗屏",
+            @"不弹出高温警告",
+            @"当前状态怎么看",
+            @"运行方式"
         ];
         NSArray *descs = @[
-            @"检测系统 Thermal Pressure；达到 Heavy 及以上时自动进入低功耗保护，降低设备持续发热压力。",
-            @"设备锁屏后自动进入低功耗保护；解锁后按温控状态自动恢复，减少锁屏期间不必要的功耗。",
-            @"当系统 Thermal Pressure 回到 Nominal 并持续约 5 秒后，自动结束保护状态，恢复正常运行。",
-            @"插件启动后先保持约 8 秒静默期，避免初始化阶段的温控状态误判或控制竞态。",
-            @"开启后尽量避免系统因温控策略而主动降低屏幕亮度，减少使用过程中突然暗屏的情况。",
-            @"开启后尝试屏蔽系统高温温度计警告弹窗；不会关闭温控检测本身。",
-            @"显示当前 CPUthermal 检测到的 Thermal Notification / Pressure 状态，方便查看当前温控等级。",
-            @"手动选择温控运行模式：低功耗或解除温控；自动保护功能仍根据对应开关决定是否参与。"
+            @"设备温度压力太高时，自动降低功耗，帮助设备减轻发热。",
+            @"熄屏后自动省电，亮屏后恢复，不影响正常使用。",
+            @"温度恢复正常并稳定约 5 秒后，自动恢复之前的运行状态。",
+            @"插件刚启动时先等约 8 秒，让系统温度监测稳定下来，避免误操作。",
+            @"尽量避免系统因为温度过高而突然降低屏幕亮度。",
+            @"只是不显示高温警告弹窗，温度检测和保护仍然继续。",
+            @"“正常”表示正在监测但没有启动保护；“保护中”表示温度压力较高，正在主动降低功耗；“正在启动”表示还在等待 8 秒。",
+            @"“正常性能”优先保持性能；“省电保护”会主动限制功耗。遇到高温时，自动保护仍可临时接管。"
         ];
         cell.textLabel.text = titles[indexPath.row];
         cell.detailTextLabel.text = descs[indexPath.row];
@@ -2828,69 +2910,64 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
         }
     } else if (indexPath.section == 6) {
         if (indexPath.row == 0) {
-            cell.textLabel.text = @"CPUthermal 温控引擎";
-            cell.detailTextLabel.text = @"CPUthermal 温控核心总开关，关闭后不主动执行温控控制。";
+            cell.textLabel.text = @"温度保护总开关";
+            cell.detailTextLabel.text = @"开启后，插件会根据系统温度压力自动保护设备。";
             UISwitch *sw = [UISwitch new];
             sw.on = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
             [sw addTarget:self action:@selector(changeThermalEngine:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 1) {
-            cell.textLabel.text = @"温控模式";
-            cell.detailTextLabel.text = @"选择温控核心当前运行模式；详细说明见下方“温控功能说明”。";
+            cell.textLabel.text = @"运行方式";
             NSString *mode = sbcputhermalGetStringPref(@"powerMode", @"fullPower");
-            cell.detailTextLabel.text = [mode isEqualToString:@"lowPower"] ? @"低功耗" : @"解除温控";
+            cell.detailTextLabel.text = [mode isEqualToString:@"lowPower"] ? @"省电保护" : @"正常性能";
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else if (indexPath.row == 2) {
-            cell.textLabel.text = @"Thermal Pressure 自动保护";
-            cell.detailTextLabel.text = @"Heavy 及以上自动进入低功耗保护。";
-            cell.detailTextLabel.text = @"Heavy 以上自动进入低功耗";
+            cell.textLabel.text = @"过热自动保护";
+            cell.detailTextLabel.text = @"温度压力达到较高等级时，自动降低功耗帮助降温。";
             UISwitch *sw = [UISwitch new];
             sw.on = sbcputhermalGetBoolPref(@"thermalPressureAutoProtectionEnabled", YES);
             [sw addTarget:self action:@selector(changeThermalPressureProtection:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 3) {
-            cell.textLabel.text = @"锁屏自动低功耗";
-            cell.detailTextLabel.text = @"锁屏降低功耗，解锁后自动恢复。";
-            cell.detailTextLabel.text = @"熄屏降低功耗，解锁自动恢复";
+            cell.textLabel.text = @"锁屏省电保护";
+            cell.detailTextLabel.text = @"熄屏后降低功耗，亮屏后自动恢复。";
             UISwitch *sw = [UISwitch new];
             sw.on = sbcputhermalGetBoolPref(@"thermalLockScreenLowPowerEnabled", YES);
             [sw addTarget:self action:@selector(changeThermalLockScreenLowPower:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 4) {
-            cell.textLabel.text = @"Thermal Nominal 自动恢复";
-            cell.detailTextLabel.text = @"Nominal 持续约 5 秒后自动恢复。";
-            cell.detailTextLabel.text = @"Nominal 持续 5 秒后恢复";
+            cell.textLabel.text = @"温度正常后自动恢复";
+            cell.detailTextLabel.text = @"温度恢复正常并保持约 5 秒后，自动恢复正常性能。";
             UISwitch *sw = [UISwitch new];
             sw.on = sbcputhermalGetBoolPref(@"thermalNominalAutoRecoveryEnabled", YES);
             [sw addTarget:self action:@selector(changeThermalNominalRecovery:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 5) {
-            cell.textLabel.text = @"启动 8 秒温控保护";
-            cell.detailTextLabel.text = @"启动后固定 8 秒静默期，避免初始化阶段误判。";
-            cell.detailTextLabel.text = @"启动静默期固定 8 秒，避免初始化竞态";
+            cell.textLabel.text = @"启动保护等待";
+            cell.detailTextLabel.text = @"每次插件启动后先等待约 8 秒，再开始温度保护，避免刚启动时误判。";
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 6) {
-            cell.textLabel.text = @"防温控暗屏";
-            cell.detailTextLabel.text = @"尽量避免温控策略导致屏幕自动变暗。";
+            cell.textLabel.text = @"防止温控导致暗屏";
+            cell.detailTextLabel.text = @"尽量避免系统因为温度保护突然把屏幕亮度压低。";
             UISwitch *sw = [UISwitch new];
             sw.on = sbcputhermalGetBoolPref(@"thermalPreventDimmingEnabled", NO);
             [sw addTarget:self action:@selector(changeThermalDimming:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 7) {
-            cell.textLabel.text = @"屏蔽高温温度计警告";
-            cell.detailTextLabel.text = @"尝试屏蔽高温警告弹窗，但保留温控检测。";
+            cell.textLabel.text = @"不弹出高温警告";
+            cell.detailTextLabel.text = @"只隐藏高温警告弹窗，不关闭温度检测和保护。";
             UISwitch *sw = [UISwitch new];
             sw.on = sbcputhermalGetBoolPref(@"thermalBlockNotifPopup", NO);
             [sw addTarget:self action:@selector(changeThermalPopup:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 8) {
-            cell.textLabel.text = @"Thermal Notification 状态";
-            SBCPUThermalPressureLevel pressure = SBCPUThermalGetPressureLevel();
-            cell.detailTextLabel.text = [NSString stringWithFormat:@"当前：%@", [NSString stringWithUTF8String:SBCPUThermalPressureString(pressure)]];
+            cell.textLabel.text = @"温度保护当前状态";
+            cell.detailTextLabel.text = sbcputhermalCurrentStatusDetail();
+            cell.detailTextLabel.numberOfLines = 0;
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 9) {
-            cell.textLabel.text = @"温控核心";
-            cell.detailTextLabel.text = @"CPUthermal1.6.4\n由可爱的群主大大 Huayuarc 提供支持";
+            cell.textLabel.text = @"温控核心版本";
+            cell.detailTextLabel.text = @"CPUthermal 1.6.4-53\n负责读取系统温度压力并执行保护。";
             cell.detailTextLabel.numberOfLines = 2;
             cell.detailTextLabel.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightRegular];
             cell.detailTextLabel.adjustsFontSizeToFitWidth = NO;
@@ -3170,6 +3247,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
     (void)tableView;
     if (indexPath.section == 6) {
+        if (indexPath.row == 8) return 118.0;
         return (indexPath.row == 9) ? 72.0 : 64.0;
     }
     if (indexPath.section == 10) {

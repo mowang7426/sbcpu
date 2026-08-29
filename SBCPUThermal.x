@@ -444,6 +444,39 @@ if (state == 0) restoreUserModeAfterWake("screen-on");
 else switchToLowPowerForSleep("screen-off");
 }
 
+static void publishThermalDiagnosticState(SBCPUThermalPressureLevel pressure, BOOL protectionActive) {
+    int token = -1;
+    uint64_t value = 0;
+
+    if (notify_register_check(SBCPUThermalDiagEngineActiveNotif, &token) == NOTIFY_STATUS_OK) {
+        notify_set_state(token, runtimeEnabled() ? 1 : 0);
+        notify_post(SBCPUThermalDiagEngineActiveNotif);
+        notify_cancel(token);
+    }
+
+    token = -1;
+    if (notify_register_check(SBCPUThermalDiagBootSettledNotif, &token) == NOTIFY_STATUS_OK) {
+        notify_set_state(token, bootSettled() ? 1 : 0);
+        notify_post(SBCPUThermalDiagBootSettledNotif);
+        notify_cancel(token);
+    }
+
+    token = -1;
+    if (notify_register_check(SBCPUThermalDiagProtectionNotif, &token) == NOTIFY_STATUS_OK) {
+        notify_set_state(token, protectionActive ? 1 : 0);
+        notify_post(SBCPUThermalDiagProtectionNotif);
+        notify_cancel(token);
+    }
+
+    token = -1;
+    if (notify_register_check(SBCPUThermalDiagPressureNotif, &token) == NOTIFY_STATUS_OK) {
+        value = (pressure == SBCPUThermalPressureLevelUnknown || pressure == SBCPUThermalPressureLevelError) ? 999 : (uint64_t)pressure;
+        notify_set_state(token, value);
+        notify_post(SBCPUThermalDiagPressureNotif);
+        notify_cancel(token);
+    }
+}
+
 static SBCPUThermalPressureLevel normalizedThermalPressureLevel(uint64_t state) {
     if (state == 0) return SBCPUThermalPressureLevelNominal;
     if (state < 10) {
@@ -468,6 +501,7 @@ static SBCPUThermalPressureLevel normalizedThermalPressureLevel(uint64_t state) 
 static void restoreUserModeAfterThermalPressure(void) {
     if (!g_pressureSafetyOverride || !g_thermalNominalAutoRecoveryEnabled) return;
     g_pressureSafetyOverride = NO;
+    publishThermalDiagnosticState(g_currentPressureLevel, NO);
     os_unfair_lock_lock(&g_modeLock);
     SBCPUThermalPowerMode target = g_userSelectedPowerMode;
     g_powerMode = target;
@@ -491,6 +525,7 @@ static void evaluateThermalPressureState(void) {
     SBCPUThermalPressureLevel pressure = normalizedThermalPressureLevel(state);
     g_currentPressureLevel = pressure;
     BOOL severe = pressure >= SBCPUThermalPressureLevelHeavy && pressure <= SBCPUThermalPressureLevelSleeping;
+    publishThermalDiagnosticState(pressure, g_pressureSafetyOverride);
     if (severe) {
         g_pressureNominalSince = 0;
         if (!g_pressureSafetyOverride) {
@@ -503,6 +538,7 @@ static void evaluateThermalPressureState(void) {
             os_unfair_lock_unlock(&g_modeLock);
             if (g_pressureSafetyOverride) {
                 applyPowerModeToRuntime(NO);
+                publishThermalDiagnosticState(pressure, YES);
                 NSLog(@"[SBCPUThermal] Thermal Pressure=%s，启动自动热保护（低功耗）", SBCPUThermalPressureString(pressure));
             }
         }
@@ -2278,6 +2314,7 @@ os_unfair_lock_lock(&g_modeLock);
 previousMode = g_powerMode;
 os_unfair_lock_unlock(&g_modeLock);
 loadPrefs();
+publishThermalDiagnosticState(g_currentPressureLevel, g_pressureSafetyOverride);
 SBCPUThermalPowerMode currentMode;
 os_unfair_lock_lock(&g_modeLock);
 currentMode = g_powerMode;
@@ -2305,6 +2342,7 @@ else dispatch_async(dispatch_get_main_queue(), block);
 %ctor {
 @autoreleasepool {
 loadPrefs();
+publishThermalDiagnosticState(SBCPUThermalPressureLevelUnknown, NO);
 
 // 确保 IOKit 已加载
 void *iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW | RTLD_GLOBAL);
@@ -2338,6 +2376,7 @@ NSLog(@"[SBCPUThermal] 未找到 DeviceMonitor.framework (非致命)");
 // 传感器健康检查（Prs0 等）失败导致的 userspace panic。
 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
 atomic_store_explicit(&g_bootSettled, true, memory_order_release);
+publishThermalDiagnosticState(g_currentPressureLevel, g_pressureSafetyOverride);
 registerThermalPressureObserver();
 evaluateThermalPressureState();
 // CommonProduct 伪造读数只在静默期结束后生效。
