@@ -9,6 +9,8 @@
 #import <substrate.h>
 #include <signal.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/time.h>
 #include <SBCPUThermalPaths.h>
 #import <SBCPUThermalPressure.h>
 #import <IOKit/IOKitLib.h>
@@ -447,20 +449,42 @@ if (state == 0) restoreUserModeAfterWake("screen-on");
 else switchToLowPowerForSleep("screen-off");
 }
 
+static uint64_t SBCPUThermalUnixMilliseconds(void) {
+    struct timeval tv = {0};
+    gettimeofday(&tv, NULL);
+    return ((uint64_t)tv.tv_sec * 1000ULL) + ((uint64_t)tv.tv_usec / 1000ULL);
+}
+
 static void publishThermalEngineHeartbeat(void) {
     int token = -1;
-    uint64_t heartbeat = 0;
-    if (runtimeEnabled()) {
-        heartbeat = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
-    }
+    uint64_t heartbeat = runtimeEnabled() ? SBCPUThermalUnixMilliseconds() : 0;
 
+    // 1. Darwin notify：继续保留，供已有版本读取。
     if (notify_register_check(SBCPUThermalDiagEngineHeartbeatNotif, &token) == NOTIFY_STATUS_OK) {
         notify_set_state(token, heartbeat);
         notify_post(SBCPUThermalDiagEngineHeartbeatNotif);
         notify_cancel(token);
     }
 
-    // 保留旧的 0/1 诊断通知，兼容旧版设置页。新设置页以 heartbeat 为准。
+    // 2. 共享文件：作为 RootHide 下跨进程状态读取的可靠兜底。
+    // 只在核心真正启用时更新时间；关闭后删除，避免“旧心跳”冒充正在运行。
+    const char *path = kSBCPUThermalHeartbeatFileC;
+    if (path) {
+        if (heartbeat > 0) {
+            char buf[32] = {0};
+            int len = snprintf(buf, sizeof(buf), "%llu\\n", (unsigned long long)heartbeat);
+            int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd >= 0) {
+                (void)write(fd, buf, (size_t)len);
+                (void)fsync(fd);
+                close(fd);
+            }
+        } else {
+            unlink(path);
+        }
+    }
+
+    // 保留旧的 0/1 诊断通知，兼容旧版设置页。
     token = -1;
     if (notify_register_check(SBCPUThermalDiagEngineActiveNotif, &token) == NOTIFY_STATUS_OK) {
         notify_set_state(token, runtimeEnabled() ? 1 : 0);

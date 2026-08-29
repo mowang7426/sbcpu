@@ -2616,6 +2616,23 @@ static uint64_t sbcputhermalReadNotifyState(const char *name, uint64_t fallback)
     return state;
 }
 
+// RootHide 下部分进程的 Darwin notify 状态可能不在同一个可见空间。
+// 温控核心同时写入 /var/tmp 心跳，SpringBoard 优先读取这个跨进程心跳。
+static uint64_t sbcputhermalReadHeartbeatFile(void) {
+    FILE *fp = fopen(kSBCPUThermalHeartbeatFileC, "r");
+    if (!fp) return 0;
+    unsigned long long value = 0;
+    int ok = fscanf(fp, "%llu", &value);
+    fclose(fp);
+    return ok == 1 ? (uint64_t)value : 0;
+}
+
+static uint64_t sbcputhermalCurrentUnixMilliseconds(void) {
+    struct timeval tv = {0};
+    gettimeofday(&tv, NULL);
+    return ((uint64_t)tv.tv_sec * 1000ULL) + ((uint64_t)tv.tv_usec / 1000ULL);
+}
+
 static NSString *sbcputhermalPressureChinese(SBCPUThermalPressureLevel pressure) {
     switch (pressure) {
         case SBCPUThermalPressureLevelNominal: return @"正常";
@@ -2661,12 +2678,10 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut) {
         return;
     }
 
-    uint64_t heartbeat = g_lastThermalHeartbeatMS;
-    if (heartbeat == 0) {
-        // 首次监听尚未收到通知时，保留一次状态读取作为启动阶段兜底。
-        heartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
-    }
-    uint64_t nowMS = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
+    uint64_t heartbeat = sbcputhermalReadHeartbeatFile();
+    if (heartbeat == 0) heartbeat = g_lastThermalHeartbeatMS;
+    if (heartbeat == 0) heartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
+    uint64_t nowMS = sbcputhermalCurrentUnixMilliseconds();
     BOOL engineAlive = heartbeat > 0 && nowMS >= heartbeat && (nowMS - heartbeat) <= 10000;
 
     if (!engineAlive) {
@@ -2718,12 +2733,11 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     BOOL engineEnabled = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
     BOOL pressureProtectionEnabled = sbcputhermalGetBoolPref(@"thermalPressureAutoProtectionEnabled", YES);
     BOOL recoveryEnabled = sbcputhermalGetBoolPref(@"thermalNominalAutoRecoveryEnabled", YES);
-    uint64_t engineHeartbeat = g_lastThermalHeartbeatMS;
-    if (engineHeartbeat == 0) {
-        engineHeartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
-    }
-    uint64_t nowMS = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
-    // 最近 10 秒内收到真实心跳，才认为温控核心正在运行。
+    uint64_t engineHeartbeat = sbcputhermalReadHeartbeatFile();
+    if (engineHeartbeat == 0) engineHeartbeat = g_lastThermalHeartbeatMS;
+    if (engineHeartbeat == 0) engineHeartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
+    uint64_t nowMS = sbcputhermalCurrentUnixMilliseconds();
+    // 最近 10 秒内收到真实跨进程心跳，才认为温控核心正在运行。
     BOOL engineAlive = engineHeartbeat > 0 && nowMS >= engineHeartbeat && (nowMS - engineHeartbeat) <= 10000;
     uint64_t boot = sbcputhermalReadNotifyState(SBCPUThermalDiagBootSettledNotif, 0);
     uint64_t protection = sbcputhermalReadNotifyState(SBCPUThermalDiagProtectionNotif, 0);
