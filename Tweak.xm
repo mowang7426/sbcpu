@@ -2619,13 +2619,17 @@ static uint64_t sbcputhermalReadNotifyState(const char *name, uint64_t fallback)
 // RootHide 下部分进程的 Darwin notify 状态可能不在同一个可见空间。
 // 温控核心同时写入 /var/tmp 心跳，SpringBoard 优先读取这个跨进程心跳。
 static uint64_t sbcputhermalReadHeartbeatFile(void) {
-    NSString *path = SBCPUThermalCurrentHeartbeatPath();
-    FILE *fp = path.length > 0 ? fopen(path.fileSystemRepresentation, "r") : NULL;
-    if (!fp) return 0;
-    unsigned long long value = 0;
-    int ok = fscanf(fp, "%llu", &value);
-    fclose(fp);
-    return ok == 1 ? (uint64_t)value : 0;
+    uint64_t newest = 0;
+    for (NSString *path in SBCPUThermalHeartbeatPaths()) {
+        if (path.length == 0) continue;
+        FILE *fp = fopen(path.fileSystemRepresentation, "r");
+        if (!fp) continue;
+        unsigned long long value = 0;
+        int ok = fscanf(fp, "%llu", &value);
+        fclose(fp);
+        if (ok == 1 && (uint64_t)value > newest) newest = (uint64_t)value;
+    }
+    return newest;
 }
 
 static uint64_t sbcputhermalCurrentUnixMilliseconds(void) {
@@ -2673,12 +2677,6 @@ static void registerThermalHeartbeatListener(void) {
 static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut) {
     BOOL engineEnabled = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
 
-    if (!engineEnabled) {
-        if (textOut) *textOut = @"温控：已关闭";
-        if (colorOut) *colorOut = [UIColor systemGrayColor];
-        return;
-    }
-
     uint64_t heartbeat = sbcputhermalReadHeartbeatFile();
     if (heartbeat == 0) heartbeat = g_lastThermalHeartbeatMS;
     if (heartbeat == 0) heartbeat = sbcputhermalReadNotifyState(SBCPUThermalDiagEngineHeartbeatNotif, 0);
@@ -2686,8 +2684,14 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut) {
     BOOL engineAlive = heartbeat > 0 && nowMS >= heartbeat && (nowMS - heartbeat) <= 10000;
 
     if (!engineAlive) {
-        if (textOut) *textOut = @"温控：核心未运行";
+        if (textOut) *textOut = engineEnabled ? @"温控：核心未加载" : @"温控：核心未加载";
         if (colorOut) *colorOut = [UIColor systemGrayColor];
+        return;
+    }
+
+    if (!engineEnabled) {
+        if (textOut) *textOut = @"温控：核心已加载（保护关闭）";
+        if (colorOut) *colorOut = [UIColor systemBlueColor];
         return;
     }
 
@@ -2748,14 +2752,13 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     NSString *mode = sbcputhermalGetStringPref(@"powerMode", @"fullPower");
     BOOL lowPowerMode = [mode isEqualToString:@"lowPower"];
 
-    // 这里显示的是“实际温度压力 + 核心保护状态”，而不是只显示一个固定的 Nominal。
-    // 温控核心关闭时明确告诉用户不会主动保护；启动静默期结束后再显示真实状态。
-    if (!engineEnabled) {
-        return [NSString stringWithFormat:@"当前：温控已关闭\n你已关闭温度保护，温控核心不会主动调整功耗。\n系统温度状态：%@", pressureText];
-    }
-
+    // 这里显示的是“核心是否加载 + 实际温度压力 + 保护状态”。
     if (!engineAlive) {
         return [NSString stringWithFormat:@"当前：温控核心未运行\n温度保护开关虽然已打开，但没有检测到温控核心正在工作。\n请先注销一次，让温控核心重新加载。\n系统温度状态：%@", pressureText];
+    }
+
+    if (!engineEnabled) {
+        return [NSString stringWithFormat:@"当前：温控核心已加载，但保护已关闭\n核心正在运行，但你关闭了温度保护，所以不会主动调整功耗。\n系统温度状态：%@", pressureText];
     }
 
     if (!boot) {
@@ -2788,7 +2791,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"SBCPUFloating V3.1.5";
+    self.title = @"SBCPUFloating V3.1.6";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeSettings)];
 }
 

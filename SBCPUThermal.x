@@ -457,7 +457,10 @@ static uint64_t SBCPUThermalUnixMilliseconds(void) {
 
 static void publishThermalEngineHeartbeat(void) {
     int token = -1;
-    uint64_t heartbeat = runtimeEnabled() ? SBCPUThermalUnixMilliseconds() : 0;
+    // “核心是否加载”与“用户是否开启温控”必须分开判断。
+    // 只要 SBCPUThermal.dylib 已经进入 thermalmonitord，就持续发送存活心跳。
+    // 用户关闭温控时仍能显示“核心已加载，保护已关闭”，避免把关闭功能误报成未运行。
+    uint64_t heartbeat = SBCPUThermalUnixMilliseconds();
 
     // 1. Darwin notify：继续保留，供已有版本读取。
     if (notify_register_check(SBCPUThermalDiagEngineHeartbeatNotif, &token) == NOTIFY_STATUS_OK) {
@@ -468,32 +471,31 @@ static void publishThermalEngineHeartbeat(void) {
 
     // 2. 共享文件：作为 RootHide 下跨进程状态读取的可靠兜底。
     // SpringBoard 与 thermalmonitord 通过同一个解析函数访问同一份心跳文件。
-    NSString *heartbeatPath = SBCPUThermalCurrentHeartbeatPath();
-    const char *path = heartbeatPath.length > 0 ? heartbeatPath.fileSystemRepresentation : NULL;
-    if (path) {
-        if (heartbeat > 0) {
-            char buf[32] = {0};
-            int len = snprintf(buf, sizeof(buf), "%llu\n", (unsigned long long)heartbeat);
+    NSArray<NSString *> *heartbeatPaths = SBCPUThermalHeartbeatPaths();
+    if (heartbeat > 0) {
+        char buf[32] = {0};
+        int len = snprintf(buf, sizeof(buf), "%llu\n", (unsigned long long)heartbeat);
+        for (NSString *heartbeatPath in heartbeatPaths) {
+            if (heartbeatPath.length == 0) continue;
             NSString *directory = [heartbeatPath stringByDeletingLastPathComponent];
             [[NSFileManager defaultManager] createDirectoryAtPath:directory
                                       withIntermediateDirectories:YES
                                                        attributes:nil
                                                             error:nil];
+            const char *path = heartbeatPath.fileSystemRepresentation;
             int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
             if (fd >= 0) {
                 (void)write(fd, buf, (size_t)len);
                 (void)fsync(fd);
                 close(fd);
             }
-        } else {
-            unlink(path);
         }
     }
 
     // 保留旧的 0/1 诊断通知，兼容旧版设置页。
     token = -1;
     if (notify_register_check(SBCPUThermalDiagEngineActiveNotif, &token) == NOTIFY_STATUS_OK) {
-        notify_set_state(token, runtimeEnabled() ? 1 : 0);
+        notify_set_state(token, 1);
         notify_post(SBCPUThermalDiagEngineActiveNotif);
         notify_cancel(token);
     }
