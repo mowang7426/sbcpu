@@ -3171,8 +3171,10 @@ static NSDictionary *SBNotifUserInfo(id obj) {
         [floatingView.notificationQueue addObject:item];
         [floatingView showNotification:item];
         [floatingView setNeedsLayout];
-        [floatingView updateDataWithCPU:getSystemCPUUsage()
-                                cpuFreq:getRealCPUFrequency()
+        double notificationCPU = getSpringBoardCPUUsage();
+        double notificationCPUFreq = getRealCPUFrequency(notificationCPU);
+        [floatingView updateDataWithCPU:notificationCPU
+                                cpuFreq:notificationCPUFreq
                                     fps:[SBCPUFPSHelper sharedInstance].currentFPS
                                 battery:(NSInteger)([UIDevice currentDevice].batteryLevel * 100.0)
                                    temp:getBatteryTemperatureInternal()
