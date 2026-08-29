@@ -50,13 +50,6 @@ static void SBCPUFloatingWriteEnabled(BOOL enabled) {
 
 @implementation SBCPUFloatingCCModuleViewController
 
-- (instancetype)init {
-    self = [super init];
-    if (self) {
-        [self updateState];
-    }
-    return self;
-}
 
 - (void)viewDidLoad {
     [super viewDidLoad];
