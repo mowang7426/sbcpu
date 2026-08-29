@@ -28,15 +28,8 @@ endif
 # ⚠️ 注意这里，这句必须在 SUBPROJECTS 之前
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-BUNDLE_NAME = SBCPUFloatingCC
-SBCPUFloatingCC_FILES = SBCPUFloatingCC/SBCPUFloatingCC.m
-SBCPUFloatingCC_CFLAGS = -fobjc-arc -I$(THEOS_PROJECT_DIR)/SBCPUFloatingCC/headers
-SBCPUFloatingCC_FRAMEWORKS = UIKit Foundation
-SBCPUFloatingCC_INSTALL_PATH = /Library/ControlCenter/Bundles
-include $(THEOS_MAKE_PATH)/bundle.mk
-
 # 🔴 核心修复1：必须加上这两行，编译器才会去打包你的设置页面！
-SUBPROJECTS += sbcpuprefs
+SUBPROJECTS += sbcpufloatingcc sbcpuprefs
 include $(THEOS_MAKE_PATH)/aggregate.mk
 
 
