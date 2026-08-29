@@ -205,7 +205,16 @@ static inline BOOL bootSettled(void) {
 // 高温告警默认屏蔽；防暗屏仍由用户设置决定。
 static BOOL g_thermalBlockNotifPopup = NO;
 static BOOL g_thermalPreventDimmingEnabled = NO;
-// 保留 SBCPUFloating 原有“强制满血快充”控制，仅在开关开启时拦截充电限制写入。
+// CPUthermal 推荐功能：真实 Thermal Pressure 监测与自动安全保护。
+// 仅在 Heavy/Trapping/Sleeping 时临时进入低功耗，Nominal 稳定后恢复用户模式。
+static BOOL g_thermalPressureAutoProtectionEnabled = YES;
+static BOOL g_thermalNominalAutoRecoveryEnabled = YES;
+static BOOL g_lockScreenLowPowerEnabled = YES;
+static BOOL g_pressureSafetyOverride = NO;
+static SBCPUThermalPressureLevel g_currentPressureLevel = SBCPUThermalPressureLevelUnknown;
+static CFAbsoluteTime g_pressureNominalSince = 0;
+static int g_pressureNotifyToken = -1;
+// 保留 SBCPUFloating 原有“强制满血快充”控制，仅在开关开启时拦截充电限制写入.
 static BOOL g_forceFastChargeEnabled = NO;
 static NSNumber *g_maxBacklightBrightnessValue = nil;
 static BOOL isFullPowerMode(void);
@@ -232,6 +241,9 @@ static void scheduleThermalConfigurationReload(void);
 static void switchToLowPowerForSleep(const char *source);
 static void restoreUserModeAfterWake(const char *source);
 static void registerScreenWakeObservers(void);
+static void registerThermalPressureObserver(void);
+static void evaluateThermalPressureState(void);
+static void restoreUserModeAfterThermalPressure(void);
 
 static void runtimeConfigSnapshot(BOOL *enabled, BOOL *cpuProtection, BOOL *blockNetwork, BOOL *blockPopup, BOOL *preventDimming) {
 os_unfair_lock_lock(&g_stateLock);
@@ -382,6 +394,7 @@ scheduleThermalMonitorReload();
 }
 
 static void switchToLowPowerForSleep(const char *source) {
+if (!g_lockScreenLowPowerEnabled) return;
 BOOL changed = NO;
 os_unfair_lock_lock(&g_modeLock);
 if (g_powerMode != SBCPUThermalPowerModeLow) {
@@ -395,6 +408,7 @@ NSLog(@"[SBCPUThermal] %s 状态临时进入低功耗，保留用户模式:%@", 
 }
 
 static void restoreUserModeAfterWake(const char *source) {
+if (!g_lockScreenLowPowerEnabled) return;
 SBCPUThermalPowerMode previous;
 SBCPUThermalPowerMode target;
 os_unfair_lock_lock(&g_modeLock);
@@ -405,6 +419,7 @@ os_unfair_lock_unlock(&g_modeLock);
 // 唤醒时无论枚举是否变化都重新应用：长时间锁屏后 PMGR/ApplePPM
 // 可能已经重建，界面模式不变不代表硬件 Level/Floor 仍然有效。
 applyPowerModeToRuntime(NO);
+evaluateThermalPressureState();
 if (previous == SBCPUThermalPowerModeLow && target == SBCPUThermalPowerModeFull) {
     scheduleThermalMonitorReload();
 } else if (target == SBCPUThermalPowerModeLow && source && strcmp(source, "unlock") == 0) {
@@ -427,6 +442,96 @@ uint64_t state = UINT64_MAX;
 if (token <= 0 || notify_get_state(token, &state) != NOTIFY_STATUS_OK) return;
 if (state == 0) restoreUserModeAfterWake("screen-on");
 else switchToLowPowerForSleep("screen-off");
+}
+
+static SBCPUThermalPressureLevel normalizedThermalPressureLevel(uint64_t state) {
+    if (state == 0) return SBCPUThermalPressureLevelNominal;
+    if (state < 10) {
+        switch (state) {
+            case 1: return SBCPUThermalPressureLevelModerate;
+            case 2: return SBCPUThermalPressureLevelHeavy;
+            case 3: return SBCPUThermalPressureLevelTrapping;
+            case 4: return SBCPUThermalPressureLevelSleeping;
+            default: return SBCPUThermalPressureLevelUnknown;
+        }
+    }
+    switch (state) {
+        case 10: return SBCPUThermalPressureLevelLight;
+        case 20: return SBCPUThermalPressureLevelModerate;
+        case 30: return SBCPUThermalPressureLevelHeavy;
+        case 40: return SBCPUThermalPressureLevelTrapping;
+        case 50: return SBCPUThermalPressureLevelSleeping;
+        default: return SBCPUThermalPressureLevelUnknown;
+    }
+}
+
+static void restoreUserModeAfterThermalPressure(void) {
+    if (!g_pressureSafetyOverride || !g_thermalNominalAutoRecoveryEnabled) return;
+    g_pressureSafetyOverride = NO;
+    os_unfair_lock_lock(&g_modeLock);
+    SBCPUThermalPowerMode target = g_userSelectedPowerMode;
+    g_powerMode = target;
+    os_unfair_lock_unlock(&g_modeLock);
+    applyPowerModeToRuntime(NO);
+    scheduleThermalMonitorReload();
+    NSLog(@"[SBCPUThermal] Thermal Pressure 已恢复 Nominal，恢复用户温控模式");
+}
+
+static void evaluateThermalPressureState(void) {
+    if (!g_thermalPressureAutoProtectionEnabled || !runtimeEnabled() || !bootSettled()) return;
+    int token = 0;
+    uint64_t state = 0;
+    if (notify_register_check(kOSThermalNotificationPressureLevelName, &token) != NOTIFY_STATUS_OK) return;
+    if (notify_get_state(token, &state) != NOTIFY_STATUS_OK) {
+        notify_cancel(token);
+        return;
+    }
+    notify_cancel(token);
+
+    SBCPUThermalPressureLevel pressure = normalizedThermalPressureLevel(state);
+    g_currentPressureLevel = pressure;
+    BOOL severe = pressure >= SBCPUThermalPressureLevelHeavy && pressure <= SBCPUThermalPressureLevelSleeping;
+    if (severe) {
+        g_pressureNominalSince = 0;
+        if (!g_pressureSafetyOverride) {
+            os_unfair_lock_lock(&g_modeLock);
+            BOOL alreadyLow = (g_powerMode == SBCPUThermalPowerModeLow);
+            if (!alreadyLow) {
+                g_powerMode = SBCPUThermalPowerModeLow;
+                g_pressureSafetyOverride = YES;
+            }
+            os_unfair_lock_unlock(&g_modeLock);
+            if (g_pressureSafetyOverride) {
+                applyPowerModeToRuntime(NO);
+                NSLog(@"[SBCPUThermal] Thermal Pressure=%s，启动自动热保护（低功耗）", SBCPUThermalPressureString(pressure));
+            }
+        }
+        return;
+    }
+
+    if (pressure == SBCPUThermalPressureLevelNominal) {
+        if (g_pressureSafetyOverride && g_thermalNominalAutoRecoveryEnabled) {
+            if (g_pressureNominalSince <= 0) g_pressureNominalSince = CFAbsoluteTimeGetCurrent();
+            if ((CFAbsoluteTimeGetCurrent() - g_pressureNominalSince) >= 5.0) {
+                restoreUserModeAfterThermalPressure();
+            }
+        }
+    } else {
+        g_pressureNominalSince = 0;
+    }
+}
+
+static void registerThermalPressureObserver(void) {
+    if (g_pressureNotifyToken >= 0) return;
+    if (notify_register_dispatch(kOSThermalNotificationPressureLevelName,
+                                 &g_pressureNotifyToken,
+                                 dispatch_get_main_queue(), ^(int token) {
+        (void)token;
+        evaluateThermalPressureState();
+    }) != NOTIFY_STATUS_OK) {
+        g_pressureNotifyToken = -1;
+    }
+    evaluateThermalPressureState();
 }
 
 static void registerScreenWakeObservers(void) {
@@ -1185,10 +1290,16 @@ d = migrated;
 BOOL enabled = d[S("thermalEngineEnabled")] ? [d[S("thermalEngineEnabled")] boolValue] : YES;
 BOOL blockPopup = [d[S("thermalBlockNotifPopup")] ?: @NO boolValue];
 BOOL preventDimming = [d[S("thermalPreventDimmingEnabled")] ?: @NO boolValue];
+BOOL pressureProtection = [d[S("thermalPressureAutoProtectionEnabled")] ?: @YES boolValue];
+BOOL nominalRecovery = [d[S("thermalNominalAutoRecoveryEnabled")] ?: @YES boolValue];
+BOOL lockScreenLowPower = [d[S("thermalLockScreenLowPowerEnabled")] ?: @YES boolValue];
 os_unfair_lock_lock(&g_stateLock);
 g_enabled = enabled;
 g_thermalBlockNotifPopup = blockPopup;
 g_thermalPreventDimmingEnabled = preventDimming;
+g_thermalPressureAutoProtectionEnabled = pressureProtection;
+g_thermalNominalAutoRecoveryEnabled = nominalRecovery;
+g_lockScreenLowPowerEnabled = lockScreenLowPower;
 g_forceFastChargeEnabled = [d[S("forceFastChargeEnable")] boolValue];
 os_unfair_lock_unlock(&g_stateLock);
 
@@ -2227,6 +2338,8 @@ NSLog(@"[SBCPUThermal] 未找到 DeviceMonitor.framework (非致命)");
 // 传感器健康检查（Prs0 等）失败导致的 userspace panic。
 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
 atomic_store_explicit(&g_bootSettled, true, memory_order_release);
+registerThermalPressureObserver();
+evaluateThermalPressureState();
 // CommonProduct 伪造读数只在静默期结束后生效。
 CTRSetThermalModeProvider(SBCPUThermalRecoveredMode);
 if (shouldApplyFullCPUProtection()) SBCPUThermalForceNominalCombined();
@@ -2251,6 +2364,7 @@ NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
 }
 
 registerScreenWakeObservers();
+registerThermalPressureObserver();
 // 热模式提供器延迟到静默期结束设置，启动期间 CommonProduct 伪造读数保持关闭。
 CTRInstallRecoveredThermalHooks();
 installCrossVersionThermalAliases();

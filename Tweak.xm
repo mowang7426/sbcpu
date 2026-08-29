@@ -18,6 +18,7 @@
 #import <notify.h>
 #import <objc/runtime.h>
 #import "SBCPUThermalPaths.h"
+#import "SBCPUThermalPressure.h"
 
 #ifndef kIOMainPortDefault
 #define kIOMainPortDefault kIOMasterPortDefault
@@ -2597,7 +2598,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
     if (section == 3) return 7; // 通知管理
     if (section == 4) return 3;
     if (section == 5) return 1;
-    if (section == 6) return 5;
+    if (section == 6) return 10;
     if (section == 7) return 2; 
     if (section == 8) return 6;
     if (section == 9) return 5; // 📖 功能说明行数
@@ -2790,20 +2791,51 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             cell.detailTextLabel.text = [mode isEqualToString:@"lowPower"] ? @"低功耗" : @"解除温控";
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else if (indexPath.row == 2) {
+            cell.textLabel.text = @"Thermal Pressure 自动保护";
+            cell.detailTextLabel.text = @"Heavy 以上自动进入低功耗";
+            UISwitch *sw = [UISwitch new];
+            sw.on = sbcputhermalGetBoolPref(@"thermalPressureAutoProtectionEnabled", YES);
+            [sw addTarget:self action:@selector(changeThermalPressureProtection:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
+        } else if (indexPath.row == 3) {
+            cell.textLabel.text = @"锁屏自动低功耗";
+            cell.detailTextLabel.text = @"熄屏降低功耗，解锁自动恢复";
+            UISwitch *sw = [UISwitch new];
+            sw.on = sbcputhermalGetBoolPref(@"thermalLockScreenLowPowerEnabled", YES);
+            [sw addTarget:self action:@selector(changeThermalLockScreenLowPower:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
+        } else if (indexPath.row == 4) {
+            cell.textLabel.text = @"Thermal Nominal 自动恢复";
+            cell.detailTextLabel.text = @"Nominal 持续 5 秒后恢复";
+            UISwitch *sw = [UISwitch new];
+            sw.on = sbcputhermalGetBoolPref(@"thermalNominalAutoRecoveryEnabled", YES);
+            [sw addTarget:self action:@selector(changeThermalNominalRecovery:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
+        } else if (indexPath.row == 5) {
+            cell.textLabel.text = @"启动 8 秒温控保护";
+            cell.detailTextLabel.text = @"启动静默期固定 8 秒，避免初始化竞态";
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else if (indexPath.row == 6) {
             cell.textLabel.text = @"防温控暗屏";
             UISwitch *sw = [UISwitch new];
             sw.on = sbcputhermalGetBoolPref(@"thermalPreventDimmingEnabled", NO);
             [sw addTarget:self action:@selector(changeThermalDimming:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
-        } else if (indexPath.row == 3) {
+        } else if (indexPath.row == 7) {
             cell.textLabel.text = @"屏蔽高温温度计警告";
             UISwitch *sw = [UISwitch new];
             sw.on = sbcputhermalGetBoolPref(@"thermalBlockNotifPopup", NO);
             [sw addTarget:self action:@selector(changeThermalPopup:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
-        } else if (indexPath.row == 4) {
+        } else if (indexPath.row == 8) {
+            cell.textLabel.text = @"Thermal Notification 状态";
+            SBCPUThermalPressureLevel pressure = SBCPUThermalGetPressureLevel();
+            cell.detailTextLabel.text = [NSString stringWithUTF8String:SBCPUThermalPressureString(pressure)];
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else if (indexPath.row == 9) {
             cell.textLabel.text = @"温控核心";
             cell.detailTextLabel.text = @"CPUthermal 1.6.4-53";
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
         }
     } else if (indexPath.section == 7) {
         if (indexPath.row == 0) {
@@ -3055,6 +3087,15 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
 
 - (void)changeThermalEngine:(UISwitch *)sw {
     sbcputhermalSetBoolPref(@"thermalEngineEnabled", sw.isOn);
+}
+- (void)changeThermalPressureProtection:(UISwitch *)sw {
+    sbcputhermalSetBoolPref(@"thermalPressureAutoProtectionEnabled", sw.isOn);
+}
+- (void)changeThermalLockScreenLowPower:(UISwitch *)sw {
+    sbcputhermalSetBoolPref(@"thermalLockScreenLowPowerEnabled", sw.isOn);
+}
+- (void)changeThermalNominalRecovery:(UISwitch *)sw {
+    sbcputhermalSetBoolPref(@"thermalNominalAutoRecoveryEnabled", sw.isOn);
 }
 - (void)changeThermalDimming:(UISwitch *)sw {
     sbcputhermalSetBoolPref(@"thermalPreventDimmingEnabled", sw.isOn);

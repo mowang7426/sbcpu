@@ -34,3 +34,12 @@
 
 ## 注意
 本包是源码合并版，当前环境没有完整 Theos/iPhoneOS SDK，因此没有声称已经在 GitHub Actions 中编译通过。首次测试建议只安装源码构建后的 DEB，并准备好原 tweak 作为回滚。
+
+
+## V3.0 thermal feature completion
+- Thermal Pressure：实时读取 `com.apple.system.thermalpressurelevel`，达到 Heavy/Trapping/Sleeping 时自动临时进入低功耗保护。
+- Thermal Nominal 自动恢复：压力回到 Nominal 并稳定 5 秒后恢复用户选择的温控模式。
+- 锁屏自动低功耗：可在设置中关闭；默认开启，解锁后恢复用户模式。
+- 启动 8 秒保护：保留原有 8 秒 thermalmonitord 启动静默期，避免初始化阶段干预。
+- Thermal Notification 状态：设置页实时读取并显示当前压力级别。
+- 未加入强制 120Hz 与电池维修提示/100% 模拟。
