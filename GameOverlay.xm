@@ -3,7 +3,7 @@
 #import <notify.h>
 
 // ============================================================
-// SBCPUGameOverlay V2.9.5.4
+// SBCPUGameOverlay V2.9.5.8
 // 真正挂到游戏自己的 UIWindow 上，跟随游戏 UI 一起旋转。
 // 不再创建独立 UIWindow，避免 iOS 17 + 系统竖屏锁定时出现
 // “黑色横向大胶囊 / 文字倒置 / 横屏尺寸仍按竖屏计算”的问题。
@@ -85,32 +85,46 @@ static void SBCPUApplyGamePillLayout(void) {
     BOOL landscape = SBCPUGameIsLandscape();
 
     if (landscape) {
-        // 目标效果：左侧窄竖胶囊。绝不把整个横屏宽度当成胶囊宽度。
-        CGFloat width = 82.0;
-        CGFloat height = MIN(630.0, MAX(420.0, b.size.height - 70.0));
-        CGFloat x = 8.0;
-        CGFloat y = MAX(18.0, (b.size.height - height) * 0.5);
+        // ========================================================
+        // 横屏：做成“贴左边缘的窄侧边胶囊”。
+        // 重点：不旋转整个容器，只旋转里面的文字内容。
+        // 尺寸按 iOS point 计算，避免旧版 82x420/630 造成过宽过长。
+        // ========================================================
+        CGFloat width = 50.0;
+        CGFloat height = MIN(245.0, MAX(205.0, b.size.height - 120.0));
+        if (height > b.size.height - 20.0) height = MAX(180.0, b.size.height - 20.0);
+
+        CGFloat x = 0.0;
+        CGFloat y = MAX(10.0, (b.size.height - height) * 0.5);
 
         SBCPUGamePill.transform = CGAffineTransformIdentity;
         SBCPUGamePill.bounds = CGRectMake(0, 0, width, height);
         SBCPUGamePill.center = CGPointMake(x + width * 0.5, y + height * 0.5);
         SBCPUGamePill.layer.cornerRadius = width * 0.5;
 
-        // 这里不再旋转 UIView 本身；只旋转文字标签。
+        // 蓝色菱形：保持原有视觉语言，放在侧边胶囊下半区。
         SBCPUGameIcon.transform = CGAffineTransformMakeRotation((CGFloat)-M_PI_2);
+        SBCPUGameIcon.bounds = CGRectMake(0, 0, 26.0, 26.0);
+        SBCPUGameIcon.center = CGPointMake(width * 0.5, height - 47.0);
+
+        // 应用名/通知标题：先按横向文字布局，再整体逆时针 90°。
+        // 旋转后的实际显示区域约为 20 x 150~175，正好位于窄胶囊中央。
         SBCPUGameApp.transform = CGAffineTransformMakeRotation((CGFloat)-M_PI_2);
+        CGFloat textWidth = MIN(175.0, MAX(135.0, height - 62.0));
+        SBCPUGameApp.bounds = CGRectMake(0, 0, textWidth, 18.0);
+        SBCPUGameApp.center = CGPointMake(width * 0.5, height * 0.5 + 2.0);
+        SBCPUGameApp.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightSemibold];
+        SBCPUGameApp.adjustsFontSizeToFitWidth = YES;
+        SBCPUGameApp.minimumScaleFactor = 0.70;
+
+        // 数字：竖向显示，靠近底部。
         SBCPUGameCount.transform = CGAffineTransformMakeRotation((CGFloat)-M_PI_2);
+        SBCPUGameCount.bounds = CGRectMake(0, 0, 28.0, 24.0);
+        SBCPUGameCount.center = CGPointMake(width * 0.5, height - 20.0);
+        SBCPUGameCount.font = [UIFont systemFontOfSize:18.0 weight:UIFontWeightBold];
 
-        SBCPUGameIcon.bounds = CGRectMake(0, 0, 30, 30);
-        SBCPUGameIcon.center = CGPointMake(width * 0.5, 52.0);
-
-        SBCPUGameApp.bounds = CGRectMake(0, 0, MIN(300.0, height - 130.0), 20.0);
-        SBCPUGameApp.center = CGPointMake(width * 0.5, height * 0.5);
-
-        SBCPUGameCount.bounds = CGRectMake(0, 0, 44, 30);
-        SBCPUGameCount.center = CGPointMake(width * 0.5, height - 62.0);
     } else {
-        // 竖屏：顶部小胶囊；进入横屏后会重新变成左侧竖胶囊。
+        // 竖屏：顶部小胶囊，保持原来的正常阅读方向。
         CGFloat width = MIN(390.0, b.size.width - 28.0);
         CGFloat height = 60.0;
         CGFloat x = (b.size.width - width) * 0.5;
@@ -128,6 +142,8 @@ static void SBCPUApplyGamePillLayout(void) {
         SBCPUGameIcon.frame = CGRectMake(14, 15, 28, 28);
         SBCPUGameApp.frame = CGRectMake(48, 12, MAX(40.0, width - 90.0), 22);
         SBCPUGameCount.frame = CGRectMake(width - 40, 15, 28, 28);
+        SBCPUGameApp.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightSemibold];
+        SBCPUGameCount.font = [UIFont systemFontOfSize:21.0 weight:UIFontWeightBold];
     }
 
     [SBCPUGamePill.superview bringSubviewToFront:SBCPUGamePill];
