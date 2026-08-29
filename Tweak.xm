@@ -2885,9 +2885,9 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             cell.accessoryView = sw;
         } else if (indexPath.row == 8) {
             cell.textLabel.text = @"Thermal Notification 状态";
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"当前：%@", [NSString stringWithUTF8String:SBCPUThermalPressureString(pressure)]];
             SBCPUThermalPressureLevel pressure = SBCPUThermalGetPressureLevel();
-            const char *pressureName = SBCPUThermalPressureString(pressure);
-            cell.detailTextLabel.text = pressureName ? [NSString stringWithUTF8String:pressureName] : @"Unknown";
+            cell.detailTextLabel.text = [NSString stringWithUTF8String:SBCPUThermalPressureString(pressure)];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 9) {
             cell.textLabel.text = @"温控核心";
