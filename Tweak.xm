@@ -3058,6 +3058,136 @@ static void registerV160Observers(void) {
     });
 }
 
+
+#pragma mark - SBNotificationManager 实现
+
+@implementation SBNotificationManager
+
++ (instancetype)sharedInstance {
+    static SBNotificationManager *instance = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        instance = [[self alloc] init];
+        if (!historyNotifications) historyNotifications = [NSMutableArray array];
+    });
+    return instance;
+}
+
+// 从 SpringBoard 的私有通知 request 中尽量安全地读取字段。
+// 不依赖私有头文件，避免不同 iOS 17.x 小版本导致编译/链接问题。
+static id SBNotifSafeValue(id obj, NSString *key) {
+    if (!obj || !key.length) return nil;
+    @try {
+        if ([obj isKindOfClass:[NSDictionary class]]) {
+            id v = [(NSDictionary *)obj objectForKey:key];
+            if (v) return v;
+        }
+        if ([obj respondsToSelector:NSSelectorFromString(key)]) {
+            return [obj valueForKey:key];
+        }
+    } @catch (__unused NSException *e) {}
+    return nil;
+}
+
+static NSString *SBNotifStringValue(id obj, NSArray<NSString *> *keys) {
+    for (NSString *key in keys) {
+        id v = SBNotifSafeValue(obj, key);
+        if ([v isKindOfClass:[NSString class]] && [(NSString *)v length]) return v;
+        if ([v respondsToSelector:@selector(string)]) {
+            NSString *s = [v string];
+            if ([s isKindOfClass:[NSString class]] && s.length) return s;
+        }
+    }
+    return @"";
+}
+
+static NSDictionary *SBNotifUserInfo(id obj) {
+    NSArray *keys = @[@"userInfo", @"userInfoPayload", @"userInfoDictionary", @"payload"];
+    for (NSString *key in keys) {
+        id v = SBNotifSafeValue(obj, key);
+        if ([v isKindOfClass:[NSDictionary class]]) return v;
+    }
+    return nil;
+}
+
+- (void)extractAndHandleRequest:(id)req {
+    if (!notificationEnable || !req || !floatingView) return;
+
+    // 尽量兼容 request.content / notificationInfo / content 三种常见结构。
+    id content = SBNotifSafeValue(req, @"content");
+    if (!content) content = SBNotifSafeValue(req, @"notificationInfo");
+    if (!content) content = req;
+
+    NSString *bundleID = SBNotifStringValue(req, @[@"bundleIdentifier", @"sectionIdentifier", @"appBundleIdentifier", @"bundleID"]);
+    if (!bundleID.length) bundleID = SBNotifStringValue(content, @[@"bundleIdentifier", @"sectionIdentifier", @"appBundleIdentifier", @"bundleID"]);
+
+    // 如果 request 没有直接给 bundle ID，再尝试从 userInfo 中取。
+    NSDictionary *ui = SBNotifUserInfo(content) ?: SBNotifUserInfo(req);
+    if (!bundleID.length && [ui isKindOfClass:[NSDictionary class]]) {
+        bundleID = ui[@"bundleIdentifier"] ?: ui[@"applicationBundleIdentifier"] ?: ui[@"sectionIdentifier"];
+        if (![bundleID isKindOfClass:[NSString class]]) bundleID = @"";
+    }
+
+    BOOL isWechat = [bundleID isEqualToString:@"com.tencent.xin"];
+    BOOL isTIM = [bundleID isEqualToString:@"com.tencent.tim"];
+    BOOL isQQ = [bundleID.lowercaseString containsString:@"qq"];
+
+    // 当前版本只管理微信 / QQ / TIM，其他通知不拦截、不改变系统行为。
+    if (!isWechat && !isTIM && !isQQ) return;
+    if (isWechat && !wechatEnable) return;
+    if (isQQ && !qqEnable) return;
+    if (isTIM && !timEnable) return;
+
+    // 横屏消息通知独立控制；关闭后只是不显示插件消息悬浮窗，不影响系统原生通知。
+    if (!landscapeNotificationEnable) {
+        UIInterfaceOrientation orientation = UIInterfaceOrientationPortrait;
+        UIWindowScene *scene = getWindowScene();
+        if (scene) orientation = scene.interfaceOrientation;
+        if (orientation == UIInterfaceOrientationLandscapeLeft || orientation == UIInterfaceOrientationLandscapeRight) return;
+    }
+
+    NSString *title = SBNotifStringValue(content, @[@"title", @"subtitle"]);
+    NSString *message = SBNotifStringValue(content, @[@"body", @"message", @"alertBody"]);
+    if (!title.length) title = SBNotifStringValue(req, @[@"title", @"header"]);
+    if (!message.length) message = SBNotifStringValue(req, @[@"body", @"message", @"alertBody"]);
+    if (!title.length) title = @"新消息";
+    if (!message.length) message = @"你收到一条新消息";
+
+    SBNotifReq *item = [SBNotifReq new];
+    item.bundleID = bundleID;
+    item.title = title;
+    item.message = message;
+    item.timestamp = [NSDate date];
+    item.userInfoPayload = ui;
+    item.originalRequest = req;
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!historyNotifications) historyNotifications = [NSMutableArray array];
+        [historyNotifications insertObject:item atIndex:0];
+        // 防止通知长期堆积导致悬浮窗计数无限增长。
+        if (historyNotifications.count > 99) [historyNotifications removeLastObject];
+
+        if (!floatingView.notificationQueue) floatingView.notificationQueue = [NSMutableArray array];
+        [floatingView.notificationQueue addObject:item];
+        [floatingView showNotification:item];
+        [floatingView setNeedsLayout];
+        [floatingView updateDataWithCPU:getSystemCPUUsage()
+                                cpuFreq:getRealCPUFrequency()
+                                    fps:[SBCPUFPSHelper sharedInstance].currentFPS
+                                battery:(NSInteger)([UIDevice currentDevice].batteryLevel * 100.0)
+                                   temp:getBatteryTemperatureInternal()
+                                current:getBatteryCurrentInternal()
+                             isCharging:isChargingInternal()];
+        updateFloatingSize();
+    });
+}
+
+- (void)handleNewNotification:(SBNotifReq *)req {
+    if (req) [self extractAndHandleRequest:req.originalRequest ?: req];
+}
+
+@end
+
 // 🚀 终极通知拦截阵列
 %hook NCNotificationDispatcher
 - (void)postNotificationWithRequest:(id)arg1 { %orig; [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1]; }
