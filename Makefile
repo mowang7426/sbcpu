@@ -29,7 +29,7 @@ endif
 include $(THEOS_MAKE_PATH)/tweak.mk
 
 # 🔴 核心修复1：必须加上这两行，编译器才会去打包你的设置页面！
-SUBPROJECTS += sbcpuprefs
+SUBPROJECTS += sbcpuprefs sbcpucc
 include $(THEOS_MAKE_PATH)/aggregate.mk
 
 
