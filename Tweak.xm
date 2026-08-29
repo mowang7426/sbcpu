@@ -2589,7 +2589,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { 
     (void)tableView;
-    return 10; 
+    return 11; 
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
@@ -2604,6 +2604,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
     if (section == 7) return 2; 
     if (section == 8) return 6;
     if (section == 9) return 5; // 📖 功能说明行数
+    if (section == 10) return 8; // 🌡️ 温控功能说明
     return 0;
 }
 
@@ -2618,23 +2619,68 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
     if (section == 6) return @"🌡️ CPUthermal 温控核心"; 
     if (section == 7) return @"🔌 充电增强";
     if (section == 8) return @"📍 位置与显示";
-    if (section == 9) return @"📖 功能与使用说明"; 
+    if (section == 9) return @"📖 功能与使用说明";
+    if (section == 10) return @"🌡️ 温控功能说明（这些功能是做什么的）"; 
     return @"";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     (void)tableView;
-    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:(indexPath.section == 6 ? UITableViewCellStyleSubtitle : UITableViewCellStyleValue1) reuseIdentifier:nil];
+
+    if (indexPath.section == 6) {
+        cell.textLabel.numberOfLines = 0;
+        cell.detailTextLabel.numberOfLines = 0;
+        cell.textLabel.font = [UIFont systemFontOfSize:15.0 weight:UIFontWeightSemibold];
+        cell.detailTextLabel.font = [UIFont systemFontOfSize:11.5 weight:UIFontWeightRegular];
+        cell.detailTextLabel.textColor = [UIColor grayColor];
+    }
 
     if (indexPath.section == 9) {
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         cell.textLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
         cell.textLabel.textColor = [UIColor darkGrayColor];
+        cell.textLabel.numberOfLines = 0;
         if (indexPath.row == 0) cell.textLabel.text = @"👆 单击悬浮窗：展开双层 UI / 0延迟直达聊天";
         else if (indexPath.row == 1) cell.textLabel.text = @"✌️ 双击悬浮窗：打开此高级设置中心";
         else if (indexPath.row == 2) cell.textLabel.text = @"👆 长按悬浮窗：全屏展示设备深层物理状态";
         else if (indexPath.row == 3) cell.textLabel.text = @"🤚 拖动悬浮窗：自由挪动位置并带物理回弹";
         else if (indexPath.row == 4) cell.textLabel.text = @"🔋 充电增强：实时功率监测与高电量充电目标";
+        return cell;
+    }
+
+    // 🌡️ 温控功能说明：独立放在温控设置下面，避免右侧开关挤压说明文字
+    if (indexPath.section == 10) {
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        cell.textLabel.font = [UIFont systemFontOfSize:15.0 weight:UIFontWeightSemibold];
+        cell.textLabel.textColor = [UIColor darkTextColor];
+        cell.detailTextLabel.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightRegular];
+        cell.detailTextLabel.textColor = [UIColor grayColor];
+        cell.detailTextLabel.numberOfLines = 0;
+        cell.textLabel.numberOfLines = 0;
+
+        NSArray *titles = @[
+            @"Thermal Pressure 自动保护",
+            @"锁屏自动低功耗",
+            @"Thermal Nominal 自动恢复",
+            @"启动 8 秒温控保护",
+            @"防温控暗屏",
+            @"屏蔽高温温度计警告",
+            @"Thermal Notification 状态",
+            @"温控模式"
+        ];
+        NSArray *descs = @[
+            @"检测系统 Thermal Pressure；达到 Heavy 及以上时自动进入低功耗保护，降低设备持续发热压力。",
+            @"设备锁屏后自动进入低功耗保护；解锁后按温控状态自动恢复，减少锁屏期间不必要的功耗。",
+            @"当系统 Thermal Pressure 回到 Nominal 并持续约 5 秒后，自动结束保护状态，恢复正常运行。",
+            @"插件启动后先保持约 8 秒静默期，避免初始化阶段的温控状态误判或控制竞态。",
+            @"开启后尽量避免系统因温控策略而主动降低屏幕亮度，减少使用过程中突然暗屏的情况。",
+            @"开启后尝试屏蔽系统高温温度计警告弹窗；不会关闭温控检测本身。",
+            @"显示当前 CPUthermal 检测到的 Thermal Notification / Pressure 状态，方便查看当前温控等级。",
+            @"手动选择温控运行模式：低功耗或解除温控；自动保护功能仍根据对应开关决定是否参与。"
+        ];
+        cell.textLabel.text = titles[indexPath.row];
+        cell.detailTextLabel.text = descs[indexPath.row];
         return cell;
     }
 
@@ -2783,17 +2829,20 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
     } else if (indexPath.section == 6) {
         if (indexPath.row == 0) {
             cell.textLabel.text = @"CPUthermal 温控引擎";
+            cell.detailTextLabel.text = @"CPUthermal 温控核心总开关，关闭后不主动执行温控控制。";
             UISwitch *sw = [UISwitch new];
             sw.on = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
             [sw addTarget:self action:@selector(changeThermalEngine:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 1) {
             cell.textLabel.text = @"温控模式";
+            cell.detailTextLabel.text = @"选择温控核心当前运行模式；详细说明见下方“温控功能说明”。";
             NSString *mode = sbcputhermalGetStringPref(@"powerMode", @"fullPower");
             cell.detailTextLabel.text = [mode isEqualToString:@"lowPower"] ? @"低功耗" : @"解除温控";
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else if (indexPath.row == 2) {
             cell.textLabel.text = @"Thermal Pressure 自动保护";
+            cell.detailTextLabel.text = @"Heavy 及以上自动进入低功耗保护。";
             cell.detailTextLabel.text = @"Heavy 以上自动进入低功耗";
             UISwitch *sw = [UISwitch new];
             sw.on = sbcputhermalGetBoolPref(@"thermalPressureAutoProtectionEnabled", YES);
@@ -2801,6 +2850,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             cell.accessoryView = sw;
         } else if (indexPath.row == 3) {
             cell.textLabel.text = @"锁屏自动低功耗";
+            cell.detailTextLabel.text = @"锁屏降低功耗，解锁后自动恢复。";
             cell.detailTextLabel.text = @"熄屏降低功耗，解锁自动恢复";
             UISwitch *sw = [UISwitch new];
             sw.on = sbcputhermalGetBoolPref(@"thermalLockScreenLowPowerEnabled", YES);
@@ -2808,6 +2858,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             cell.accessoryView = sw;
         } else if (indexPath.row == 4) {
             cell.textLabel.text = @"Thermal Nominal 自动恢复";
+            cell.detailTextLabel.text = @"Nominal 持续约 5 秒后自动恢复。";
             cell.detailTextLabel.text = @"Nominal 持续 5 秒后恢复";
             UISwitch *sw = [UISwitch new];
             sw.on = sbcputhermalGetBoolPref(@"thermalNominalAutoRecoveryEnabled", YES);
@@ -2815,22 +2866,26 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             cell.accessoryView = sw;
         } else if (indexPath.row == 5) {
             cell.textLabel.text = @"启动 8 秒温控保护";
+            cell.detailTextLabel.text = @"启动后固定 8 秒静默期，避免初始化阶段误判。";
             cell.detailTextLabel.text = @"启动静默期固定 8 秒，避免初始化竞态";
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 6) {
             cell.textLabel.text = @"防温控暗屏";
+            cell.detailTextLabel.text = @"尽量避免温控策略导致屏幕自动变暗。";
             UISwitch *sw = [UISwitch new];
             sw.on = sbcputhermalGetBoolPref(@"thermalPreventDimmingEnabled", NO);
             [sw addTarget:self action:@selector(changeThermalDimming:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 7) {
             cell.textLabel.text = @"屏蔽高温温度计警告";
+            cell.detailTextLabel.text = @"尝试屏蔽高温警告弹窗，但保留温控检测。";
             UISwitch *sw = [UISwitch new];
             sw.on = sbcputhermalGetBoolPref(@"thermalBlockNotifPopup", NO);
             [sw addTarget:self action:@selector(changeThermalPopup:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 8) {
             cell.textLabel.text = @"Thermal Notification 状态";
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"当前：%@", [NSString stringWithUTF8String:SBCPUThermalPressureString(pressure)]];
             SBCPUThermalPressureLevel pressure = SBCPUThermalGetPressureLevel();
             cell.detailTextLabel.text = [NSString stringWithUTF8String:SBCPUThermalPressureString(pressure)];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
@@ -3115,8 +3170,11 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
 - (void)changeTimEnable:(UISwitch *)sw { timEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
     (void)tableView;
-    if (indexPath.section == 6 && indexPath.row == 9) {
-        return 58.0;
+    if (indexPath.section == 6) {
+        return (indexPath.row == 9) ? 72.0 : 64.0;
+    }
+    if (indexPath.section == 10) {
+        return 82.0;
     }
     return UITableViewAutomaticDimension;
 }
