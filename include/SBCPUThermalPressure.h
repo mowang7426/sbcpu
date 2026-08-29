@@ -225,7 +225,7 @@ static inline int SBCPUThermalGetCurrentNotifLevel(void) {
     dispatch_once(&onceToken, ^{
         void *handle = SBCPUThermalLoadThermalNotificationLib();
         if (handle) {
-            func = dlsym(handle, "OSThermalNotificationCurrentLevel");
+            func = (int (*)(void))dlsym(handle, "OSThermalNotificationCurrentLevel");
         }
     });
     if (!func) return -1;
@@ -239,7 +239,7 @@ static inline int SBCPUThermalNotifLevelForBehavior(int behavior) {
     dispatch_once(&onceToken, ^{
         void *handle = SBCPUThermalLoadThermalNotificationLib();
         if (handle) {
-            func = dlsym(handle, "_OSThermalNotificationLevelForBehavior");
+            func = (int (*)(int))dlsym(handle, "_OSThermalNotificationLevelForBehavior");
         }
     });
     if (!func) return -1;
@@ -253,7 +253,7 @@ static inline void SBCPUThermalSetNotifLevelForBehavior(int level) {
     dispatch_once(&onceToken, ^{
         void *handle = SBCPUThermalLoadThermalNotificationLib();
         if (handle) {
-            func = dlsym(handle, "_OSThermalNotificationSetLevelForBehavior");
+            func = (void (*)(int))dlsym(handle, "_OSThermalNotificationSetLevelForBehavior");
         }
     });
     if (func) {
