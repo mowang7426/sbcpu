@@ -2561,7 +2561,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"SBCPUFloating V2.9.3";
+    self.title = @"SBCPUFloating V3.0";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeSettings)];
 }
 
