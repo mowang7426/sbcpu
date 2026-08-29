@@ -90,9 +90,9 @@ typedef struct {
 - (void)updateFrameRate;
 - (void)startDriverAnimation;
 - (void)stopDriverAnimation;
+- (void)tick:(CADisplayLink *)link;
 @property (nonatomic, assign) double currentFPS;
 @property (nonatomic, strong) CALayer *driverLayer;
-
 @end
 
 // 独立的消息数据模型
@@ -1020,6 +1020,28 @@ static void applySystemRefreshRate(void) {
 }
 
 @implementation SBCPUFPSHelper
+
++ (instancetype)sharedInstance {
+    static SBCPUFPSHelper *instance = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        instance = [[self alloc] init];
+        instance.currentFPS = 0.0;
+        instance.driverLayer = [CALayer layer];
+        instance.driverLayer.frame = CGRectZero;
+        instance.driverLayer.hidden = YES;
+    });
+    return instance;
+}
+
+- (void)startDriverAnimation {
+    // V3.0 不再使用旧的 120Hz 驱动动画；保留接口避免旧调用点失效。
+    self.driverLayer.hidden = YES;
+}
+
+- (void)stopDriverAnimation {
+    self.driverLayer.hidden = YES;
+}
 
 - (void)startMonitoring {
     if (_displayLink) return;
