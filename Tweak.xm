@@ -2619,7 +2619,8 @@ static uint64_t sbcputhermalReadNotifyState(const char *name, uint64_t fallback)
 // RootHide 下部分进程的 Darwin notify 状态可能不在同一个可见空间。
 // 温控核心同时写入 /var/tmp 心跳，SpringBoard 优先读取这个跨进程心跳。
 static uint64_t sbcputhermalReadHeartbeatFile(void) {
-    FILE *fp = fopen(kSBCPUThermalHeartbeatFileC, "r");
+    NSString *path = SBCPUThermalCurrentHeartbeatPath();
+    FILE *fp = path.length > 0 ? fopen(path.fileSystemRepresentation, "r") : NULL;
     if (!fp) return 0;
     unsigned long long value = 0;
     int ok = fscanf(fp, "%llu", &value);
@@ -2692,8 +2693,9 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut) {
 
     uint64_t boot = sbcputhermalReadNotifyState(SBCPUThermalDiagBootSettledNotif, 0);
     if (!boot) {
-        if (textOut) *textOut = @"温控：启动中";
-        if (colorOut) *colorOut = [UIColor systemBlueColor];
+        // 心跳已经确认温控核心存活时，不再因为 boot 通知在 RootHide 下不同步而误判。
+        if (textOut) *textOut = @"温控：核心运行中";
+        if (colorOut) *colorOut = [UIColor systemGreenColor];
         return;
     }
 
@@ -2757,7 +2759,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     }
 
     if (!boot) {
-        return [NSString stringWithFormat:@"当前：正在启动\n温控核心正在准备中，启动后约 8 秒开始正式保护。\n系统温度状态：%@", pressureText];
+        return [NSString stringWithFormat:@"当前：温控核心运行中\n已经检测到温控核心心跳，核心正在工作。\n系统温度状态：%@", pressureText];
     }
 
     if (protection) {
@@ -2786,7 +2788,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"SBCPUFloating V3.1";
+    self.title = @"SBCPUFloating V3.1.5";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeSettings)];
 }
 
