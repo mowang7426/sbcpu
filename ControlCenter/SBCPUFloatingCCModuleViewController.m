@@ -8,7 +8,6 @@
 // 进程中调用 RootHide 路径扫描、文件迁移等复杂逻辑。
 static CFStringRef kSBCPUFloatingCCPrefAppID = CFSTR("com.yourname.sbcpufloating");
 static CFStringRef kSBCPUFloatingCCPrefEnabledKey = CFSTR("isEnabled");
-static CFStringRef kSBCPUFloatingCCNotify = CFSTR("com.yourname.sbcpufloating.prefschanged");
 
 static BOOL SBCPUFloatingReadEnabled(void) {
     CFPropertyListRef value = CFPreferencesCopyValue(
