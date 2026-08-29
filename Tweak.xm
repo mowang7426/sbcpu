@@ -228,7 +228,6 @@ static BOOL rememberPositionEnable = YES;
 
 static BOOL showCpuFrequency = YES;
 static BOOL showFps = YES;                       
-static BOOL force120HzEnable = NO;               
 
 
 static BOOL chargeBoostEnable = NO;
@@ -419,7 +418,6 @@ static void LoadPreferences(void) {
     
     showCpuFrequency = getBoolPref(CFSTR("showCpuFrequency"), YES);
     showFps = getBoolPref(CFSTR("showFps"), YES);
-    force120HzEnable = getBoolPref(CFSTR("force120HzEnable"), NO);
     
     showBatteryPercent = getBoolPref(CFSTR("showBatteryPercent"), YES);
     showBatteryTemperature = getBoolPref(CFSTR("showBatteryTemperature"), YES);
@@ -438,7 +436,7 @@ static void LoadPreferences(void) {
 
     if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
         applyVisibility();
-        if (showFps || force120HzEnable || collapsedDisplayMode == 1) {
+        if (showFps || collapsedDisplayMode == 1) {
             [[SBCPUFPSHelper sharedInstance] startMonitoring];
         } else {
             [[SBCPUFPSHelper sharedInstance] stopMonitoring];
@@ -467,7 +465,6 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("rememberPositionEnable"), rememberPositionEnable);
     setBoolPref(CFSTR("showCpuFrequency"), showCpuFrequency);
     setBoolPref(CFSTR("showFps"), showFps);
-    setBoolPref(CFSTR("force120HzEnable"), force120HzEnable);
     setBoolPref(CFSTR("showBatteryPercent"), showBatteryPercent);
     setBoolPref(CFSTR("showBatteryTemperature"), showBatteryTemperature);
     setBoolPref(CFSTR("showBatteryCurrent"), showBatteryCurrent);
@@ -483,7 +480,7 @@ static void SavePreferencesAndNotify(void) {
     
     CFPreferencesSynchronize(kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
 
-    if (showFps || force120HzEnable || collapsedDisplayMode == 1) {
+    if (showFps || collapsedDisplayMode == 1) {
         [[SBCPUFPSHelper sharedInstance] startMonitoring];
     } else {
         [[SBCPUFPSHelper sharedInstance] stopMonitoring];
@@ -1014,170 +1011,9 @@ if (charging && !previousChargingState) {
 }
 
 static void applySystemRefreshRate(void) {
-    BOOL apply120 = force120HzEnable;
-    
-    Class serverClass = NSClassFromString(@"CAWindowServer");
-    if (serverClass && [serverClass respondsToSelector:@selector(serverIfRunning)]) {
-        id server = [serverClass serverIfRunning];
-        if (server) {
-            for (id display in [server displays]) {
-                if ([display respondsToSelector:@selector(setAllowsVirtualModes:)]) {
-                    [display setAllowsVirtualModes:YES];
-                }
-                if (apply120) {
-                    if ([display respondsToSelector:@selector(setMinimumRefreshRate:)]) [display setMinimumRefreshRate:120.0f];
-                    if ([display respondsToSelector:@selector(setMaximumRefreshRate:)]) [display setMaximumRefreshRate:120.0f];
-                    if ([display respondsToSelector:@selector(setIdealRefreshRate:)]) [display setIdealRefreshRate:120.0f];
-                }
-            }
-        }
-    }
-
-    if (cpuWindow && [SBCPUFPSHelper sharedInstance].driverLayer.superlayer == nil) {
-        [cpuWindow.layer addSublayer:[SBCPUFPSHelper sharedInstance].driverLayer];
-    }
-
-    [[SBCPUFPSHelper sharedInstance] updateFrameRate];
+    // V3.0 不再强制 120Hz；保留函数仅兼容旧配置调用。
 }
 
-#pragma mark - 5. Notification Manager 实现
-
-@implementation SBNotificationManager
-+ (instancetype)sharedInstance {
-    static SBNotificationManager *instance = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        instance = [[SBNotificationManager alloc] init];
-        historyNotifications = [[NSMutableArray alloc] init];
-    });
-    return instance;
-}
-
-- (void)extractAndHandleRequest:(id)req {
-    @try {
-        NSString *bundleID = [req valueForKey:@"sectionIdentifier"];
-        id content = [req valueForKey:@"content"];
-        NSString *title = [content valueForKey:@"title"];
-        if (!title || title.length == 0) title = [content valueForKey:@"subtitle"];
-        NSString *message = [content valueForKey:@"message"];
-        
-        NSDictionary *payload = nil;
-        @try {
-            id userNotif = [req respondsToSelector:@selector(userNotification)] ? [req performSelector:@selector(userNotification)] : nil;
-            id info = [userNotif respondsToSelector:@selector(userInfo)] ? [userNotif performSelector:@selector(userInfo)] : nil;
-            if (!info) {
-                id bulletin = [req respondsToSelector:@selector(bulletin)] ? [req performSelector:@selector(bulletin)] : nil;
-                info = [bulletin respondsToSelector:@selector(userInfo)] ? [bulletin performSelector:@selector(userInfo)] : nil;
-            }
-            if (info && [info isKindOfClass:[NSDictionary class]]) {
-                payload = [[NSDictionary alloc] initWithDictionary:info]; 
-            }
-        } @catch (NSException *e) {}
-
-        static NSString *lastTitle = nil;
-        static NSString *lastMessage = nil;
-        static NSTimeInterval lastTime = 0;
-        NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
-        
-        if ([title isEqualToString:lastTitle] && [message isEqualToString:lastMessage] && (now - lastTime < 1.0)) {
-            return; 
-        }
-        lastTitle = title; lastMessage = message; lastTime = now;
-        
-        SBNotifReq *notif = [[SBNotifReq alloc] init];
-        notif.bundleID = bundleID; 
-        notif.title = title ?: @"新消息"; 
-        notif.message = message ?: @"";
-        notif.timestamp = [NSDate date];
-        notif.userInfoPayload = payload; 
-        notif.originalRequest = req;
-        
-        [self handleNewNotification:notif];
-    } @catch (NSException *e) {}
-}
-
-- (void)handleNewNotification:(SBNotifReq *)req {
-    if (!notificationEnable) return;
-
-    // 横屏状态消息通知独立控制：关闭后仅禁止横屏消息进入悬浮窗，
-    // 不影响竖屏通知、微信/QQ/TIM 开关以及原有浮窗逻辑。
-    UIInterfaceOrientation orientation = getActiveInterfaceOrientation();
-    BOOL isLandscape = (orientation == UIInterfaceOrientationLandscapeLeft || orientation == UIInterfaceOrientationLandscapeRight);
-    if (isLandscape && !landscapeNotificationEnable) return;
-
-    BOOL shouldShow = NO;
-    if (wechatEnable && [req.bundleID isEqualToString:@"com.tencent.xin"]) shouldShow = YES;
-    if (qqEnable && [req.bundleID.lowercaseString containsString:@"qq"]) shouldShow = YES;
-    if (timEnable && [req.bundleID isEqualToString:@"com.tencent.tim"]) shouldShow = YES;
-    
-    if (!shouldShow) return;
-    
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [historyNotifications insertObject:req atIndex:0];
-        if (historyNotifications.count > 20) [historyNotifications removeLastObject];
-        
-        if (floatingView) {
-            [floatingView.notificationQueue addObject:req];
-            if (!floatingView.isShowingNotification) {
-                [floatingView showNotification:floatingView.notificationQueue.firstObject];
-            } else {
-                [floatingView showNotification:floatingView.currentNotification];
-            }
-        }
-    });
-}
-@end
-
-
-#pragma mark - 7. 所有的 Objective-C 类实现区块
-
-@implementation SBCPUFPSHelper {
-    CADisplayLink *_displayLink;
-    CFTimeInterval _lastTimestamp;
-    NSInteger _frameCount;
-}
-
-+ (instancetype)sharedInstance {
-    static SBCPUFPSHelper *instance = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        instance = [[SBCPUFPSHelper alloc] init];
-    });
-    return instance;
-}
-
-- (instancetype)init {
-    if (self = [super init]) {
-        _driverLayer = [CALayer layer];
-        _driverLayer.frame = CGRectMake(0, 0, 2, 2);
-        _driverLayer.backgroundColor = [UIColor clearColor].CGColor;
-        _driverLayer.opacity = 0.01f;
-    }
-    return self;
-}
-
-- (void)startDriverAnimation {
-    if (!_driverLayer) return;
-    [_driverLayer removeAnimationForKey:@"ProMotion120Driver"];
-
-    CABasicAnimation *driveAnim = [CABasicAnimation animationWithKeyPath:@"opacity"];
-    driveAnim.fromValue = @(0.01f);
-    driveAnim.toValue = @(0.02f);
-    driveAnim.duration = 1.0;
-    driveAnim.repeatCount = HUGE_VALF;
-    driveAnim.autoreverses = YES;
-    driveAnim.removedOnCompletion = NO;
-    if (@available(iOS 15.0, *)) {
-        driveAnim.preferredFrameRateRange = CAFrameRateRangeMake(120.0f, 120.0f, 120.0f);
-    }
-    [_driverLayer addAnimation:driveAnim forKey:@"ProMotion120Driver"];
-}
-
-- (void)stopDriverAnimation {
-    if (_driverLayer) {
-        [_driverLayer removeAnimationForKey:@"ProMotion120Driver"];
-    }
-}
 
 - (void)startMonitoring {
     if (_displayLink) return;
@@ -1200,24 +1036,11 @@ static void applySystemRefreshRate(void) {
 - (void)updateFrameRate {
     if (!_displayLink) return;
 
-    BOOL apply120 = force120HzEnable;
-
     if (@available(iOS 15.0, *)) {
-        float targetFps = apply120 ? 120.0f : 60.0f;
-        _displayLink.preferredFrameRateRange = CAFrameRateRangeMake(targetFps, targetFps, targetFps);
-        
-        if (apply120) {
-            if ([_displayLink respondsToSelector:@selector(setHighFrameRateReason:)]) {
-                @try {
-                    [_displayLink setValue:@(1114113) forKey:@"highFrameRateReason"];
-                } @catch (id ex) {}
-            }
-            [self startDriverAnimation];
-        } else {
-            [self stopDriverAnimation];
-        }
+        _displayLink.preferredFrameRateRange = CAFrameRateRangeMake(60.0f, 60.0f, 60.0f);
+        [self stopDriverAnimation];
     } else {
-        _displayLink.preferredFramesPerSecond = apply120 ? 120 : 60;
+        _displayLink.preferredFramesPerSecond = 60;
     }
 }
 
@@ -2589,7 +2412,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { 
     (void)tableView;
-    return 11; 
+    return 10; 
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
@@ -2599,12 +2422,11 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
     if (section == 2) return 5;
     if (section == 3) return 7; // 通知管理
     if (section == 4) return 3;
-    if (section == 5) return 1;
-    if (section == 6) return 10;
-    if (section == 7) return 2; 
-    if (section == 8) return 6;
-    if (section == 9) return 5; // 📖 功能说明行数
-    if (section == 10) return 8; // 🌡️ 温控功能说明
+    if (section == 5) return 10;
+    if (section == 6) return 2; 
+    if (section == 7) return 6;
+    if (section == 8) return 5; // 📖 功能说明行数
+    if (section == 9) return 8; // 🌡️ 温控功能说明
     return 0;
 }
 
@@ -2615,20 +2437,19 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
     if (section == 2) return @"🔲 悬浮窗外观";
     if (section == 3) return @"💬 消息与通知管理";
     if (section == 4) return @"🧠 智能选项";
-    if (section == 5) return @"🎮 性能与高刷锁定";
-    if (section == 6) return @"🌡️ CPUthermal 温控核心"; 
-    if (section == 7) return @"🔌 充电增强";
-    if (section == 8) return @"📍 位置与显示";
-    if (section == 9) return @"📖 功能与使用说明";
-    if (section == 10) return @"🌡️ 温控功能说明（这些功能是做什么的）"; 
+    if (section == 5) return @"🌡️ CPUthermal 温控核心";
+    if (section == 6) return @"🔌 充电增强";
+    if (section == 7) return @"📍 位置与显示";
+    if (section == 8) return @"📖 功能与使用说明";
+    if (section == 9) return @"🌡️ 温控功能说明（这些功能是做什么的）"; 
     return @"";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     (void)tableView;
-    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:(indexPath.section == 6 ? UITableViewCellStyleSubtitle : UITableViewCellStyleValue1) reuseIdentifier:nil];
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:(indexPath.section == 5 ? UITableViewCellStyleSubtitle : UITableViewCellStyleValue1) reuseIdentifier:nil];
 
-    if (indexPath.section == 6) {
+    if (indexPath.section == 5) {
         cell.textLabel.numberOfLines = 0;
         cell.detailTextLabel.numberOfLines = 0;
         cell.textLabel.font = [UIFont systemFontOfSize:15.0 weight:UIFontWeightSemibold];
@@ -2636,7 +2457,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
         cell.detailTextLabel.textColor = [UIColor grayColor];
     }
 
-    if (indexPath.section == 9) {
+    if (indexPath.section == 8) {
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         cell.textLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
         cell.textLabel.textColor = [UIColor darkGrayColor];
@@ -2650,7 +2471,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
     }
 
     // 🌡️ 温控功能说明：独立放在温控设置下面，避免右侧开关挤压说明文字
-    if (indexPath.section == 10) {
+    if (indexPath.section == 9) {
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         cell.textLabel.font = [UIFont systemFontOfSize:15.0 weight:UIFontWeightSemibold];
         cell.textLabel.textColor = [UIColor darkTextColor];
@@ -2820,14 +2641,6 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
         }
     } else if (indexPath.section == 5) {
         if (indexPath.row == 0) {
-            cell.textLabel.text = @"强制 120Hz 高刷模式";
-            UISwitch *sw = [UISwitch new];
-            sw.on = force120HzEnable;
-            [sw addTarget:self action:@selector(changeForce120Hz:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = sw;
-        }
-    } else if (indexPath.section == 6) {
-        if (indexPath.row == 0) {
             cell.textLabel.text = @"CPUthermal 温控引擎";
             cell.detailTextLabel.text = @"CPUthermal 温控核心总开关，关闭后不主动执行温控控制。";
             UISwitch *sw = [UISwitch new];
@@ -2885,9 +2698,8 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             cell.accessoryView = sw;
         } else if (indexPath.row == 8) {
             cell.textLabel.text = @"Thermal Notification 状态";
-            cell.detailTextLabel.text = [NSString stringWithFormat:@"当前：%@", [NSString stringWithUTF8String:SBCPUThermalPressureString(pressure)]];
             SBCPUThermalPressureLevel pressure = SBCPUThermalGetPressureLevel();
-            cell.detailTextLabel.text = [NSString stringWithUTF8String:SBCPUThermalPressureString(pressure)];
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"当前：%s", SBCPUThermalPressureString(pressure)];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 9) {
             cell.textLabel.text = @"温控核心";
@@ -2897,7 +2709,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             cell.detailTextLabel.adjustsFontSizeToFitWidth = NO;
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         }
-    } else if (indexPath.section == 7) {
+    } else if (indexPath.section == 6) {
         if (indexPath.row == 0) {
             cell.textLabel.text = @"充电增强（实时验证）";
             UISwitch *sw = [UISwitch new];
@@ -2912,7 +2724,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             [sw addTarget:self action:@selector(changeForceFastCharge:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         }
-    } else if (indexPath.section == 8) {
+    } else if (indexPath.section == 7) {
         if (indexPath.row == 0) {
             cell.textLabel.text = @"记忆悬浮窗位置";
             UISwitch *sw = [UISwitch new];
@@ -3037,7 +2849,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
             [self presentViewController:alert animated:YES completion:nil];
         }
-    } else if (indexPath.section == 6) {
+    } else if (indexPath.section == 5) {
         if (indexPath.row == 1) {
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"温控模式"
                                                                              message:@"选择 CPUthermal 1.6.4-53 温控核心的运行模式"
@@ -3106,7 +2918,6 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
 - (void)changeKeyboardAvoid:(UISwitch *)sw { keyboardAvoidEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeSmartDock:(UISwitch *)sw { smartDockEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeRememberPosition:(UISwitch *)sw { rememberPositionEnable = sw.isOn; SavePreferencesAndNotify(); }
-- (void)changeForce120Hz:(UISwitch *)sw { force120HzEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeShowCpuFreq:(UISwitch *)sw { showCpuFrequency = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowFps:(UISwitch *)sw { showFps = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowBattery:(UISwitch *)sw { showBatteryPercent = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
@@ -3170,10 +2981,10 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
 - (void)changeTimEnable:(UISwitch *)sw { timEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
     (void)tableView;
-    if (indexPath.section == 6) {
+    if (indexPath.section == 5) {
         return (indexPath.row == 9) ? 72.0 : 64.0;
     }
-    if (indexPath.section == 10) {
+    if (indexPath.section == 9) {
         return 82.0;
     }
     return UITableViewAutomaticDimension;
