@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>SBCPUFloatingCC</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.sbcpu.floating.ccmodule</string>
+    <key>CFBundleDisplayName</key>
+    <string>SB CPU Floating</string>
+    <key>CFBundleName</key>
+    <string>SBCPUFloatingCC</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>3.1</string>
+    <key>CFBundleVersion</key>
+    <string>3.1</string>
+    <key>NSPrincipalClass</key>
+    <string>SBCPUFloatingCCModule</string>
+    <key>MinimumOSVersion</key>
+    <string>14.0</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array><string>iPhoneOS</string></array>
+    <key>UIDeviceFamily</key>
+    <array><integer>1</integer><integer>2</integer></array>
+    <key>CFBundleIconFiles</key>
+    <array>
+        <string>Icon@2x</string>
+        <string>Icon@3x</string>
+    </array>
+    <key>CCSModuleSize</key>
+    <dict>
+        <key>Portrait</key>
+        <dict><key>Width</key><integer>1</integer><key>Height</key><integer>1</integer></dict>
+        <key>Landscape</key>
+        <dict><key>Width</key><integer>1</integer><key>Height</key><integer>1</integer></dict>
+    </dict>
+    <key>ModuleSize</key>
+    <dict>
+        <key>columns</key><string>1</string>
+        <key>rows</key><string>1</string>
+    </dict>
+</dict>
+</plist>
