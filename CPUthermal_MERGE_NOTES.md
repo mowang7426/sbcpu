@@ -1,4 +1,4 @@
-# SBCPUFloating V2.9.3 — CPUthermal 1.6.4-53 thermal-only integration
+# SBCPUFloating V3.0 — CPUthermal 1.6.4-53 thermal-only integration
 
 本版本以 `sbcpu-2.9.1 修复版 2` 为 UI/浮窗基线，移除旧的 SBCPU 温控控制链，并把 CPUthermal-1.6.4-53 的 `thermalmonitord` 核心温控引擎作为独立 `SBCPUThermal.dylib` target 集成。
 

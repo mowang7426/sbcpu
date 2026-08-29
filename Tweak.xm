@@ -263,6 +263,8 @@ static BOOL wechatEnable = YES;
 static BOOL qqEnable = YES;
 static BOOL timEnable = YES;
 static BOOL hideContentOnLockScreen = NO;
+// 横屏状态是否允许消息通知弹出；默认开启，保持原有行为。
+static BOOL landscapeNotificationEnable = YES;
 static NSInteger notificationDuration = 5;
 static NSMutableArray<SBNotifReq *> *historyNotifications = nil;
 
@@ -430,6 +432,7 @@ static void LoadPreferences(void) {
     qqEnable = getBoolPref(CFSTR("qqEnable"), YES);
     timEnable = getBoolPref(CFSTR("timEnable"), YES);
     hideContentOnLockScreen = getBoolPref(CFSTR("hideContentOnLockScreen"), NO);
+    landscapeNotificationEnable = getBoolPref(CFSTR("landscapeNotificationEnable"), YES);
     notificationDuration = getIntPref(CFSTR("notificationDuration"), 5);
 
     if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
@@ -474,6 +477,7 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("qqEnable"), qqEnable);
     setBoolPref(CFSTR("timEnable"), timEnable);
     setBoolPref(CFSTR("hideContentOnLockScreen"), hideContentOnLockScreen);
+    setBoolPref(CFSTR("landscapeNotificationEnable"), landscapeNotificationEnable);
     setIntPref(CFSTR("notificationDuration"), notificationDuration);
     
     CFPreferencesSynchronize(kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
@@ -1093,6 +1097,13 @@ static void applySystemRefreshRate(void) {
 
 - (void)handleNewNotification:(SBNotifReq *)req {
     if (!notificationEnable) return;
+
+    // 横屏状态消息通知独立控制：关闭后仅禁止横屏消息进入悬浮窗，
+    // 不影响竖屏通知、微信/QQ/TIM 开关以及原有浮窗逻辑。
+    UIInterfaceOrientation orientation = getActiveInterfaceOrientation();
+    BOOL isLandscape = (orientation == UIInterfaceOrientationLandscapeLeft || orientation == UIInterfaceOrientationLandscapeRight);
+    if (isLandscape && !landscapeNotificationEnable) return;
+
     BOOL shouldShow = NO;
     if (wechatEnable && [req.bundleID isEqualToString:@"com.tencent.xin"]) shouldShow = YES;
     if (qqEnable && [req.bundleID.lowercaseString containsString:@"qq"]) shouldShow = YES;
@@ -2583,7 +2594,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
     if (section == 0) return 4; 
     if (section == 1) return 3;
     if (section == 2) return 5;
-    if (section == 3) return 6; // 通知管理
+    if (section == 3) return 7; // 通知管理
     if (section == 4) return 3;
     if (section == 5) return 1;
     if (section == 6) return 5;
@@ -2722,12 +2733,19 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             [sw addTarget:self action:@selector(changeTimEnable:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 4) {
+            cell.textLabel.text = @"横屏状态消息通知";
+            cell.detailTextLabel.text = @"关闭后横屏不弹出消息悬浮通知";
+            UISwitch *sw = [UISwitch new];
+            sw.on = landscapeNotificationEnable;
+            [sw addTarget:self action:@selector(changeLandscapeNotificationEnable:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
+        } else if (indexPath.row == 5) {
             cell.textLabel.text = @"锁屏隐私隐藏";
             UISwitch *sw = [UISwitch new];
             sw.on = hideContentOnLockScreen;
             [sw addTarget:self action:@selector(changeHideContentLockScreen:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
-        } else if (indexPath.row == 5) {
+        } else if (indexPath.row == 6) {
             cell.textLabel.text = @"通知显示时间";
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%ld 秒", (long)notificationDuration];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
@@ -2899,7 +2917,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
             [self presentViewController:alert animated:YES completion:nil];
         }
     } else if (indexPath.section == 3) {
-        if (indexPath.row == 5) {
+        if (indexPath.row == 6) {
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"通知显示时间" message:@"选择消息浮窗保留多长时间" preferredStyle:UIAlertControllerStyleActionSheet];
             NSArray *titles = @[@"3 秒", @"5 秒", @"8 秒", @"10 秒"];
             NSArray *values = @[@3, @5, @8, @10];
@@ -3045,6 +3063,7 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
     sbcputhermalSetBoolPref(@"thermalBlockNotifPopup", sw.isOn);
 }
 - (void)changeNotificationEnable:(UISwitch *)sw { notificationEnable = sw.isOn; SavePreferencesAndNotify(); }
+- (void)changeLandscapeNotificationEnable:(UISwitch *)sw { landscapeNotificationEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeWechatEnable:(UISwitch *)sw { wechatEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeQqEnable:(UISwitch *)sw { qqEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeTimEnable:(UISwitch *)sw { timEnable = sw.isOn; SavePreferencesAndNotify(); }
