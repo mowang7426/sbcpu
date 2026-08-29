@@ -60,9 +60,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>▣ 充电与温控增强</string>
+			<string>▣ CPUthermal 温控核心</string>
 			<key>footerText</key>
-			<string>提供充电状态监测与充电增强目标；实时显示实际电压、电流、功率，并根据温度和电量判断是否正在降流。</string>
+			<string>集成 CPUthermal 1.6.4-53 温控核心：支持 Thermal Pressure 自动保护、启动 8 秒保护、锁屏低功耗/解锁恢复、Nominal 自动恢复、防温控暗屏和高温温度计警告控制。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
