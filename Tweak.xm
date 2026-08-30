@@ -2867,7 +2867,7 @@ static BOOL sbcputhermalThermalMonitorHasCore(BOOL *permissionLimited) {
         // 第一优先级：直接调用 PROC_PIDREGIONPATHINFO。
         // 这是 proc_regionfilename() 在 libproc 内部最终使用的接口，
         // 但我们直接读取返回结构，避免 RootHide 环境下 wrapper 的差异。
-        SBCPUProcRegionWithPathInfo withPath = {0};
+        SBCPUProcRegionWithPathInfo withPath = {};
         int pathResult = proc_pidinfo_fn(pid, PROC_PIDREGIONPATHINFO,
                                          region.pri_address,
                                          &withPath,
