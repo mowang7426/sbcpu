@@ -1540,6 +1540,13 @@ static void applySystemRefreshRate(void) {
                 NSDictionary *userInfo = targetReq.userInfoPayload;
                 id rawRequest = targetReq.originalRequest; 
                 
+                // 点击通知后，彻底结束本次通知状态。
+                // 特别重要：必须取消通知定时器，否则 5 秒后 hideNotification
+                // 仍会使用 wasCollapsedBeforeNotification 再次把浮窗折叠。
+                [self.notificationTimer invalidate];
+                self.notificationTimer = nil;
+                self.wasCollapsedBeforeNotification = NO;
+                
                 self.badgeLabel.hidden = YES;
                 self.isShowingNotification = NO;
                 self.currentNotification = nil;
@@ -1997,18 +2004,22 @@ static void applySystemRefreshRate(void) {
             }
             self.horizontalDiv.hidden = YES;
             self.notificationContainer.hidden = YES;
+            self.notificationContainer.alpha = 0.0;
+            self.collapsedContainerView.hidden = NO;
+            self.collapsedContainerView.alpha = 1.0;
         }
     };
 
     if (animated) {
-        self.collapsedContainerView.hidden = YES;
-    self.collapsedContainerView.alpha = 0.0;
-    self.notificationContainer.hidden = NO;
-    self.notificationContainer.alpha = 1.0;
-    self.horizontalDiv.hidden = NO;
-    self.horizontalDiv.alpha = 1.0;
+        // 折叠动画期间不要人为显示 notificationContainer，否则消息到达时会和折叠动画竞争。
+        self.collapsedContainerView.hidden = NO;
+        self.collapsedContainerView.alpha = 0.0;
+        self.notificationContainer.hidden = YES;
+        self.notificationContainer.alpha = 0.0;
+        self.horizontalDiv.hidden = YES;
+        self.horizontalDiv.alpha = 0.0;
 
-    [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.4 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:animationsBlock completion:completionBlock];
+        [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.4 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:animationsBlock completion:completionBlock];
     } else {
         animationsBlock();
         completionBlock(YES);
@@ -2021,6 +2032,10 @@ static void applySystemRefreshRate(void) {
         return;
     }
     _isCollapsed = NO;
+    self.collapsedContainerView.hidden = NO;
+    self.collapsedContainerView.alpha = 0.0;
+    self.notificationContainer.hidden = YES;
+    self.notificationContainer.alpha = 0.0;
 
     BOOL charging = isChargingInternal();
     UIView *parent = self.superview;
@@ -2069,6 +2084,7 @@ static void applySystemRefreshRate(void) {
         (void)finished;
         if (!self.isCollapsed) {
             self.collapsedContainerView.hidden = YES;
+            self.collapsedContainerView.alpha = 0.0;
         }
         [self resetInactivityTimer];
     };
@@ -2082,28 +2098,59 @@ static void applySystemRefreshRate(void) {
 }
 
 - (void)showNotification:(SBNotifReq *)req {
+    if (!req) return;
+
     if (!self.isShowingNotification) {
         self.wasCollapsedBeforeNotification = self.isCollapsed;
     }
+
+    // 收到新消息时，无论之前是否处于折叠状态，都先恢复完整的展开视觉状态。
+    // 旧版本只把 hidden=NO，却没有恢复 alpha；折叠完成后各信息项 alpha=0，
+    // 因此会出现“只有消息在下面、上面全部空白”以及“折叠后完全没有信息”的问题。
+    [self.layer removeAllAnimations];
+    self.isCollapsed = NO;
     self.isShowingNotification = YES;
     self.currentNotification = req;
-    
-    if (self.isCollapsed) {
-        self.isCollapsed = NO; 
-    }
-    
-    [self.inactivityTimer invalidate]; self.inactivityTimer = nil;
-    
+
+    [self.inactivityTimer invalidate];
+    self.inactivityTimer = nil;
+
     [self.notificationTimer invalidate];
-    self.notificationTimer = [NSTimer scheduledTimerWithTimeInterval:notificationDuration target:self selector:@selector(hideNotification) userInfo:nil repeats:NO];
-    
+    self.notificationTimer = [NSTimer scheduledTimerWithTimeInterval:notificationDuration
+                                                               target:self
+                                                             selector:@selector(hideNotification)
+                                                             userInfo:nil
+                                                              repeats:NO];
+
+    self.performanceContainer.hidden = NO;
+    self.performanceContainer.alpha = 1.0;
+    self.collapsedContainerView.hidden = YES;
+    self.collapsedContainerView.alpha = 0.0;
+
+    // 恢复折叠时被隐藏/淡出的所有性能信息。
     for (UIView *v in self.performanceContainer.subviews) {
-        if (v != self.collapsedContainerView) v.hidden = NO;
+        if (v != self.collapsedContainerView) {
+            v.hidden = NO;
+            v.alpha = 1.0;
+        }
     }
 
-    [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0.5 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:^{
-        updateFloatingSize(); 
-    } completion:nil];
+    self.horizontalDiv.hidden = NO;
+    self.horizontalDiv.alpha = 1.0;
+    self.notificationContainer.hidden = NO;
+    self.notificationContainer.alpha = 1.0;
+
+    // 先立即重建完整布局，再做一次轻微动画，避免消息区域出现空白。
+    updateFloatingSize();
+
+    [UIView animateWithDuration:0.25
+                          delay:0
+                        options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut
+                     animations:^{
+                         self.collapsedContainerView.alpha = 0.0;
+                         self.notificationContainer.alpha = 1.0;
+                     }
+                     completion:nil];
 }
 
 - (void)hideNotification {
