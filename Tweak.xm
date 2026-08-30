@@ -2679,6 +2679,9 @@ static void registerThermalHeartbeatListener(void) {
 #ifndef PROC_PIDREGIONINFO
 #define PROC_PIDREGIONINFO 7
 #endif
+#ifndef PROC_PIDREGIONPATHINFO
+#define PROC_PIDREGIONPATHINFO 8
+#endif
 #ifndef PROC_PIDPATHINFO_MAXSIZE
 #define PROC_PIDPATHINFO_MAXSIZE 4096
 #endif
@@ -2717,6 +2720,49 @@ typedef struct {
     uint64_t pri_address;
     uint64_t pri_size;
 } SBCPUProcRegionInfo;
+
+// proc_pidinfo(PROC_PIDREGIONPATHINFO) 的完整返回布局。
+// 这里不依赖 SDK 的 <libproc.h>，但保持与 XNU proc_info.h 的布局一致。
+typedef struct {
+    uint32_t vst_dev;
+    uint16_t vst_mode;
+    uint16_t vst_nlink;
+    uint64_t vst_ino;
+    uint32_t vst_uid;
+    uint32_t vst_gid;
+    int64_t  vst_atime;
+    int64_t  vst_atimensec;
+    int64_t  vst_mtime;
+    int64_t  vst_mtimensec;
+    int64_t  vst_ctime;
+    int64_t  vst_ctimensec;
+    int64_t  vst_birthtime;
+    int64_t  vst_birthtimensec;
+    int64_t  vst_size;
+    int64_t  vst_blocks;
+    int32_t  vst_blksize;
+    uint32_t vst_flags;
+    uint32_t vst_gen;
+    uint32_t vst_rdev;
+    int64_t  vst_qspare[2];
+} SBCPUVinfoStat;
+
+typedef struct {
+    SBCPUVinfoStat vi_stat;
+    int32_t vi_type;
+    int32_t vi_pad;
+    int32_t vi_fsid[2];
+} SBCPUVnodeInfo;
+
+typedef struct {
+    SBCPUVnodeInfo vip_vi;
+    char vip_path[MAXPATHLEN];
+} SBCPUVnodeInfoPath;
+
+typedef struct {
+    SBCPUProcRegionInfo prp_prinfo;
+    SBCPUVnodeInfoPath prp_vip;
+} SBCPUProcRegionWithPathInfo;
 
 typedef struct {
     uint32_t pbi_flags;
@@ -2780,6 +2826,13 @@ static pid_t sbcputhermalFindThermalMonitorPID(void) {
     return found;
 }
 
+static BOOL sbcputhermalPathContainsCore(const char *path) {
+    if (!path || !path[0]) return NO;
+    // 只认真实 dylib 名称；.dpkg-tmp 也会被识别为“存在该文件映射”，
+    // 但正常安装后的路径应当是 SBCPUThermal.dylib。
+    return strstr(path, "SBCPUThermal.dylib") != NULL;
+}
+
 static BOOL sbcputhermalThermalMonitorHasCore(BOOL *permissionLimited) {
     if (permissionLimited) *permissionLimited = NO;
 
@@ -2791,7 +2844,7 @@ static BOOL sbcputhermalThermalMonitorHasCore(BOOL *permissionLimited) {
 
     SBCPUProcPidInfoFn proc_pidinfo_fn = (SBCPUProcPidInfoFn)dlsym(handle, "proc_pidinfo");
     SBCPUProcRegionFilenameFn proc_regionfilename_fn = (SBCPUProcRegionFilenameFn)dlsym(handle, "proc_regionfilename");
-    if (!proc_pidinfo_fn || !proc_regionfilename_fn) {
+    if (!proc_pidinfo_fn) {
         if (permissionLimited) *permissionLimited = YES;
         return NO;
     }
@@ -2801,6 +2854,8 @@ static BOOL sbcputhermalThermalMonitorHasCore(BOOL *permissionLimited) {
 
     uint64_t address = 0;
     BOOL sawRegion = NO;
+    BOOL sawPathAPI = NO;
+
     for (int guard = 0; guard < 200000; guard++) {
         SBCPUProcRegionInfo region = {0};
         int result = proc_pidinfo_fn(pid, PROC_PIDREGIONINFO, address, &region, (int)sizeof(region));
@@ -2809,11 +2864,30 @@ static BOOL sbcputhermalThermalMonitorHasCore(BOOL *permissionLimited) {
         sawRegion = YES;
         if (region.pri_size == 0) break;
 
-        char path[MAXPATHLEN] = {0};
-        int pathLen = proc_regionfilename_fn(pid, region.pri_address, path, sizeof(path));
-        if (pathLen > 0) {
-            path[sizeof(path) - 1] = '\0';
-            if (strstr(path, "SBCPUThermal.dylib") != NULL) return YES;
+        // 第一优先级：直接调用 PROC_PIDREGIONPATHINFO。
+        // 这是 proc_regionfilename() 在 libproc 内部最终使用的接口，
+        // 但我们直接读取返回结构，避免 RootHide 环境下 wrapper 的差异。
+        SBCPUProcRegionWithPathInfo withPath = {0};
+        int pathResult = proc_pidinfo_fn(pid, PROC_PIDREGIONPATHINFO,
+                                         region.pri_address,
+                                         &withPath,
+                                         (int)sizeof(withPath));
+        if (pathResult >= (int)sizeof(withPath)) {
+            sawPathAPI = YES;
+            withPath.prp_vip.vip_path[MAXPATHLEN - 1] = '\0';
+            if (sbcputhermalPathContainsCore(withPath.prp_vip.vip_path)) {
+                return YES;
+            }
+        }
+
+        // 第二优先级：保留 libproc 自带的 proc_regionfilename() 作为兼容兜底。
+        if (proc_regionfilename_fn) {
+            char path[MAXPATHLEN] = {0};
+            int pathLen = proc_regionfilename_fn(pid, region.pri_address, path, sizeof(path));
+            if (pathLen > 0) {
+                path[sizeof(path) - 1] = '\0';
+                if (sbcputhermalPathContainsCore(path)) return YES;
+            }
         }
 
         uint64_t next = region.pri_address + region.pri_size;
@@ -2821,7 +2895,10 @@ static BOOL sbcputhermalThermalMonitorHasCore(BOOL *permissionLimited) {
         address = next;
     }
 
+    // 能枚举到区域但拿不到任何路径，不代表 thermalmonitord 不存在；
+    // 只有 libproc 本身不可用或区域完全不可读时才报告 permissionLimited。
     if (!sawRegion && permissionLimited) *permissionLimited = YES;
+    if (!sawPathAPI && !proc_regionfilename_fn && permissionLimited) *permissionLimited = YES;
     return NO;
 }
 
