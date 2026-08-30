@@ -859,14 +859,14 @@ static void updateFloatingSize(void) {
         floatingView.startupContainer.hidden = NO;
         // 每次普通刷新都会调用 updateFloatingSize，所以这里保持启动卡片的紧凑尺寸，
         // 防止 1 秒刷新一次时动画被原浮窗布局“挤回去”。
-        floatingView.bounds = CGRectMake(0, 0, 260.0f, 116.0f);
+        floatingView.bounds = CGRectMake(0, 0, 260.0f, 124.0f);
         floatingView.startupContainer.frame = floatingView.bounds;
         floatingView.startupIconCircle.frame = CGRectMake(14.0f, 18.0f, 58.0f, 58.0f);
         floatingView.startupIconLabel.frame = floatingView.startupIconCircle.bounds;
         floatingView.startupTitleLabel.frame = CGRectMake(84.0f, 18.0f, 160.0f, 22.0f);
         floatingView.startupDetailLabel.frame = CGRectMake(84.0f, 42.0f, 160.0f, 18.0f);
-        floatingView.startupProgressTrack.frame = CGRectMake(14.0f, 88.0f, 205.0f, 7.0f);
-        floatingView.startupPercentLabel.frame = CGRectMake(224.0f, 83.0f, 28.0f, 18.0f);
+        floatingView.startupProgressTrack.frame = CGRectMake(14.0f, 94.0f, 205.0f, 7.0f);
+        floatingView.startupPercentLabel.frame = CGRectMake(224.0f, 89.0f, 28.0f, 18.0f);
     }
 
     CGFloat rotationAngle = 0.0;
@@ -1893,9 +1893,9 @@ static void applySystemRefreshRate(void) {
 - (void)prepareStartupAnimationView {
     if (!_startupContainer) return;
 
-    // 只比原浮窗稍大一点：约 260×116，避免出现独立全屏大窗口的压迫感。
+    // 只比原浮窗稍大一点：约 260×124，避免出现独立全屏大窗口的压迫感。
     CGFloat targetW = 260.0f;
-    CGFloat targetH = 116.0f;
+    CGFloat targetH = 124.0f;
     self.startupRestoreBounds = self.bounds;
     self.startupRestoreCenter = self.center;
 
@@ -1907,9 +1907,9 @@ static void applySystemRefreshRate(void) {
 
     _startupTitleLabel.frame = CGRectMake(84.0f, 18.0f, 160.0f, 22.0f);
     _startupDetailLabel.frame = CGRectMake(84.0f, 42.0f, 160.0f, 18.0f);
-    _startupProgressTrack.frame = CGRectMake(14.0f, 88.0f, 205.0f, 7.0f);
+    _startupProgressTrack.frame = CGRectMake(14.0f, 94.0f, 205.0f, 7.0f);
     _startupProgressFill.frame = CGRectMake(0, 0, 0, 7.0f);
-    _startupPercentLabel.frame = CGRectMake(224.0f, 83.0f, 28.0f, 18.0f);
+    _startupPercentLabel.frame = CGRectMake(224.0f, 89.0f, 28.0f, 18.0f);
 
     _startupContainer.hidden = NO;
     _startupContainer.alpha = 0.0f;
@@ -1960,16 +1960,34 @@ static void applySystemRefreshRate(void) {
     if (!_startupContainer) return;
 
     [_startupIconCircle.layer removeAnimationForKey:@"startupGlow"];
-    self.bounds = self.startupRestoreBounds;
-    self.center = self.startupRestoreCenter;
-    _startupContainer.hidden = YES;
-    _startupContainer.alpha = 0.0f;
-    _startupContainer.transform = CGAffineTransformIdentity;
-    _startupProgressFill.frame = CGRectMake(0, 0, 0, _startupProgressTrack.bounds.size.height);
 
-    updateFloatingSize();
-    // 动画结束后再恢复正常的自动折叠计时。
-    [self resetInactivityTimer];
+    // 不再瞬间隐藏/恢复尺寸：先让“启动完成”状态自然停留，再做
+    // 轻微缩小 + 淡出，并与原浮窗内容交叉淡入，避免视觉上像被硬切掉。
+    _performanceContainer.hidden = NO;
+    _performanceContainer.alpha = 0.0f;
+    _startupContainer.hidden = NO;
+    _startupContainer.alpha = 1.0f;
+    _startupContainer.transform = CGAffineTransformIdentity;
+
+    [UIView animateWithDuration:0.62
+                          delay:0.18
+                        options:UIViewAnimationOptionCurveEaseInOut | UIViewAnimationOptionBeginFromCurrentState
+                     animations:^{
+        self.startupContainer.alpha = 0.0f;
+        self.startupContainer.transform = CGAffineTransformMakeScale(0.94f, 0.94f);
+        self.performanceContainer.alpha = 1.0f;
+    } completion:^(BOOL finished) {
+        self.bounds = self.startupRestoreBounds;
+        self.center = self.startupRestoreCenter;
+        self.startupContainer.hidden = YES;
+        self.startupContainer.alpha = 0.0f;
+        self.startupContainer.transform = CGAffineTransformIdentity;
+        self.performanceContainer.alpha = 1.0f;
+        self.startupProgressFill.frame = CGRectMake(0, 0, 0, self.startupProgressTrack.bounds.size.height);
+
+        updateFloatingSize();
+        [self resetInactivityTimer];
+    }];
 }
 
 - (void)triggerPlugAnimation {
