@@ -241,6 +241,8 @@ static BOOL force120HzEnable = NO;
 
 static BOOL chargeBoostEnable = NO;
 static BOOL forceFastChargeEnable = NO; // 保留原有强制满血快充开关
+static BOOL fastChargeStartupAnimating = NO;
+static NSInteger fastChargeStartupGeneration = 0;
 
 static double lastChargeWatts = 0.0;
 static double previousChargeWatts = 0.0;
@@ -304,6 +306,8 @@ static UIWindowScene *getWindowScene(void);
 static UIInterfaceOrientation getActiveInterfaceOrientation(void);
 static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate);
 static void updateFloatingSize(void);
+static void startFastChargeStartupAnimation(void);
+static BOOL isPowerdHookReady(void);
 static void createCPUWindow(void);
 static void openDetailView(void);
 static void openSettings(void);
@@ -946,6 +950,109 @@ static void checkHighCPU(double cpu) {
             });
         });
     }
+}
+
+static BOOL isPowerdHookReady(void) {
+    CFPreferencesAppSynchronize(CFSTR("com.yourname.sbcpufloating"));
+    CFPropertyListRef value = CFPreferencesCopyValue(CFSTR("powerdHookReady"),
+                                                       CFSTR("com.yourname.sbcpufloating"),
+                                                       kCFPreferencesCurrentUser,
+                                                       kCFPreferencesAnyHost);
+    BOOL ready = (value && CFGetTypeID(value) == CFBooleanGetTypeID() && CFBooleanGetValue((CFBooleanRef)value));
+    if (value) CFRelease(value);
+    return ready;
+}
+
+static void startFastChargeStartupAnimation(void) {
+    if (!floatingView || !forceFastChargeEnable || !isChargingInternal()) return;
+    if (fastChargeStartupAnimating) return;
+
+    fastChargeStartupAnimating = YES;
+    NSInteger generation = ++fastChargeStartupGeneration;
+
+    if (floatingView.isCollapsed && !floatingView.isShowingNotification) {
+        [floatingView expandFromEdgeAnimated:YES];
+    }
+
+    NSArray<NSString *> *titles = @[
+        @"⚡ 满血充电核心启动",
+        @"🔎 检测充电环境中...",
+        @"🚀 检测 powerd 进程...",
+        @"📡 确认 powerd 注入状态...",
+        @"🧩 Hook 核心功能加载中...",
+        @"🔓 充电限制处理完成",
+        @"🔥 满血充电已激活",
+        @"✓ 启动完成，恢复插件状态"
+    ];
+    NSArray<NSString *> *details = @[
+        @"正在初始化超级快充核心...",
+        @"检测充电器 / 电池 / 系统环境...",
+        @"确认 powerd 进程已运行...",
+        @"确认 SBCPUPowerd 注入状态...",
+        @"加载充电限制 Hook...",
+        @"持续处理电流 / 功率限制...",
+        @"满血充电核心正在运行",
+        @"返回原浮窗实时数据"
+    ];
+
+    void (^showStage)(NSUInteger) = ^(NSUInteger index) {
+        if (!floatingView || generation != fastChargeStartupGeneration || index >= titles.count) return;
+        NSString *detail = details[index];
+        if (index == 3) {
+            detail = isPowerdHookReady() ? @"SBCPUPowerd 已成功注入 powerd" : @"正在等待 SBCPUPowerd 注入...";
+        }
+        if (index == 5 && !isPowerdHookReady()) {
+            detail = @"powerd Hook 尚未就绪，继续检测...";
+        }
+        floatingView.statusLabel.text = titles[index];
+        floatingView.statusLabel.textColor = [UIColor systemGreenColor];
+        floatingView.statusDot.backgroundColor = [UIColor systemGreenColor];
+        floatingView.thermalStatusLabel.text = detail;
+        floatingView.thermalStatusLabel.textColor = [UIColor systemGreenColor];
+
+        CGFloat width = floatingView.bottomCapsule.bounds.size.width;
+        CGFloat height = floatingView.bottomCapsule.bounds.size.height > 0 ? floatingView.bottomCapsule.bounds.size.height : 14.0;
+        CGFloat progress = ((CGFloat)index + 1.0) / (CGFloat)titles.count;
+        [UIView animateWithDuration:0.20 animations:^{
+            floatingView.batteryProgressView.frame = CGRectMake(0, 0, width * progress, height);
+        }];
+
+        [floatingView.blurView.layer removeAnimationForKey:@"fastChargePulse"];
+        CABasicAnimation *pulse = [CABasicAnimation animationWithKeyPath:@"opacity"];
+        pulse.fromValue = @0.65;
+        pulse.toValue = @1.0;
+        pulse.duration = 0.35;
+        pulse.autoreverses = YES;
+        pulse.repeatCount = 2;
+        [floatingView.blurView.layer addAnimation:pulse forKey:@"fastChargePulse"];
+    };
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        updateFloatingSize();
+        showStage(0);
+        for (NSUInteger i = 1; i < titles.count; i++) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 0.32 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                showStage(i);
+            });
+        }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.75 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (!floatingView || generation != fastChargeStartupGeneration) return;
+            fastChargeStartupAnimating = NO;
+            [floatingView.blurView.layer removeAnimationForKey:@"fastChargePulse"];
+            NSDictionary *chargeInfo = getRealBatteryDetails();
+            double watts = MAX(0.0, [chargeInfo[@"CalculatedWatts"] doubleValue]);
+            floatingView.statusLabel.text = [NSString stringWithFormat:@"🔥 强制满血快充 · %.1fW", watts];
+            floatingView.statusLabel.textColor = [UIColor systemRedColor];
+            floatingView.statusDot.backgroundColor = [UIColor systemRedColor];
+            NSString *thermalText = nil;
+            UIColor *thermalColor = nil;
+            sbcputhermalFloatingStatus(&thermalText, &thermalColor);
+            floatingView.thermalStatusLabel.text = thermalText ?: @"温控：核心已运行";
+            floatingView.thermalStatusLabel.textColor = thermalColor ?: [UIColor systemGreenColor];
+            updateFloatingSize();
+            [floatingView resetInactivityTimer];
+        });
+    });
 }
 
 static void updateCPU(void) {
@@ -2194,13 +2301,15 @@ static void applySystemRefreshRate(void) {
 
     // 直接读取 SBCPUThermal 的核心心跳、保护状态和诊断热压力。
     // 不读取设置页面的静态文字，所以浮窗每次刷新都会显示最新状态。
-    NSString *thermalText = nil;
-    UIColor *thermalColor = nil;
-    sbcputhermalFloatingStatus(&thermalText, &thermalColor);
-    _thermalStatusLabel.text = thermalText ?: @"温控：检测中";
-    _thermalStatusLabel.textColor = thermalColor ?: [UIColor systemBlueColor];
+    if (!fastChargeStartupAnimating) {
+        NSString *thermalText = nil;
+        UIColor *thermalColor = nil;
+        sbcputhermalFloatingStatus(&thermalText, &thermalColor);
+        _thermalStatusLabel.text = thermalText ?: @"温控：检测中";
+        _thermalStatusLabel.textColor = thermalColor ?: [UIColor systemBlueColor];
+    }
     
-    if (YES) {
+    if (!fastChargeStartupAnimating) {
         if (forceFastChargeEnable && isCharging) {
             NSDictionary *chargeInfo = getRealBatteryDetails();
             double watts = [chargeInfo[@"CalculatedWatts"] doubleValue];
@@ -2218,7 +2327,7 @@ static void applySystemRefreshRate(void) {
         }
     }
 
-    if (isCharging) {
+    if (isCharging && !fastChargeStartupAnimating) {
         CGFloat capsuleW = _bottomCapsule.bounds.size.width;
         CGFloat capsuleH = _bottomCapsule.bounds.size.height > 0 ? _bottomCapsule.bounds.size.height : 14.0f;
         CGFloat targetProgressW = MAX(0, MIN(capsuleW, capsuleW * (battery / 100.0f)));
@@ -3464,8 +3573,9 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 }
 
 - (void)changeForceFastCharge:(UISwitch *)sw {
-    forceFastChargeEnable = sw.isOn;
     if (sw.isOn) {
+        sw.on = NO;
+        forceFastChargeEnable = NO;
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚠️ 极度危险警告"
                                                                          message:@"强制快充会绕过部分原厂充电限制，充电时可能明显升温。仅建议在充分散热条件下使用。"
                                                                   preferredStyle:UIAlertControllerStyleAlert];
@@ -3477,6 +3587,8 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         }]];
         [alert addAction:[UIAlertAction actionWithTitle:@"我知晓风险并开启" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
             (void)action;
+            forceFastChargeEnable = YES;
+            sw.on = YES;
             SavePreferencesAndNotify();
         }]];
         [self presentViewController:alert animated:YES completion:nil];

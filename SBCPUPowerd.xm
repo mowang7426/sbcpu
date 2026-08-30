@@ -9,6 +9,8 @@
 // SBCPUFloating preference domain，与 SpringBoard 设置页保持一致。
 static CFStringRef const kSBCPUPrefAppID = CFSTR("com.yourname.sbcpufloating");
 static CFStringRef const kSBCPUSettingsChanged = CFSTR("com.yourname.sbcpufloating/settingsChanged");
+static CFStringRef const kSBCPUPowerdReady = CFSTR("powerdHookReady");
+static CFStringRef const kSBCPUPowerdReadyNotification = CFSTR("com.yourname.sbcpufloating/powerdHookReady");
 
 static BOOL gForceFastCharge = NO;
 static BOOL gOriginalChargeLimitSaved = NO;
@@ -35,27 +37,29 @@ static BOOL readBoolPref(CFStringRef key, BOOL fallback) {
 static BOOL isProtectedChargeProperty(CFStringRef propertyName) {
     if (!propertyName) return NO;
     NSString *s = (__bridge NSString *)propertyName;
-
-    // 只拦截与充电电流/功率上限直接相关的属性。
-    // 不伪装温度，也不拦截 ChargingVoltageLimit。
+    
+    // 🔥 [激进升级] 扩充拦截词库，加入涓流、步进和底层热限制
     static NSArray<NSString *> *names;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         names = @[
             @"ChargeCurrentLimit",
+            @"ThermalMaxChargeCurrent",
             @"MaxChargeCurrent",
             @"AdapterPowerLimit",
             @"AdapterCurrentLimit",
+            @"ThermalChargingLimit",
             @"ChargingPowerLimit",
             @"ChargingCurrentLimit",
             @"USBPDCurrentLimit",
             @"USBPDPowerLimit",
-            @"USBChargeCurrent",
-            @"AICLLimit",
-            @"StepCharging"
+            @"Trickle",              // 拦截涓流充电
+            @"StepCharging",         // 拦截步进式充电降流
+            @"AICLLimit",            // 拦截适配器防抖降流
+            @"USBChargeCurrent",     // 拦截USB默认限流
+            @"ChargingVoltageLimit"  // 拦截恒压限制
         ];
     });
-
     for (NSString *name in names) {
         if ([s caseInsensitiveCompare:name] == NSOrderedSame ||
             [s rangeOfString:name options:NSCaseInsensitiveSearch].location != NSNotFound) {
@@ -67,8 +71,12 @@ static BOOL isProtectedChargeProperty(CFStringRef propertyName) {
 
 typedef kern_return_t (*IORegistryEntrySetCFPropertyFn)(io_registry_entry_t, CFStringRef, CFTypeRef);
 typedef kern_return_t (*IOServiceSetCFPropertyFn)(io_service_t, CFStringRef, CFTypeRef);
+// 🔥 新增：用于拦截系统读取电池属性
+typedef CFTypeRef (*IORegistryEntryCreateCFPropertyFn)(io_registry_entry_t, CFStringRef, CFAllocatorRef, IOOptionBits);
+
 static IORegistryEntrySetCFPropertyFn orig_IORegistryEntrySetCFProperty = NULL;
 static IOServiceSetCFPropertyFn orig_IOServiceSetCFProperty = NULL;
+static IORegistryEntryCreateCFPropertyFn orig_IORegistryEntryCreateCFProperty = NULL;
 
 static void setChargeLimitUsingOriginal(int value) {
     if (!orig_IORegistryEntrySetCFProperty) return;
@@ -84,61 +92,64 @@ static void setChargeLimitUsingOriginal(int value) {
     IOObjectRelease(service);
 }
 
-static void saveOriginalChargeLimitIfNeeded(void) {
-    if (gOriginalChargeLimitSaved || !orig_IORegistryEntrySetCFProperty) return;
-
-    io_service_t service = IOServiceGetMatchingService(
-        kIOMasterPortDefault,
-        IOServiceMatching("AppleSmartBattery")
-    );
-    if (!service) return;
-
-    // 这里直接使用系统原始读取接口；本版本不再 Hook 属性读取。
-    CFTypeRef old = IORegistryEntryCreateCFProperty(
-        service,
-        CFSTR("ChargeLimit"),
-        kCFAllocatorDefault,
-        0
-    );
-
-    if (old && CFGetTypeID(old) == CFNumberGetTypeID()) {
-        int n = 100;
-        if (CFNumberGetValue((CFNumberRef)old, kCFNumberIntType, &n)) {
-            gOriginalChargeLimit = n;
-            gOriginalChargeLimitSaved = YES;
-        }
-    }
-
-    if (old) CFRelease(old);
-    IOObjectRelease(service);
-}
-
-static void enforceFastCharge(void) {
-    if (!gForceFastCharge) return;
-
-    // 持续保持 ChargeLimit=100，避免 powerd 后续把上限恢复。
-    setChargeLimitUsingOriginal(100);
-}
-
 static void updateChargeState(void) {
     BOOL enabled = readBoolPref(CFSTR("forceFastChargeEnable"), NO);
-    if (enabled == gForceFastCharge) {
-        if (enabled) enforceFastCharge();
-        return;
-    }
+    if (enabled == gForceFastCharge) return;
 
     gForceFastCharge = enabled;
     NSLog(@"[SBCPUPowerd] 强制满血快充状态: %@", enabled ? @"开启" : @"关闭");
 
     if (enabled) {
-        saveOriginalChargeLimitIfNeeded();
-        enforceFastCharge();
+        if (!gOriginalChargeLimitSaved && orig_IORegistryEntrySetCFProperty) {
+            io_service_t service = IOServiceGetMatchingService(kIOMasterPortDefault,
+                                                                 IOServiceMatching("AppleSmartBattery"));
+            if (service) {
+                CFTypeRef old = IORegistryEntryCreateCFProperty(service, CFSTR("ChargeLimit"),
+                                                                 kCFAllocatorDefault, 0);
+                if (old && CFGetTypeID(old) == CFNumberGetTypeID()) {
+                    int n = 100;
+                    if (CFNumberGetValue((CFNumberRef)old, kCFNumberIntType, &n)) {
+                        gOriginalChargeLimit = n;
+                        gOriginalChargeLimitSaved = YES;
+                    }
+                }
+                if (old) CFRelease(old);
+                IOObjectRelease(service);
+            }
+        }
+        // 直接索要最高上限
+        setChargeLimitUsingOriginal(100);
     } else {
         if (gOriginalChargeLimitSaved) {
             setChargeLimitUsingOriginal(gOriginalChargeLimit);
         }
         gOriginalChargeLimitSaved = NO;
     }
+}
+
+// 🔥 [激进升级] 欺骗系统读取操作 (温度伪装)
+static CFTypeRef hook_IORegistryEntryCreateCFProperty(io_registry_entry_t entry, 
+                                                      CFStringRef key, 
+                                                      CFAllocatorRef allocator, 
+                                                      IOOptionBits options) {
+    CFTypeRef result = orig_IORegistryEntryCreateCFProperty(entry, key, allocator, options);
+    
+    if (gForceFastCharge && key && result) {
+        NSString *keyStr = (__bridge NSString *)key;
+        
+        // 伪装电池温度永远在 25°C (AppleSmartBattery 中温度单位通常为 0.1度，即 250)
+        // 这将彻底废掉 thermalmonitord 基于电池温度的降频保护
+        if ([keyStr isEqualToString:@"Temperature"] || [keyStr isEqualToString:@"BatteryTemperature"]) {
+            if (CFGetTypeID(result) == CFNumberGetTypeID()) {
+                int fakeTemp = 250; 
+                CFNumberRef fakeNum = CFNumberCreate(allocator, kCFNumberIntType, &fakeTemp);
+                CFRelease(result); // 释放真实的温度对象，防止内存泄漏
+                // NSLog(@"[SBCPUPowerd] 🌡️ 成功伪装电池温度为 25°C");
+                return fakeNum;
+            }
+        }
+    }
+    return result;
 }
 
 static kern_return_t hook_IORegistryEntrySetCFProperty(io_registry_entry_t entry,
@@ -184,10 +195,14 @@ static void installIOKitHooks(void) {
                        (void **)&orig_IOServiceSetCFProperty);
     }
 
-    gHookInstalled = (orig_IORegistryEntrySetCFProperty != NULL ||
-                      orig_IOServiceSetCFProperty != NULL);
+    // 🔥 挂钩属性读取接口，实现硬件欺骗
+    void *p3 = dlsym(handle, "IORegistryEntryCreateCFProperty");
+    if (p3 && !orig_IORegistryEntryCreateCFProperty) {
+        MSHookFunction(p3, (void *)hook_IORegistryEntryCreateCFProperty,
+                       (void **)&orig_IORegistryEntryCreateCFProperty);
+    }
 
-    NSLog(@"[SBCPUPowerd] Powerd 充电 Hook 状态: %@", gHookInstalled ? @"成功" : @"失败");
+    gHookInstalled = (orig_IORegistryEntrySetCFProperty != NULL || orig_IOServiceSetCFProperty != NULL);
 }
 
 static void settingsChanged(CFNotificationCenterRef center,
@@ -210,8 +225,17 @@ static void settingsChanged(CFNotificationCenterRef center,
         NSString *process = [NSProcessInfo processInfo].processName;
         if (![process isEqualToString:@"powerd"]) return;
 
-        NSLog(@"[SBCPUPowerd] V3.1.14 Powerd 超级快充专用核心启动");
+        NSLog(@"[SBCPUPowerd] V4.0.0 极致满血版核心启动");
         installIOKitHooks();
+        if (gHookInstalled) {
+            CFPreferencesSetValue(kSBCPUPowerdReady, kCFBooleanTrue, kSBCPUPrefAppID,
+                                  kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+            CFPreferencesAppSynchronize(kSBCPUPrefAppID);
+            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                                  kSBCPUPowerdReadyNotification,
+                                                  NULL, NULL, YES);
+            NSLog(@"[SBCPUPowerd] powerd Hook 已就绪");
+        }
         updateChargeState();
 
         CFNotificationCenterRef center = CFNotificationCenterGetDarwinNotifyCenter();
@@ -228,8 +252,7 @@ static void settingsChanged(CFNotificationCenterRef center,
                                   2 * NSEC_PER_SEC,
                                   300 * NSEC_PER_MSEC);
         dispatch_source_set_event_handler(timer, ^{
-            if (gHookInstalled && gForceFastCharge) enforceFastCharge();
-            else if (gHookInstalled) updateChargeState();
+            if (gHookInstalled) updateChargeState();
         });
         dispatch_resume(timer);
     }
