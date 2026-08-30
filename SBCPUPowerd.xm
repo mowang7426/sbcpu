@@ -74,7 +74,7 @@ static void setChargeLimitUsingOriginal(int value) {
 
     CFNumberRef number = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &value);
     if (number) {
-        kern_return_t kr = orig_IORegistryEntrySetCFProperty(service, CFSTR("ChargeLimit"), number);
+        orig_IORegistryEntrySetCFProperty(service, CFSTR("ChargeLimit"), number);
         CFRelease(number);
     }
     IOObjectRelease(service);
