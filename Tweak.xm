@@ -2618,7 +2618,7 @@ static CFTimeInterval sbcputhermalStartupElapsed(void) {
 
     NSDictionary *prefs = SBCPUThermalReadPrefs();
     id value = prefs[@"thermalEngineStartupAt"];
-    if (![value respondsToSelector:@"doubleValue"]) {
+    if (![value respondsToSelector:@selector(doubleValue)]) {
         // 第一次启用/升级到此版本时，从现在开始计算启动等待。
         CFTimeInterval now = CFAbsoluteTimeGetCurrent();
         sbcputhermalSetPref(@"thermalEngineStartupAt", @(now));
