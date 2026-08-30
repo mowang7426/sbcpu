@@ -70,7 +70,7 @@ static IOServiceSetCFPropertyFn orig_IOServiceSetCFProperty = NULL;
 
 static void setChargeLimitUsingOriginal(int value) {
     if (!orig_IORegistryEntrySetCFProperty) return;
-    io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault,
+    io_service_t service = IOServiceGetMatchingService(kIOMasterPortDefault,
                                                          IOServiceMatching("AppleSmartBattery"));
     if (!service) return;
 
@@ -93,7 +93,7 @@ static void updateChargeState(void) {
     if (enabled) {
         // 记录当前 ChargeLimit，只记录一次；然后将上限提升到 100。
         if (!gOriginalChargeLimitSaved && orig_IORegistryEntrySetCFProperty) {
-            io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault,
+            io_service_t service = IOServiceGetMatchingService(kIOMasterPortDefault,
                                                                  IOServiceMatching("AppleSmartBattery"));
             if (service) {
                 CFTypeRef old = IORegistryEntryCreateCFProperty(service, CFSTR("ChargeLimit"),

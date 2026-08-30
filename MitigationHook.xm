@@ -62,20 +62,15 @@ static kern_return_t hook_IORegistryEntrySetCFProperty(io_registry_entry_t entry
         }
     }
 
-    // 🔥 增强版：拦截系统降低充电功率，突破 80% 涓流限制与低电量限流
+    // 🔥 新增：拦截系统降低充电功率（强制快充）
     if (forceFastCharge) {
-        if ([propStr localizedCaseInsensitiveContainsString:@"ChargeCurrentLimit"] || 
-            [propStr localizedCaseInsensitiveContainsString:@"ThermalMaxChargeCurrent"] ||
-            [propStr localizedCaseInsensitiveContainsString:@"MaxChargeCurrent"] ||
-            [propStr localizedCaseInsensitiveContainsString:@"AdapterPowerLimit"] ||
-            [propStr localizedCaseInsensitiveContainsString:@"AdapterCurrentLimit"] ||
-            [propStr localizedCaseInsensitiveContainsString:@"ThermalChargingLimit"] ||
-            [propStr localizedCaseInsensitiveContainsString:@"Trickle"] ||         // 拦截涓流充电指令 (TrickleCharge)
-            [propStr localizedCaseInsensitiveContainsString:@"StepCharging"] ||    // 拦截步进式充电降流
-            [propStr localizedCaseInsensitiveContainsString:@"USBChargeCurrent"] ||// 拦截USB限制
-            [propStr localizedCaseInsensitiveContainsString:@"AICLLimit"] ||       // 拦截输入电流自动限制
-            [propStr localizedCaseInsensitiveContainsString:@"ChargingVoltageLimit"]) {
-            // 系统试图降流或进入涓流，我们直接吃掉这个指令，欺骗系统执行成功，强制底层 PMIC 维持最高协商功率
+        if ([propStr containsString:@"ChargeCurrentLimit"] || 
+            [propStr containsString:@"ThermalMaxChargeCurrent"] ||
+            [propStr containsString:@"MaxChargeCurrent"] ||
+            [propStr containsString:@"AdapterPowerLimit"] ||
+            [propStr containsString:@"AdapterCurrentLimit"] ||
+            [propStr containsString:@"ThermalChargingLimit"]) {
+            // 系统试图降流，我们直接吃掉这个指令，欺骗系统执行成功
             return KERN_SUCCESS; 
         }
     }
@@ -191,4 +186,5 @@ static kern_return_t hook_IORegistryEntrySetCFProperty(io_registry_entry_t entry
         dispatch_resume(timer);
     }
 }
+
 
