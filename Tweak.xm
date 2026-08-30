@@ -149,6 +149,17 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) UIView *collapsedContainerView;
 @property (nonatomic, strong) UIView *statusDot;
 @property (nonatomic, strong) UILabel *miniCpuLabel;
+@property (nonatomic, strong) UIView *startupContainer;
+@property (nonatomic, strong) UIView *startupIconCircle;
+@property (nonatomic, strong) UILabel *startupIconLabel;
+@property (nonatomic, strong) UILabel *startupTitleLabel;
+@property (nonatomic, strong) UILabel *startupDetailLabel;
+@property (nonatomic, strong) UIView *startupProgressTrack;
+@property (nonatomic, strong) UIView *startupProgressFill;
+@property (nonatomic, strong) UILabel *startupPercentLabel;
+@property (nonatomic, assign) CGRect startupRestoreBounds;
+@property (nonatomic, assign) CGPoint startupRestoreCenter;
+
 
 // 🏝️ 灵动岛通知层容器
 @property (nonatomic, strong) UIView *notificationContainer;
@@ -171,6 +182,9 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 - (void)collapseToEdgeAnimated:(BOOL)animated;
 - (void)expandFromEdgeAnimated:(BOOL)animated;
 - (void)triggerPlugAnimation;
+- (void)prepareStartupAnimationView;
+- (void)showStartupStage:(NSUInteger)index title:(NSString *)title detail:(NSString *)detail icon:(NSString *)icon progress:(CGFloat)progress;
+- (void)finishStartupAnimation;
 - (void)updateLayoutWithShowCpuFreq:(BOOL)showFreq showFps:(BOOL)showFps showBatteryPercent:(BOOL)showBattery showBatteryTemp:(BOOL)showTemp showBatteryCurrent:(BOOL)showCurrent isCharging:(BOOL)isCharging;
 - (void)updateDataWithCPU:(double)cpu cpuFreq:(double)cpuFreq fps:(double)fps battery:(NSInteger)battery temp:(double)temp current:(double)current isCharging:(BOOL)isCharging;
 
@@ -191,24 +205,6 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @interface SBCPUSettingsController : UITableViewController
 - (void)saveConfigs;
 @end
-@interface SBCPUChargeStartupViewController : UIViewController
-@property (nonatomic, strong) UIVisualEffectView *backgroundBlur;
-@property (nonatomic, strong) UIView *cardView;
-@property (nonatomic, strong) UILabel *stepBadge;
-@property (nonatomic, strong) UILabel *iconLabel;
-@property (nonatomic, strong) UILabel *titleLabel;
-@property (nonatomic, strong) UILabel *detailLabel;
-@property (nonatomic, strong) UIView *progressTrack;
-@property (nonatomic, strong) UIView *progressFill;
-@property (nonatomic, strong) UILabel *progressLabel;
-@property (nonatomic, strong) UILabel *hintLabel;
-- (void)showStage:(NSUInteger)stage title:(NSString *)title detail:(NSString *)detail progress:(CGFloat)progress icon:(NSString *)icon iconColor:(UIColor *)iconColor;
-- (void)finishWithCompletion:(void (^)(void))completion;
-@end
-
-@interface SBCPUChargeStartupWindow : UIWindow
-@end
-
 @interface SBCPUDetailViewController : UIViewController
 @property (nonatomic, strong) UIVisualEffectView *blurEffectView;
 @property (nonatomic, strong) NSTimer *refreshTimer;
@@ -261,8 +257,6 @@ static BOOL chargeBoostEnable = NO;
 static BOOL forceFastChargeEnable = NO; // 保留原有强制满血快充开关
 static BOOL fastChargeStartupAnimating = NO;
 static NSInteger fastChargeStartupGeneration = 0;
-static SBCPUChargeStartupWindow *fastChargeStartupWindow = nil;
-static SBCPUChargeStartupViewController *fastChargeStartupVC = nil;
 
 static double lastChargeWatts = 0.0;
 static double previousChargeWatts = 0.0;
@@ -327,7 +321,6 @@ static UIInterfaceOrientation getActiveInterfaceOrientation(void);
 static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate);
 static void updateFloatingSize(void);
 static void startFastChargeStartupAnimation(void);
-static void stopFastChargeStartupAnimation(BOOL immediate);
 static BOOL isPowerdHookReady(void);
 static void createCPUWindow(void);
 static void openDetailView(void);
@@ -859,6 +852,23 @@ static void updateFloatingSize(void) {
                             showBatteryCurrent:showBatteryCurrent
                                     isCharging:charging];
 
+    // 启动动画期间，布局仍按原插件计算，但视觉上只显示这个“原浮窗变形”的紧凑启动卡片。
+    if (fastChargeStartupAnimating) {
+        floatingView.performanceContainer.hidden = YES;
+        floatingView.notificationContainer.hidden = YES;
+        floatingView.startupContainer.hidden = NO;
+        // 每次普通刷新都会调用 updateFloatingSize，所以这里保持启动卡片的紧凑尺寸，
+        // 防止 1 秒刷新一次时动画被原浮窗布局“挤回去”。
+        floatingView.bounds = CGRectMake(0, 0, 260.0f, 116.0f);
+        floatingView.startupContainer.frame = floatingView.bounds;
+        floatingView.startupIconCircle.frame = CGRectMake(14.0f, 18.0f, 58.0f, 58.0f);
+        floatingView.startupIconLabel.frame = floatingView.startupIconCircle.bounds;
+        floatingView.startupTitleLabel.frame = CGRectMake(84.0f, 18.0f, 160.0f, 22.0f);
+        floatingView.startupDetailLabel.frame = CGRectMake(84.0f, 42.0f, 160.0f, 18.0f);
+        floatingView.startupProgressTrack.frame = CGRectMake(14.0f, 88.0f, 205.0f, 7.0f);
+        floatingView.startupPercentLabel.frame = CGRectMake(224.0f, 83.0f, 28.0f, 18.0f);
+    }
+
     CGFloat rotationAngle = 0.0;
     switch (orientation) {
         case UIInterfaceOrientationLandscapeLeft: rotationAngle = -M_PI_2; break;
@@ -973,171 +983,6 @@ static void checkHighCPU(double cpu) {
     }
 }
 
-
-#pragma mark - 满血充电独立全屏启动动画
-
-@implementation SBCPUChargeStartupWindow
-- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
-    // 启动动画期间不拦截用户触摸，避免影响系统界面。
-    return NO;
-}
-@end
-
-@implementation SBCPUChargeStartupViewController
-
-- (UIStatusBarStyle)preferredStatusBarStyle { return UIStatusBarStyleLightContent; }
-- (BOOL)prefersStatusBarHidden { return YES; }
-
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.view.backgroundColor = [UIColor clearColor];
-
-    UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
-    self.backgroundBlur = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
-    self.backgroundBlur.frame = self.view.bounds;
-    self.backgroundBlur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.backgroundBlur.alpha = 0.0;
-    [self.view addSubview:self.backgroundBlur];
-
-    UIView *dim = [[UIView alloc] initWithFrame:self.view.bounds];
-    dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    dim.backgroundColor = [UIColor colorWithWhite:0.02 alpha:0.42];
-    dim.tag = 9001;
-    [self.view addSubview:dim];
-
-    CGFloat maxWidth = 430.0;
-    CGFloat cardW = MIN(maxWidth, MAX(300.0, self.view.bounds.size.width - 30.0));
-    CGFloat cardH = 315.0;
-    CGFloat cardY = MAX(18.0, (self.view.bounds.size.height - cardH) * 0.50);
-    self.cardView = [[UIView alloc] initWithFrame:CGRectMake((self.view.bounds.size.width-cardW)/2.0, cardY, cardW, cardH)];
-    self.cardView.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
-    self.cardView.backgroundColor = [UIColor colorWithWhite:0.93 alpha:0.94];
-    self.cardView.layer.cornerRadius = 28.0;
-    self.cardView.layer.masksToBounds = NO;
-    self.cardView.layer.shadowColor = [UIColor blackColor].CGColor;
-    self.cardView.layer.shadowOpacity = 0.28;
-    self.cardView.layer.shadowRadius = 24.0;
-    self.cardView.layer.shadowOffset = CGSizeMake(0, 12);
-    self.cardView.transform = CGAffineTransformMakeScale(0.88, 0.88);
-    self.cardView.alpha = 0.0;
-    [self.view addSubview:self.cardView];
-
-    self.stepBadge = [[UILabel alloc] initWithFrame:CGRectMake(22, 20, 32, 32)];
-    self.stepBadge.textAlignment = NSTextAlignmentCenter;
-    self.stepBadge.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
-    self.stepBadge.textColor = [UIColor whiteColor];
-    self.stepBadge.backgroundColor = [UIColor systemGreenColor];
-    self.stepBadge.layer.cornerRadius = 16;
-    self.stepBadge.layer.masksToBounds = YES;
-    [self.cardView addSubview:self.stepBadge];
-
-    self.iconLabel = [[UILabel alloc] initWithFrame:CGRectMake((cardW-96)/2.0, 25, 96, 96)];
-    self.iconLabel.textAlignment = NSTextAlignmentCenter;
-    self.iconLabel.font = [UIFont systemFontOfSize:68];
-    self.iconLabel.layer.cornerRadius = 48;
-    self.iconLabel.layer.masksToBounds = YES;
-    self.iconLabel.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.96];
-    self.iconLabel.layer.borderWidth = 2.0;
-    [self.cardView addSubview:self.iconLabel];
-
-    self.titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(24, 132, cardW-48, 31)];
-    self.titleLabel.textAlignment = NSTextAlignmentCenter;
-    self.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
-    self.titleLabel.textColor = [UIColor colorWithWhite:0.08 alpha:1.0];
-    self.titleLabel.adjustsFontSizeToFitWidth = YES;
-    self.titleLabel.minimumScaleFactor = 0.72;
-    [self.cardView addSubview:self.titleLabel];
-
-    self.detailLabel = [[UILabel alloc] initWithFrame:CGRectMake(24, 166, cardW-48, 23)];
-    self.detailLabel.textAlignment = NSTextAlignmentCenter;
-    self.detailLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-    self.detailLabel.textColor = [UIColor colorWithWhite:0.34 alpha:1.0];
-    self.detailLabel.adjustsFontSizeToFitWidth = YES;
-    self.detailLabel.minimumScaleFactor = 0.65;
-    [self.cardView addSubview:self.detailLabel];
-
-    self.progressTrack = [[UIView alloc] initWithFrame:CGRectMake(24, 210, cardW-48, 12)];
-    self.progressTrack.backgroundColor = [UIColor colorWithWhite:0.55 alpha:0.25];
-    self.progressTrack.layer.cornerRadius = 6;
-    self.progressTrack.layer.masksToBounds = YES;
-    [self.cardView addSubview:self.progressTrack];
-
-    self.progressFill = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 0, 12)];
-    self.progressFill.backgroundColor = [UIColor systemGreenColor];
-    self.progressFill.layer.cornerRadius = 6;
-    [self.progressTrack addSubview:self.progressFill];
-
-    self.progressLabel = [[UILabel alloc] initWithFrame:CGRectMake(24, 228, cardW-48, 22)];
-    self.progressLabel.textAlignment = NSTextAlignmentRight;
-    self.progressLabel.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightSemibold];
-    self.progressLabel.textColor = [UIColor colorWithWhite:0.24 alpha:1.0];
-    [self.cardView addSubview:self.progressLabel];
-
-    self.hintLabel = [[UILabel alloc] initWithFrame:CGRectMake(24, 260, cardW-48, 32)];
-    self.hintLabel.textAlignment = NSTextAlignmentCenter;
-    self.hintLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
-    self.hintLabel.textColor = [UIColor systemGreenColor];
-    self.hintLabel.text = @"请稍候…";
-    [self.cardView addSubview:self.hintLabel];
-}
-
-- (void)viewDidAppear:(BOOL)animated {
-    [super viewDidAppear:animated];
-    [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.82 initialSpringVelocity:0.4 options:UIViewAnimationOptionCurveEaseOut animations:^{
-        self.backgroundBlur.alpha = 1.0;
-        self.cardView.alpha = 1.0;
-        self.cardView.transform = CGAffineTransformIdentity;
-    } completion:nil];
-}
-
-- (void)showStage:(NSUInteger)stage title:(NSString *)title detail:(NSString *)detail progress:(CGFloat)progress icon:(NSString *)icon iconColor:(UIColor *)iconColor {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        self.stepBadge.text = [NSString stringWithFormat:@"%lu", (unsigned long)(stage + 1)];
-        self.titleLabel.text = title;
-        self.detailLabel.text = detail;
-        self.iconLabel.text = icon;
-        self.iconLabel.layer.borderColor = iconColor.CGColor;
-        self.progressLabel.text = [NSString stringWithFormat:@"%d%%", (int)round(progress * 100.0)];
-        CGFloat targetW = self.progressTrack.bounds.size.width * MAX(0.0, MIN(1.0, progress));
-        [UIView animateWithDuration:0.62 delay:0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
-            self.progressFill.frame = CGRectMake(0, 0, targetW, self.progressTrack.bounds.size.height);
-        } completion:nil];
-        [self.iconLabel.layer removeAnimationForKey:@"chargeIconPulse"];
-        CABasicAnimation *pulse = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
-        pulse.fromValue = @0.92;
-        pulse.toValue = @1.06;
-        pulse.duration = 0.62;
-        pulse.autoreverses = YES;
-        pulse.repeatCount = 1;
-        [self.iconLabel.layer addAnimation:pulse forKey:@"chargeIconPulse"];
-        self.hintLabel.text = (stage >= 6) ? @"即将完成…" : @"请稍候…";
-    });
-}
-
-- (void)finishWithCompletion:(void (^)(void))completion {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        self.stepBadge.text = @"✓";
-        self.titleLabel.text = @"启动完成";
-        self.detailLabel.text = @"满血充电核心已就绪！";
-        self.hintLabel.text = @"正在恢复原浮窗界面…";
-        self.progressLabel.text = @"100%";
-        [UIView animateWithDuration:0.55 animations:^{
-            self.progressFill.frame = CGRectMake(0, 0, self.progressTrack.bounds.size.width, self.progressTrack.bounds.size.height);
-        } completion:^(BOOL finished) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.85 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                [UIView animateWithDuration:0.42 animations:^{
-                    self.cardView.alpha = 0.0;
-                    self.cardView.transform = CGAffineTransformMakeScale(0.94, 0.94);
-                    self.backgroundBlur.alpha = 0.0;
-                } completion:^(BOOL done) {
-                    if (completion) completion();
-                }];
-            });
-        }];
-    });
-}
-@end
-
 static BOOL isPowerdHookReady(void) {
     CFPreferencesAppSynchronize(CFSTR("com.yourname.sbcpufloating"));
     CFPropertyListRef value = CFPreferencesCopyValue(CFSTR("powerdHookReady"),
@@ -1149,26 +994,6 @@ static BOOL isPowerdHookReady(void) {
     return ready;
 }
 
-static void stopFastChargeStartupAnimation(BOOL immediate) {
-    fastChargeStartupGeneration++;
-    fastChargeStartupAnimating = NO;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        SBCPUChargeStartupWindow *window = fastChargeStartupWindow;
-        fastChargeStartupWindow = nil;
-        fastChargeStartupVC = nil;
-        if (!window) return;
-        if (immediate) {
-            window.hidden = YES;
-            window.rootViewController = nil;
-        } else {
-            [UIView animateWithDuration:0.25 animations:^{ window.alpha = 0.0; } completion:^(BOOL finished) {
-                window.hidden = YES;
-                window.rootViewController = nil;
-            }];
-        }
-    });
-}
-
 static void startFastChargeStartupAnimation(void) {
     if (!floatingView || !forceFastChargeEnable || !isChargingInternal()) return;
     if (fastChargeStartupAnimating) return;
@@ -1176,55 +1001,58 @@ static void startFastChargeStartupAnimation(void) {
     fastChargeStartupAnimating = YES;
     NSInteger generation = ++fastChargeStartupGeneration;
 
-    NSArray<NSString *> *titles = @[
-        @"满血充电核心启动",
-        @"检测充电环境中…",
-        @"检测 powerd 进程…",
-        @"确认 powerd 注入状态…",
-        @"Hook 核心功能加载中…",
-        @"充电限制处理完成",
-        @"满血充电已激活",
-        @"启动完成"
-    ];
-    NSArray<NSString *> *details = @[
-        @"正在初始化核心组件…",
-        @"正在检测充电器 / 电池 / 系统环境…",
-        @"正在查找 powerd 进程…",
-        @"正在确认插件注入状态…",
-        @"正在加载核心功能模块…",
-        @"正在解除充电限制策略…",
-        @"满血充电核心已成功激活！",
-        @"满血充电核心已就绪！"
-    ];
-    NSArray<NSString *> *icons = @[@"⚡", @"⌕", @"P", @"◉", @"🧩", @"✓", @"🔥", @"✓"];
-    NSArray<UIColor *> *iconColors = @[[UIColor systemGreenColor], [UIColor systemGreenColor], [UIColor systemBlueColor], [UIColor systemPurpleColor], [UIColor systemYellowColor], [UIColor systemGreenColor], [UIColor systemRedColor], [UIColor systemGreenColor]];
-    NSArray<NSNumber *> *progresses = @[@0.20, @0.40, @0.60, @0.70, @0.80, @0.90, @1.00, @1.00];
-    NSArray<NSNumber *> *delays = @[@0.00, @1.05, @2.10, @3.15, @4.20, @5.35, @6.50, @7.75];
-
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (!isChargingInternal() || !forceFastChargeEnable) {
+        if (!floatingView || generation != fastChargeStartupGeneration || !isChargingInternal()) {
             fastChargeStartupAnimating = NO;
             return;
         }
 
-        SBCPUChargeStartupWindow *window = [[SBCPUChargeStartupWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-        window.windowLevel = MAX(UIWindowLevelAlert + 1.0, cpuWindow.windowLevel + 1.0);
-        if (cpuWindow.windowScene) window.windowScene = cpuWindow.windowScene;
-        window.backgroundColor = [UIColor clearColor];
-        window.opaque = NO;
-        window.userInteractionEnabled = NO;
-        window.alpha = 1.0;
-        window.rootViewController = [[SBCPUChargeStartupViewController alloc] init];
-        fastChargeStartupWindow = window;
-        fastChargeStartupVC = (SBCPUChargeStartupViewController *)window.rootViewController;
-        window.hidden = NO;
-        [window.rootViewController.view setNeedsLayout];
+        [floatingView resetInactivityTimer];
+        [floatingView prepareStartupAnimationView];
+        floatingView.performanceContainer.hidden = YES;
+        floatingView.notificationContainer.hidden = YES;
 
+        [UIView animateWithDuration:0.32
+                              delay:0
+                            options:UIViewAnimationOptionCurveEaseOut
+                         animations:^{
+            floatingView.startupContainer.alpha = 1.0;
+            floatingView.startupContainer.transform = CGAffineTransformIdentity;
+            floatingView.startupIconCircle.transform = CGAffineTransformMakeScale(1.0, 1.0);
+        } completion:nil];
+
+        NSArray<NSString *> *titles = @[
+            @"满血充电核心启动",
+            @"检测充电环境中…",
+            @"检测 powerd 进程…",
+            @"确认 powerd 注入状态…",
+            @"Hook 核心功能加载中…",
+            @"充电限制处理完成",
+            @"满血充电已激活",
+            @"启动完成"
+        ];
+        NSArray<NSString *> *details = @[
+            @"正在初始化核心组件…",
+            @"正在检测充电器 / 电池信息…",
+            @"正在查找 powerd 进程…",
+            @"正在确认插件注入状态…",
+            @"正在加载充电核心模块…",
+            @"正在解除充电限制策略…",
+            @"满血充电核心已成功激活",
+            @"正在恢复原浮窗…"
+        ];
+        NSArray<NSString *> *icons = @[@"⚡", @"⌕", @"PWRD", @"◉", @"🧩", @"✓", @"🔥", @"✓"];
+        NSArray<NSNumber *> *durations = @[@1.05, @1.10, @1.10, @1.20, @1.15, @1.10, @0.95, @1.10];
+
+        __block NSTimeInterval elapsed = 0.0;
         for (NSUInteger i = 0; i < titles.count; i++) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delays[i].doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                if (!fastChargeStartupAnimating || generation != fastChargeStartupGeneration || !fastChargeStartupVC) return;
+            NSTimeInterval delay = elapsed;
+            elapsed += durations[i].doubleValue;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                if (!floatingView || generation != fastChargeStartupGeneration || !fastChargeStartupAnimating) return;
                 if (!isChargingInternal()) {
-                    stopFastChargeStartupAnimation(YES);
+                    fastChargeStartupAnimating = NO;
+                    [floatingView finishStartupAnimation];
                     return;
                 }
 
@@ -1232,43 +1060,37 @@ static void startFastChargeStartupAnimation(void) {
                 if (i == 3) {
                     detail = isPowerdHookReady() ? @"SBCPUPowerd 已成功注入 powerd" : @"正在等待 SBCPUPowerd 注入…";
                 } else if (i == 5 && !isPowerdHookReady()) {
-                    detail = @"powerd Hook 尚未就绪，继续完成处理…";
+                    detail = @"powerd Hook 尚未就绪，继续检测…";
                 }
-                [fastChargeStartupVC showStage:i title:titles[i] detail:detail progress:progresses[i].doubleValue icon:icons[i] iconColor:iconColors[i]];
+
+                CGFloat progress = ((CGFloat)i + 1.0f) / (CGFloat)titles.count;
+                [floatingView showStartupStage:i title:titles[i] detail:detail icon:icons[i] progress:progress];
             });
         }
 
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.70 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (!fastChargeStartupAnimating || generation != fastChargeStartupGeneration || !fastChargeStartupVC) return;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(elapsed * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (!floatingView || generation != fastChargeStartupGeneration || !fastChargeStartupAnimating) return;
             if (!isChargingInternal()) {
-                stopFastChargeStartupAnimation(YES);
+                fastChargeStartupAnimating = NO;
+                [floatingView finishStartupAnimation];
                 return;
             }
-            [fastChargeStartupVC finishWithCompletion:^{
-                if (generation != fastChargeStartupGeneration) return;
-                fastChargeStartupAnimating = NO;
-                SBCPUChargeStartupWindow *oldWindow = fastChargeStartupWindow;
-                fastChargeStartupWindow = nil;
-                fastChargeStartupVC = nil;
-                if (oldWindow) {
-                    oldWindow.hidden = YES;
-                    oldWindow.rootViewController = nil;
-                }
-                if (floatingView) {
-                    NSDictionary *chargeInfo = getRealBatteryDetails();
-                    double watts = MAX(0.0, [chargeInfo[@"CalculatedWatts"] doubleValue]);
-                    floatingView.statusLabel.text = [NSString stringWithFormat:@"🔥 强制满血快充 · %.1fW", watts];
-                    floatingView.statusLabel.textColor = [UIColor systemRedColor];
-                    floatingView.statusDot.backgroundColor = [UIColor systemRedColor];
-                    NSString *thermalText = nil;
-                    UIColor *thermalColor = nil;
-                    sbcputhermalFloatingStatus(&thermalText, &thermalColor);
-                    floatingView.thermalStatusLabel.text = thermalText ?: @"温控：核心已运行";
-                    floatingView.thermalStatusLabel.textColor = thermalColor ?: [UIColor systemGreenColor];
-                    updateFloatingSize();
-                    [floatingView resetInactivityTimer];
-                }
-            }];
+
+            fastChargeStartupAnimating = NO;
+            [floatingView finishStartupAnimation];
+
+            NSDictionary *chargeInfo = getRealBatteryDetails();
+            double watts = MAX(0.0, [chargeInfo[@"CalculatedWatts"] doubleValue]);
+            floatingView.statusLabel.text = [NSString stringWithFormat:@"🔥 强制满血快充 · %.1fW", watts];
+            floatingView.statusLabel.textColor = [UIColor systemRedColor];
+            floatingView.statusDot.backgroundColor = floatingView.statusLabel.textColor;
+
+            NSString *thermalText = nil;
+            UIColor *thermalColor = nil;
+            sbcputhermalFloatingStatus(&thermalText, &thermalColor);
+            floatingView.thermalStatusLabel.text = thermalText ?: @"温控：核心已运行";
+            floatingView.thermalStatusLabel.textColor = thermalColor ?: [UIColor systemGreenColor];
+            [floatingView resetInactivityTimer];
         });
     });
 }
@@ -1313,9 +1135,6 @@ if (charging && !previousChargingState) {
             if (forceFastChargeEnable) {
                 startFastChargeStartupAnimation();
             }
-        }
-        if (!charging && previousChargingState && fastChargeStartupAnimating) {
-            stopFastChargeStartupAnimation(YES);
         }
         previousChargingState = charging;
 
@@ -1801,6 +1620,60 @@ static void applySystemRefreshRate(void) {
         _thermalStatusLabel.minimumScaleFactor = 0.75f;
         [_performanceContainer addSubview:_thermalStatusLabel];
 
+        // 超级快充启动动画：直接使用现有浮窗本体，不创建独立 UIWindow。
+        // 这样插入充电器时只是把原浮窗临时变成一个紧凑的启动卡片，完成后恢复原样。
+        _startupContainer = [[UIView alloc] init];
+        _startupContainer.hidden = YES;
+        _startupContainer.alpha = 0.0;
+        _startupContainer.userInteractionEnabled = NO;
+        [_blurView.contentView addSubview:_startupContainer];
+
+        _startupIconCircle = [[UIView alloc] init];
+        _startupIconCircle.backgroundColor = [UIColor colorWithRed:0.08f green:0.18f blue:0.10f alpha:0.92f];
+        _startupIconCircle.layer.borderWidth = 1.5f;
+        _startupIconCircle.layer.borderColor = [UIColor systemGreenColor].CGColor;
+        _startupIconCircle.layer.shadowColor = [UIColor systemGreenColor].CGColor;
+        _startupIconCircle.layer.shadowOpacity = 0.55f;
+        _startupIconCircle.layer.shadowRadius = 8.0f;
+        _startupIconCircle.layer.shadowOffset = CGSizeZero;
+        [_startupContainer addSubview:_startupIconCircle];
+
+        _startupIconLabel = [[UILabel alloc] init];
+        _startupIconLabel.textAlignment = NSTextAlignmentCenter;
+        _startupIconLabel.font = [UIFont systemFontOfSize:25.0f weight:UIFontWeightSemibold];
+        [_startupIconCircle addSubview:_startupIconLabel];
+
+        _startupTitleLabel = [[UILabel alloc] init];
+        _startupTitleLabel.textColor = [UIColor labelColor];
+        _startupTitleLabel.font = [UIFont systemFontOfSize:15.0f weight:UIFontWeightSemibold];
+        _startupTitleLabel.adjustsFontSizeToFitWidth = YES;
+        _startupTitleLabel.minimumScaleFactor = 0.72f;
+        [_startupContainer addSubview:_startupTitleLabel];
+
+        _startupDetailLabel = [[UILabel alloc] init];
+        _startupDetailLabel.textColor = [UIColor secondaryLabelColor];
+        _startupDetailLabel.font = [UIFont systemFontOfSize:10.5f weight:UIFontWeightRegular];
+        _startupDetailLabel.adjustsFontSizeToFitWidth = YES;
+        _startupDetailLabel.minimumScaleFactor = 0.68f;
+        [_startupContainer addSubview:_startupDetailLabel];
+
+        _startupProgressTrack = [[UIView alloc] init];
+        _startupProgressTrack.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.10f];
+        _startupProgressTrack.layer.cornerRadius = 3.5f;
+        _startupProgressTrack.layer.masksToBounds = YES;
+        [_startupContainer addSubview:_startupProgressTrack];
+
+        _startupProgressFill = [[UIView alloc] init];
+        _startupProgressFill.backgroundColor = [UIColor systemGreenColor];
+        _startupProgressFill.layer.cornerRadius = 3.5f;
+        [_startupProgressTrack addSubview:_startupProgressFill];
+
+        _startupPercentLabel = [[UILabel alloc] init];
+        _startupPercentLabel.textColor = [UIColor secondaryLabelColor];
+        _startupPercentLabel.font = [UIFont monospacedDigitSystemFontOfSize:10.0f weight:UIFontWeightMedium];
+        _startupPercentLabel.textAlignment = NSTextAlignmentRight;
+        [_startupContainer addSubview:_startupPercentLabel];
+
         _collapsedContainerView = [[UIView alloc] init];
         _collapsedContainerView.hidden = YES;
         _collapsedContainerView.alpha = 0.0;
@@ -2015,6 +1888,86 @@ static void applySystemRefreshRate(void) {
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
     return YES;
+}
+
+- (void)prepareStartupAnimationView {
+    if (!_startupContainer) return;
+
+    // 只比原浮窗稍大一点：约 260×116，避免出现独立全屏大窗口的压迫感。
+    CGFloat targetW = 260.0f;
+    CGFloat targetH = 116.0f;
+    self.startupRestoreBounds = self.bounds;
+    self.startupRestoreCenter = self.center;
+
+    self.bounds = CGRectMake(0, 0, targetW, targetH);
+    _startupContainer.frame = self.bounds;
+    _startupIconCircle.frame = CGRectMake(14.0f, 18.0f, 58.0f, 58.0f);
+    _startupIconCircle.layer.cornerRadius = 29.0f;
+    _startupIconLabel.frame = _startupIconCircle.bounds;
+
+    _startupTitleLabel.frame = CGRectMake(84.0f, 18.0f, 160.0f, 22.0f);
+    _startupDetailLabel.frame = CGRectMake(84.0f, 42.0f, 160.0f, 18.0f);
+    _startupProgressTrack.frame = CGRectMake(14.0f, 88.0f, 205.0f, 7.0f);
+    _startupProgressFill.frame = CGRectMake(0, 0, 0, 7.0f);
+    _startupPercentLabel.frame = CGRectMake(224.0f, 83.0f, 28.0f, 18.0f);
+
+    _startupContainer.hidden = NO;
+    _startupContainer.alpha = 0.0f;
+    _startupIconCircle.transform = CGAffineTransformMakeScale(0.72f, 0.72f);
+}
+
+- (void)showStartupStage:(NSUInteger)index title:(NSString *)title detail:(NSString *)detail icon:(NSString *)icon progress:(CGFloat)progress {
+    if (!_startupContainer) return;
+
+    _startupTitleLabel.text = title;
+    _startupDetailLabel.text = detail;
+    _startupIconLabel.text = icon;
+    _startupPercentLabel.text = [NSString stringWithFormat:@"%ld%%", (long)round(progress * 100.0f)];
+
+    CGFloat trackW = _startupProgressTrack.bounds.size.width;
+    CGFloat targetW = MAX(0.0f, MIN(trackW, trackW * progress));
+
+    [UIView animateWithDuration:0.45
+                          delay:0
+                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut
+                     animations:^{
+        self.startupProgressFill.frame = CGRectMake(0, 0, targetW, self.startupProgressTrack.bounds.size.height);
+        self.startupIconCircle.transform = CGAffineTransformMakeScale(1.0f, 1.0f);
+    } completion:nil];
+
+    [_startupIconCircle.layer removeAnimationForKey:@"startupGlow"];
+    CABasicAnimation *glow = [CABasicAnimation animationWithKeyPath:@"shadowOpacity"];
+    glow.fromValue = @0.25;
+    glow.toValue = @0.85;
+    glow.duration = 0.65;
+    glow.autoreverses = YES;
+    glow.repeatCount = 1.5f;
+    [_startupIconCircle.layer addAnimation:glow forKey:@"startupGlow"];
+
+    if (index == 6) {
+        _startupIconCircle.layer.borderColor = [UIColor systemOrangeColor].CGColor;
+        _startupIconCircle.layer.shadowColor = [UIColor systemOrangeColor].CGColor;
+    } else if (index == 7) {
+        _startupIconCircle.layer.borderColor = [UIColor systemGreenColor].CGColor;
+        _startupIconCircle.layer.shadowColor = [UIColor systemGreenColor].CGColor;
+    } else {
+        _startupIconCircle.layer.borderColor = [UIColor systemGreenColor].CGColor;
+        _startupIconCircle.layer.shadowColor = [UIColor systemGreenColor].CGColor;
+    }
+}
+
+- (void)finishStartupAnimation {
+    if (!_startupContainer) return;
+
+    [_startupIconCircle.layer removeAnimationForKey:@"startupGlow"];
+    self.bounds = self.startupRestoreBounds;
+    self.center = self.startupRestoreCenter;
+    _startupContainer.hidden = YES;
+    _startupContainer.alpha = 0.0f;
+    _startupContainer.transform = CGAffineTransformIdentity;
+    _startupProgressFill.frame = CGRectMake(0, 0, 0, _startupProgressTrack.bounds.size.height);
+
+    updateFloatingSize();
 }
 
 - (void)triggerPlugAnimation {
