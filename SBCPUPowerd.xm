@@ -12,8 +12,6 @@ static CFStringRef const kSBCPUSettingsChanged = CFSTR("com.yourname.sbcpufloati
 static BOOL gForceFastCharge = NO;
 static BOOL gOriginalChargeLimitSaved = NO;
 static int gOriginalChargeLimit = 100;
-static int gLastAppliedChargeLimit = -1;
-static int gNotifyToken = -1;
 static BOOL gHookInstalled = NO;
 
 static BOOL readBoolPref(CFStringRef key, BOOL fallback) {
@@ -77,7 +75,6 @@ static void setChargeLimitUsingOriginal(int value) {
     CFNumberRef number = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &value);
     if (number) {
         kern_return_t kr = orig_IORegistryEntrySetCFProperty(service, CFSTR("ChargeLimit"), number);
-        if (kr == KERN_SUCCESS) gLastAppliedChargeLimit = value;
         CFRelease(number);
     }
     IOObjectRelease(service);
@@ -115,7 +112,6 @@ static void updateChargeState(void) {
             setChargeLimitUsingOriginal(gOriginalChargeLimit);
         }
         gOriginalChargeLimitSaved = NO;
-        gLastAppliedChargeLimit = -1;
     }
 }
 
@@ -176,6 +172,12 @@ static void settingsChanged(CFNotificationCenterRef center,
                              CFNotificationName name,
                              const void *object,
                              CFDictionaryRef userInfo) {
+    // Darwin notification 回调签名由系统固定；显式消费未使用参数，避免 -Wunused-parameter 在 -Werror 下中断。
+    (void)center;
+    (void)observer;
+    (void)name;
+    (void)object;
+    (void)userInfo;
     dispatch_async(dispatch_get_main_queue(), ^{
         if (gHookInstalled) updateChargeState();
     });
