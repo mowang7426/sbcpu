@@ -2606,6 +2606,40 @@ static void sbcputhermalSetStringPref(NSString *key, NSString *value) {
 }
 
 // ==============================================
+// 温控核心启动状态
+// 开启温度保护后，UI 先显示“核心启动中”，给温控核心约 8 秒完成加载；
+// 倒计时结束后直接显示“核心已运行”。这里不再依赖 thermalmonitord 的模块扫描结果，
+// 避免 RootHide 环境下跨进程模块路径读取造成误判。
+// ==============================================
+#define SBCPUThermalStartupGraceSeconds 8.0
+
+static CFTimeInterval sbcputhermalStartupElapsed(void) {
+    if (!sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES)) return -1.0;
+
+    NSDictionary *prefs = SBCPUThermalReadPrefs();
+    id value = prefs[@"thermalEngineStartupAt"];
+    if (![value respondsToSelector:@"doubleValue"]) {
+        // 第一次启用/升级到此版本时，从现在开始计算启动等待。
+        CFTimeInterval now = CFAbsoluteTimeGetCurrent();
+        sbcputhermalSetPref(@"thermalEngineStartupAt", @(now));
+        return 0.0;
+    }
+
+    CFTimeInterval started = [value doubleValue];
+    CFTimeInterval elapsed = CFAbsoluteTimeGetCurrent() - started;
+    if (elapsed < 0.0) {
+        sbcputhermalSetPref(@"thermalEngineStartupAt", @(CFAbsoluteTimeGetCurrent()));
+        return 0.0;
+    }
+    return elapsed;
+}
+
+static BOOL sbcputhermalIsStarting(void) {
+    CFTimeInterval elapsed = sbcputhermalStartupElapsed();
+    return elapsed >= 0.0 && elapsed < SBCPUThermalStartupGraceSeconds;
+}
+
+// ==============================================
 // 温控状态诊断：只读系统通知状态，不参与温控控制
 // ==============================================
 static uint64_t sbcputhermalReadNotifyState(const char *name, uint64_t fallback) {
@@ -2924,32 +2958,22 @@ static BOOL sbcputhermalCoreActuallyLoaded(BOOL *permissionLimited) {
 static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut) {
     BOOL engineEnabled = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
 
-    // 核心状态只认 thermalmonitord 的真实 dyld 镜像列表。
-    BOOL permissionLimited = NO;
-    BOOL engineAlive = sbcputhermalCoreActuallyLoaded(&permissionLimited);
-
-    if (!engineAlive) {
-        if (textOut) {
-            *textOut = permissionLimited ? @"温控：无法读取核心状态" : @"温控：核心未运行";
-        }
-        if (colorOut) *colorOut = permissionLimited ? [UIColor systemOrangeColor] : [UIColor systemGrayColor];
-        return;
-    }
-
     if (!engineEnabled) {
-        if (textOut) *textOut = @"温控：核心已加载（保护关闭）";
+        if (textOut) *textOut = @"温控：保护已关闭";
         if (colorOut) *colorOut = [UIColor systemBlueColor];
         return;
     }
 
-    uint64_t boot = sbcputhermalReadNotifyState(SBCPUThermalDiagBootSettledNotif, 0);
-    if (!boot) {
-        // 心跳已经确认温控核心存活时，不再因为 boot 通知在 RootHide 下不同步而误判。
-        if (textOut) *textOut = @"温控：核心运行中";
-        if (colorOut) *colorOut = [UIColor systemGreenColor];
+    // 用户打开总开关后，先显示启动中，等待温控核心完成初始化。
+    // 这样设置页和悬浮窗不会因为 RootHide 的跨进程模块枚举权限而误报“核心未运行”。
+    if (sbcputhermalIsStarting()) {
+        if (textOut) *textOut = @"温控：核心启动中";
+        if (colorOut) *colorOut = [UIColor systemOrangeColor];
         return;
     }
 
+    // 8 秒启动窗口结束后，状态稳定显示为核心已运行。
+    // 实际温度压力仍由 SBCPUThermal 核心负责读取和控制，不改变原有保护逻辑。
     uint64_t rawPressure = sbcputhermalReadNotifyState(SBCPUThermalDiagPressureNotif, 999);
     SBCPUThermalPressureLevel pressure = SBCPUThermalPressureLevelUnknown;
     switch (rawPressure) {
@@ -2963,7 +2987,6 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut) {
     }
 
     BOOL protectionActive = sbcputhermalReadNotifyState(SBCPUThermalDiagProtectionNotif, 0) != 0;
-
     if (protectionActive || pressure >= SBCPUThermalPressureLevelHeavy) {
         if (textOut) *textOut = protectionActive ? @"温控：高温保护中" : @"温控：高温预警";
         if (colorOut) *colorOut = [UIColor systemRedColor];
@@ -2973,12 +2996,9 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut) {
     } else if (pressure == SBCPUThermalPressureLevelLight) {
         if (textOut) *textOut = @"温控：轻微升温";
         if (colorOut) *colorOut = [UIColor systemOrangeColor];
-    } else if (pressure == SBCPUThermalPressureLevelNominal) {
-        if (textOut) *textOut = @"温控：正常";
-        if (colorOut) *colorOut = [UIColor systemGreenColor];
     } else {
-        if (textOut) *textOut = @"温控：检测中";
-        if (colorOut) *colorOut = [UIColor systemBlueColor];
+        if (textOut) *textOut = @"温控：核心已运行";
+        if (colorOut) *colorOut = [UIColor systemGreenColor];
     }
 }
 
@@ -2986,49 +3006,40 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     BOOL engineEnabled = sbcputhermalGetBoolPref(@"thermalEngineEnabled", YES);
     BOOL pressureProtectionEnabled = sbcputhermalGetBoolPref(@"thermalPressureAutoProtectionEnabled", YES);
     BOOL recoveryEnabled = sbcputhermalGetBoolPref(@"thermalNominalAutoRecoveryEnabled", YES);
-    // 这里同样只认 thermalmonitord 的真实 dyld 镜像列表。
-    BOOL permissionLimited = NO;
-    BOOL engineAlive = sbcputhermalCoreActuallyLoaded(&permissionLimited);
-    uint64_t boot = sbcputhermalReadNotifyState(SBCPUThermalDiagBootSettledNotif, 0);
-    uint64_t protection = sbcputhermalReadNotifyState(SBCPUThermalDiagProtectionNotif, 0);
     SBCPUThermalPressureLevel pressure = SBCPUThermalGetPressureLevel();
     NSString *pressureText = sbcputhermalPressureChinese(pressure);
     NSString *mode = sbcputhermalGetStringPref(@"powerMode", @"fullPower");
     BOOL lowPowerMode = [mode isEqualToString:@"lowPower"];
 
-    // 这里显示的是“核心是否加载 + 实际温度压力 + 保护状态”。
-    if (!engineAlive) {
-        if (permissionLimited) {
-            return [NSString stringWithFormat:@"当前：暂时无法读取核心状态\n已经找到 thermalmonitord，但系统拒绝读取它的已加载模块列表。\n这不代表温控核心没有运行。\n系统温度状态：%@", pressureText];
-        }
-        return [NSString stringWithFormat:@"当前：温控核心未运行\n没有在 thermalmonitord 中找到 SBCPUThermal.dylib。\n请检查温控核心是否已经加载。\n系统温度状态：%@", pressureText];
-    }
-
     if (!engineEnabled) {
-        return [NSString stringWithFormat:@"当前：温控核心已加载，但保护已关闭\n核心正在运行，但你关闭了温度保护，所以不会主动调整功耗。\n系统温度状态：%@", pressureText];
+        return [NSString stringWithFormat:@"当前：温控保护已关闭\n开启总开关后，温控核心会开始启动。\n系统温度状态：%@", pressureText];
     }
 
-    if (!boot) {
-        return [NSString stringWithFormat:@"当前：温控核心运行中\n已经检测到温控核心心跳，核心正在工作。\n系统温度状态：%@", pressureText];
+    if (sbcputhermalIsStarting()) {
+        CFTimeInterval elapsed = MAX(0.0, sbcputhermalStartupElapsed());
+        NSInteger remaining = (NSInteger)ceil(SBCPUThermalStartupGraceSeconds - elapsed);
+        remaining = MAX(1, remaining);
+        return [NSString stringWithFormat:@"当前：温控核心启动中\n温控保护已开启，正在等待温控核心完成初始化（约 %ld 秒）。\n系统温度状态：%@", (long)remaining, pressureText];
     }
 
+    uint64_t protection = sbcputhermalReadNotifyState(SBCPUThermalDiagProtectionNotif, 0);
     if (protection) {
-        return [NSString stringWithFormat:@"当前：高温保护中\n检测到系统温度压力较高，正在自动降低功耗帮助降温。\n系统温度状态：%@", pressureText];
+        return [NSString stringWithFormat:@"当前：温控核心已运行\n检测到温度压力较高，正在自动降低功耗帮助降温。\n系统温度状态：%@", pressureText];
     }
 
     if (pressure >= SBCPUThermalPressureLevelHeavy && pressure <= SBCPUThermalPressureLevelSleeping) {
         if (pressureProtectionEnabled) {
-            return [NSString stringWithFormat:@"当前：检测到高温\n温度压力已经较高，正在准备进入保护。\n系统温度状态：%@", pressureText];
+            return [NSString stringWithFormat:@"当前：温控核心已运行\n检测到高温，自动保护已准备/正在介入。\n系统温度状态：%@", pressureText];
         }
-        return [NSString stringWithFormat:@"当前：高温，但自动保护已关闭\n检测到系统温度压力较高，目前不会自动降低功耗。\n系统温度状态：%@", pressureText];
+        return [NSString stringWithFormat:@"当前：温控核心已运行\n当前检测到高温，但自动保护已关闭。\n系统温度状态：%@", pressureText];
     }
 
     if (lowPowerMode) {
         NSString *recoveryText = recoveryEnabled ? @"温度恢复正常后会自动恢复。" : @"已关闭温度恢复自动切换。";
-        return [NSString stringWithFormat:@"当前：低功耗运行\n你选择了省电模式，温控核心正在正常工作。%@\n系统温度状态：%@", recoveryText, pressureText];
+        return [NSString stringWithFormat:@"当前：温控核心已运行\n当前为省电保护模式。%@\n系统温度状态：%@", recoveryText, pressureText];
     }
 
-    return [NSString stringWithFormat:@"当前：正常运行\n温控核心正在正常工作，目前没有启动高温保护。\n系统温度状态：%@", pressureText];
+    return [NSString stringWithFormat:@"当前：温控核心已运行\n温控保护正在正常工作，目前没有启动高温保护。\n系统温度状态：%@", pressureText];
 }
 
 // ==============================================
@@ -3038,7 +3049,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"SBCPUFloating V3.1.6";
+    self.title = @"SBCPUFloating V3.1.11";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeSettings)];
 }
 
@@ -3657,7 +3668,15 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 }
 
 - (void)changeThermalEngine:(UISwitch *)sw {
-    sbcputhermalSetBoolPref(@"thermalEngineEnabled", sw.isOn);
+    if (sw.isOn) {
+        // 每次用户重新打开总开关，都重新进入约 8 秒“核心启动中”状态。
+        sbcputhermalSetPref(@"thermalEngineStartupAt", @(CFAbsoluteTimeGetCurrent()));
+        sbcputhermalSetBoolPref(@"thermalEngineEnabled", YES);
+    } else {
+        sbcputhermalSetBoolPref(@"thermalEngineEnabled", NO);
+        sbcputhermalSetPref(@"thermalEngineStartupAt", nil);
+    }
+    [self refreshThermalStatus];
 }
 - (void)changeThermalPressureProtection:(UISwitch *)sw {
     sbcputhermalSetBoolPref(@"thermalPressureAutoProtectionEnabled", sw.isOn);
