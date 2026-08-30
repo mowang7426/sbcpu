@@ -232,6 +232,8 @@ static BOOL autoCollapseEnable = YES;
 static NSInteger autoCollapseDelay = 4;
 static NSInteger collapsedDisplayMode = 0; 
 static BOOL autoExpandLandscape = YES;
+// 横屏模式：修正 iPad 开启横屏锁定后系统仍返回 Portrait 导致浮窗竖着的问题。
+static BOOL landscapeModeEnable = YES;
 static BOOL wasLandscape = NO; 
 
 static BOOL autoLogoutEnable = NO;
@@ -318,6 +320,7 @@ static double getTotalCPUUsage(void);
 static double getRealCPUFrequency(double currentCpuUsage);
 static UIWindowScene *getWindowScene(void);
 static UIInterfaceOrientation getActiveInterfaceOrientation(void);
+static UIInterfaceOrientation getEffectiveFloatingOrientation(void);
 static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate);
 static void updateFloatingSize(void);
 static void startFastChargeStartupAnimation(void);
@@ -432,7 +435,8 @@ static void LoadPreferences(void) {
     autoCollapseEnable = getBoolPref(CFSTR("autoCollapseEnable"), YES);
     autoCollapseDelay = getIntPref(CFSTR("autoCollapseDelay"), 4);
     collapsedDisplayMode = getIntPref(CFSTR("collapsedDisplayMode"), 0);
-    autoExpandLandscape = getBoolPref(CFSTR("autoExpandLandscape"), YES); 
+    autoExpandLandscape = getBoolPref(CFSTR("autoExpandLandscape"), YES);
+    landscapeModeEnable = getBoolPref(CFSTR("landscapeModeEnable"), YES); 
     
     autoLogoutEnable = getBoolPref(CFSTR("autoLogoutEnable"), NO);
     logoutCPUThreshold = (double)getFloatPref(CFSTR("logoutCPUThreshold"), 100.0);
@@ -484,7 +488,8 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("autoCollapseEnable"), autoCollapseEnable);
     setIntPref(CFSTR("autoCollapseDelay"), autoCollapseDelay);
     setIntPref(CFSTR("collapsedDisplayMode"), collapsedDisplayMode);
-    setBoolPref(CFSTR("autoExpandLandscape"), autoExpandLandscape); 
+    setBoolPref(CFSTR("autoExpandLandscape"), autoExpandLandscape);
+    setBoolPref(CFSTR("landscapeModeEnable"), landscapeModeEnable); 
     setBoolPref(CFSTR("autoLogoutEnable"), autoLogoutEnable);
     setFloatPref(CFSTR("logoutCPUThreshold"), (float)logoutCPUThreshold);
     setIntPref(CFSTR("logoutDuration"), logoutDuration);
@@ -764,6 +769,36 @@ static UIInterfaceOrientation getActiveInterfaceOrientation(void) {
     return scene ? scene.interfaceOrientation : UIInterfaceOrientationPortrait;
 }
 
+// 获取“实际用于浮窗绘制”的方向。
+// iPad 开启横屏锁定时，SpringBoard activeInterfaceOrientation 可能仍返回 Portrait，
+// 但浮窗所在 UIWindow / RootView 已经是横向尺寸。此时以实际宽高为准。
+static UIInterfaceOrientation getEffectiveFloatingOrientation(void) {
+    UIInterfaceOrientation reported = getActiveInterfaceOrientation();
+    if (!landscapeModeEnable) return reported;
+
+    CGSize size = CGSizeZero;
+    if (cpuWindow && !CGRectIsEmpty(cpuWindow.bounds)) {
+        size = cpuWindow.bounds.size;
+    } else if (floatingView && floatingView.superview && !CGRectIsEmpty(floatingView.superview.bounds)) {
+        size = floatingView.superview.bounds.size;
+    } else if (getWindowScene()) {
+        size = getWindowScene().coordinateSpace.bounds.size;
+    } else {
+        size = UIScreen.mainScreen.bounds.size;
+    }
+
+    BOOL actualLandscape = size.width > size.height + 20.0;
+    BOOL reportedLandscape = (reported == UIInterfaceOrientationLandscapeLeft || reported == UIInterfaceOrientationLandscapeRight);
+    if (!actualLandscape) return reported;
+    if (reportedLandscape) return reported;
+
+    // 横屏锁定下方向值可能不可用；此时选择一个稳定的 90° 方向，避免浮窗保持竖直。
+    UIDeviceOrientation deviceOrientation = UIDevice.currentDevice.orientation;
+    if (deviceOrientation == UIDeviceOrientationLandscapeLeft) return UIInterfaceOrientationLandscapeRight;
+    if (deviceOrientation == UIDeviceOrientationLandscapeRight) return UIInterfaceOrientationLandscapeLeft;
+    return UIInterfaceOrientationLandscapeRight;
+}
+
 static CGFloat floatingTopSafeMargin(UIView *container) {
     CGFloat safeTop = 0.0f;
     if (@available(iOS 11.0, *)) safeTop = container.safeAreaInsets.top;
@@ -841,7 +876,7 @@ static void updateFloatingSize(void) {
     if (!floatingView) return;
 
     BOOL charging = isChargingInternal();
-    UIInterfaceOrientation orientation = getActiveInterfaceOrientation();
+    UIInterfaceOrientation orientation = getEffectiveFloatingOrientation();
 
     floatingView.transform = CGAffineTransformIdentity;
 
@@ -1139,7 +1174,7 @@ if (charging && !previousChargingState) {
         previousChargingState = charging;
 
         if (autoExpandLandscape) {
-            UIInterfaceOrientation orientation = getActiveInterfaceOrientation();
+            UIInterfaceOrientation orientation = getEffectiveFloatingOrientation();
             BOOL isLandscape = (orientation == UIInterfaceOrientationLandscapeLeft || orientation == UIInterfaceOrientationLandscapeRight);
             
             if (isLandscape && !wasLandscape && floatingView.isCollapsed && !floatingView.isShowingNotification) {
@@ -2226,7 +2261,7 @@ static void applySystemRefreshRate(void) {
 
     if (autoCollapseEnable && !_isCollapsed && !settingsShowing && !detailShowing && !self.isShowingNotification) {
         if (autoExpandLandscape) {
-            UIInterfaceOrientation orientation = getActiveInterfaceOrientation();
+            UIInterfaceOrientation orientation = getEffectiveFloatingOrientation();
             BOOL isLandscape = (orientation == UIInterfaceOrientationLandscapeLeft || orientation == UIInterfaceOrientationLandscapeRight);
             if (isLandscape) return; 
         }
@@ -2248,7 +2283,7 @@ static void applySystemRefreshRate(void) {
     if (fastChargeStartupAnimating) return;
 
     if (!settingsShowing && !detailShowing && !_isCollapsed && !self.isShowingNotification) {
-        UIInterfaceOrientation orientation = getActiveInterfaceOrientation();
+        UIInterfaceOrientation orientation = getEffectiveFloatingOrientation();
         BOOL isLandscape = (orientation == UIInterfaceOrientationLandscapeLeft || orientation == UIInterfaceOrientationLandscapeRight);
         if (autoExpandLandscape && isLandscape) {
             return;
@@ -3258,7 +3293,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     (void)tableView;
-    if (section == 0) return 4; 
+    if (section == 0) return 5; 
     if (section == 1) return 3;
     if (section == 2) return 5;
     if (section == 3) return 7; // 通知管理
@@ -3369,6 +3404,13 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             UISwitch *sw = [UISwitch new];
             sw.on = autoExpandLandscape;
             [sw addTarget:self action:@selector(changeAutoExpandLandscape:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
+        } else if (indexPath.row == 4) {
+            cell.textLabel.text = @"横屏模式";
+            cell.detailTextLabel.text = @"修正横屏锁定时浮窗仍竖着的问题";
+            UISwitch *sw = [UISwitch new];
+            sw.on = landscapeModeEnable;
+            [sw addTarget:self action:@selector(changeLandscapeMode:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         }
     } else if (indexPath.section == 1) {
@@ -3758,7 +3800,8 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
 // UI Switch Actions
 - (void)changeAutoCollapse:(UISwitch *)sw { autoCollapseEnable = sw.isOn; SavePreferencesAndNotify(); }
-- (void)changeAutoExpandLandscape:(UISwitch *)sw { autoExpandLandscape = sw.isOn; SavePreferencesAndNotify(); }
+- (void)changeAutoExpandLandscape:(UISwitch *)sw { autoExpandLandscape = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
+- (void)changeLandscapeMode:(UISwitch *)sw { landscapeModeEnable = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeLogout:(UISwitch *)sw { autoLogoutEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeAlphaEnable:(UISwitch *)sw { floatingAlphaEnable = sw.isOn; SavePreferencesAndNotify(); applyFloatingAlpha(); }
 - (void)changeKeyboardAvoid:(UISwitch *)sw { keyboardAvoidEnable = sw.isOn; SavePreferencesAndNotify(); }
