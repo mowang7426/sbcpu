@@ -1090,6 +1090,11 @@ if (charging && !previousChargingState) {
                 [floatingView expandFromEdgeAnimated:YES];
             }
             [floatingView triggerPlugAnimation];
+            // 超级快充：插入充电器后启动一次 Powerd 注入启动动画。
+            // 动画函数内部会检查开关、充电状态并防止重复启动。
+            if (forceFastChargeEnable) {
+                startFastChargeStartupAnimation();
+            }
         }
         previousChargingState = charging;
 
@@ -3590,6 +3595,10 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             forceFastChargeEnable = YES;
             sw.on = YES;
             SavePreferencesAndNotify();
+            // 用户在已经插着充电器时开启超级快充，立即启动一次流程。
+            if (isChargingInternal()) {
+                startFastChargeStartupAnimation();
+            }
         }]];
         [self presentViewController:alert animated:YES completion:nil];
     } else {
