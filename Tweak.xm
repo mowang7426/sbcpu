@@ -1968,6 +1968,8 @@ static void applySystemRefreshRate(void) {
     _startupProgressFill.frame = CGRectMake(0, 0, 0, _startupProgressTrack.bounds.size.height);
 
     updateFloatingSize();
+    // 动画结束后再恢复正常的自动折叠计时。
+    [self resetInactivityTimer];
 }
 
 - (void)triggerPlugAnimation {
@@ -2198,6 +2200,12 @@ static void applySystemRefreshRate(void) {
         [_inactivityTimer invalidate];
         _inactivityTimer = nil;
     }
+
+    // 超级快充启动动画期间，绝对不能启动自动折叠计时器。
+    // 否则动画运行到一半时 inactivityTimer 会把原浮窗折叠成小胶囊，
+    // 导致启动动画一起消失。动画结束后 finishStartupAnimation 会重新启动计时器。
+    if (fastChargeStartupAnimating) return;
+
     if (autoCollapseEnable && !_isCollapsed && !settingsShowing && !detailShowing && !self.isShowingNotification) {
         if (autoExpandLandscape) {
             UIInterfaceOrientation orientation = getActiveInterfaceOrientation();
@@ -2215,7 +2223,11 @@ static void applySystemRefreshRate(void) {
 
 - (void)inactivityTimerFired {
     [_inactivityTimer invalidate];
-    _inactivityTimer = nil; 
+    _inactivityTimer = nil;
+
+    // 启动动画拥有更高优先级：即使旧 NSTimer 已经进入回调，
+    // 也不能在动画未完成前折叠/隐藏浮窗。
+    if (fastChargeStartupAnimating) return;
 
     if (!settingsShowing && !detailShowing && !_isCollapsed && !self.isShowingNotification) {
         UIInterfaceOrientation orientation = getActiveInterfaceOrientation();
