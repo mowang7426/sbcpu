@@ -1,3 +1,4 @@
+
 #import <Foundation/Foundation.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <IOKit/IOKitLib.h>
@@ -34,23 +35,27 @@ static BOOL readBoolPref(CFStringRef key, BOOL fallback) {
 static BOOL isProtectedChargeProperty(CFStringRef propertyName) {
     if (!propertyName) return NO;
     NSString *s = (__bridge NSString *)propertyName;
-    // 只拦截 powerd 的充电降流/功率限制属性；不拦截无关 IOKit 属性。
+
+    // 只拦截与充电电流/功率上限直接相关的属性。
+    // 不伪装温度，也不拦截 ChargingVoltageLimit。
     static NSArray<NSString *> *names;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         names = @[
             @"ChargeCurrentLimit",
-            @"ThermalMaxChargeCurrent",
             @"MaxChargeCurrent",
             @"AdapterPowerLimit",
             @"AdapterCurrentLimit",
-            @"ThermalChargingLimit",
             @"ChargingPowerLimit",
             @"ChargingCurrentLimit",
             @"USBPDCurrentLimit",
-            @"USBPDPowerLimit"
+            @"USBPDPowerLimit",
+            @"USBChargeCurrent",
+            @"AICLLimit",
+            @"StepCharging"
         ];
     });
+
     for (NSString *name in names) {
         if ([s caseInsensitiveCompare:name] == NSOrderedSame ||
             [s rangeOfString:name options:NSCaseInsensitiveSearch].location != NSNotFound) {
@@ -62,7 +67,6 @@ static BOOL isProtectedChargeProperty(CFStringRef propertyName) {
 
 typedef kern_return_t (*IORegistryEntrySetCFPropertyFn)(io_registry_entry_t, CFStringRef, CFTypeRef);
 typedef kern_return_t (*IOServiceSetCFPropertyFn)(io_service_t, CFStringRef, CFTypeRef);
-
 static IORegistryEntrySetCFPropertyFn orig_IORegistryEntrySetCFProperty = NULL;
 static IOServiceSetCFPropertyFn orig_IOServiceSetCFProperty = NULL;
 
@@ -80,33 +84,55 @@ static void setChargeLimitUsingOriginal(int value) {
     IOObjectRelease(service);
 }
 
+static void saveOriginalChargeLimitIfNeeded(void) {
+    if (gOriginalChargeLimitSaved || !orig_IORegistryEntrySetCFProperty) return;
+
+    io_service_t service = IOServiceGetMatchingService(
+        kIOMasterPortDefault,
+        IOServiceMatching("AppleSmartBattery")
+    );
+    if (!service) return;
+
+    // 这里直接使用系统原始读取接口；本版本不再 Hook 属性读取。
+    CFTypeRef old = IORegistryEntryCreateCFProperty(
+        service,
+        CFSTR("ChargeLimit"),
+        kCFAllocatorDefault,
+        0
+    );
+
+    if (old && CFGetTypeID(old) == CFNumberGetTypeID()) {
+        int n = 100;
+        if (CFNumberGetValue((CFNumberRef)old, kCFNumberIntType, &n)) {
+            gOriginalChargeLimit = n;
+            gOriginalChargeLimitSaved = YES;
+        }
+    }
+
+    if (old) CFRelease(old);
+    IOObjectRelease(service);
+}
+
+static void enforceFastCharge(void) {
+    if (!gForceFastCharge) return;
+
+    // 持续保持 ChargeLimit=100，避免 powerd 后续把上限恢复。
+    setChargeLimitUsingOriginal(100);
+}
+
 static void updateChargeState(void) {
     BOOL enabled = readBoolPref(CFSTR("forceFastChargeEnable"), NO);
-    if (enabled == gForceFastCharge) return;
+    if (enabled == gForceFastCharge) {
+        if (enabled) enforceFastCharge();
+        return;
+    }
 
     gForceFastCharge = enabled;
     NSLog(@"[SBCPUPowerd] 强制满血快充状态: %@", enabled ? @"开启" : @"关闭");
 
     if (enabled) {
-        // 记录当前 ChargeLimit，只记录一次；然后将上限提升到 100。
-        if (!gOriginalChargeLimitSaved && orig_IORegistryEntrySetCFProperty) {
-            io_service_t service = IOServiceGetMatchingService(kIOMasterPortDefault,
-                                                                 IOServiceMatching("AppleSmartBattery"));
-            if (service) {
-                CFTypeRef old = IORegistryEntryCreateCFProperty(service, CFSTR("ChargeLimit"),
-                                                                 kCFAllocatorDefault, 0);
-                if (old && CFGetTypeID(old) == CFNumberGetTypeID()) {
-                    int n = 100;
-                    if (CFNumberGetValue((CFNumberRef)old, kCFNumberIntType, &n)) {
-                        gOriginalChargeLimit = n;
-                        gOriginalChargeLimitSaved = YES;
-                    }
-                }
-                if (old) CFRelease(old);
-                IOObjectRelease(service);
-            }
-        }
-        setChargeLimitUsingOriginal(100);
+        saveOriginalChargeLimitIfNeeded();
+        enforceFastCharge();
     } else {
         if (gOriginalChargeLimitSaved) {
             setChargeLimitUsingOriginal(gOriginalChargeLimit);
@@ -119,8 +145,8 @@ static kern_return_t hook_IORegistryEntrySetCFProperty(io_registry_entry_t entry
                                                          CFStringRef propertyName,
                                                          CFTypeRef property) {
     if (gForceFastCharge && isProtectedChargeProperty(propertyName)) {
-        NSLog(@"[SBCPUPowerd] 拦截 powerd 充电降流: %@", (__bridge NSString *)propertyName);
-        return KERN_SUCCESS;
+        // NSLog(@"[SBCPUPowerd] 拦截 powerd 充电降流: %@", (__bridge NSString *)propertyName);
+        return KERN_SUCCESS; // 直接吞掉指令
     }
     return orig_IORegistryEntrySetCFProperty
         ? orig_IORegistryEntrySetCFProperty(entry, propertyName, property)
@@ -131,7 +157,7 @@ static kern_return_t hook_IOServiceSetCFProperty(io_service_t service,
                                                   CFStringRef propertyName,
                                                   CFTypeRef property) {
     if (gForceFastCharge && isProtectedChargeProperty(propertyName)) {
-        NSLog(@"[SBCPUPowerd] 拦截 powerd 充电服务降流: %@", (__bridge NSString *)propertyName);
+        // NSLog(@"[SBCPUPowerd] 拦截 powerd 充电服务降流: %@", (__bridge NSString *)propertyName);
         return KERN_SUCCESS;
     }
     return orig_IOServiceSetCFProperty
@@ -150,21 +176,18 @@ static void installIOKitHooks(void) {
     if (p1 && !orig_IORegistryEntrySetCFProperty) {
         MSHookFunction(p1, (void *)hook_IORegistryEntrySetCFProperty,
                        (void **)&orig_IORegistryEntrySetCFProperty);
-        if (orig_IORegistryEntrySetCFProperty) {
-            NSLog(@"[SBCPUPowerd] IORegistryEntrySetCFProperty Hook 已安装");
-        }
     }
 
     void *p2 = dlsym(handle, "IOServiceSetCFProperty");
     if (p2 && !orig_IOServiceSetCFProperty) {
         MSHookFunction(p2, (void *)hook_IOServiceSetCFProperty,
                        (void **)&orig_IOServiceSetCFProperty);
-        if (orig_IOServiceSetCFProperty) {
-            NSLog(@"[SBCPUPowerd] IOServiceSetCFProperty Hook 已安装");
-        }
     }
 
-    gHookInstalled = (orig_IORegistryEntrySetCFProperty != NULL || orig_IOServiceSetCFProperty != NULL);
+    gHookInstalled = (orig_IORegistryEntrySetCFProperty != NULL ||
+                      orig_IOServiceSetCFProperty != NULL);
+
+    NSLog(@"[SBCPUPowerd] Powerd 充电 Hook 状态: %@", gHookInstalled ? @"成功" : @"失败");
 }
 
 static void settingsChanged(CFNotificationCenterRef center,
@@ -172,7 +195,6 @@ static void settingsChanged(CFNotificationCenterRef center,
                              CFNotificationName name,
                              const void *object,
                              CFDictionaryRef userInfo) {
-    // Darwin notification 回调签名由系统固定；显式消费未使用参数，避免 -Wunused-parameter 在 -Werror 下中断。
     (void)center;
     (void)observer;
     (void)name;
@@ -188,7 +210,7 @@ static void settingsChanged(CFNotificationCenterRef center,
         NSString *process = [NSProcessInfo processInfo].processName;
         if (![process isEqualToString:@"powerd"]) return;
 
-        NSLog(@"[SBCPUPowerd] V3.1.14 powerd 满血充电核心启动");
+        NSLog(@"[SBCPUPowerd] V3.1.14 Powerd 超级快充专用核心启动");
         installIOKitHooks();
         updateChargeState();
 
@@ -199,7 +221,6 @@ static void settingsChanged(CFNotificationCenterRef center,
                                              CFNotificationSuspensionBehaviorDeliverImmediately);
         }
 
-        // powerd 可能在设置变化时没有及时收到 Darwin 通知；低频兜底检查，避免影响正常电源管理。
         dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
                                                            dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
         dispatch_source_set_timer(timer,
@@ -207,8 +228,10 @@ static void settingsChanged(CFNotificationCenterRef center,
                                   2 * NSEC_PER_SEC,
                                   300 * NSEC_PER_MSEC);
         dispatch_source_set_event_handler(timer, ^{
-            if (gHookInstalled) updateChargeState();
+            if (gHookInstalled && gForceFastCharge) enforceFastCharge();
+            else if (gHookInstalled) updateChargeState();
         });
         dispatch_resume(timer);
     }
 }
+
