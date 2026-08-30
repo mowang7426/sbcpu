@@ -3806,6 +3806,9 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         }]];
         [self presentViewController:alert animated:YES completion:nil];
     } else {
+        // 关闭时先同步全局状态，再保存，避免旧状态被重新写回 YES。
+        forceFastChargeEnable = NO;
+        sw.on = NO;
         SavePreferencesAndNotify();
     }
 }
