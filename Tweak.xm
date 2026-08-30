@@ -746,6 +746,12 @@ static UIInterfaceOrientation getActiveInterfaceOrientation(void) {
     return scene ? scene.interfaceOrientation : UIInterfaceOrientationPortrait;
 }
 
+static CGFloat floatingTopSafeMargin(UIView *container) {
+    CGFloat safeTop = 0.0f;
+    if (@available(iOS 11.0, *)) safeTop = container.safeAreaInsets.top;
+    return MAX(20.0f, safeTop + (safeTop > 0.0f ? 8.0f : 0.0f));
+}
+
 static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
     if (!floatingView || !floatingView.superview) return;
 
@@ -758,7 +764,7 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
 
     CGFloat minX = halfW + 4.0f;
     CGFloat maxX = containerBounds.size.width - halfW - 4.0f;
-    CGFloat minY = halfH + 20.0f;
+    CGFloat minY = halfH + floatingTopSafeMargin(floatingView.superview);
     CGFloat maxY = containerBounds.size.height - halfH - 10.0f;
 
     if (maxX < minX) minX = maxX = containerBounds.size.width / 2.0f;
@@ -772,7 +778,7 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
         
         CGFloat colMinX = targetHalfW + 4.0f;
         CGFloat colMaxX = containerBounds.size.width - targetHalfW - 4.0f;
-        CGFloat colMinY = targetHalfH + 20.0f;
+        CGFloat colMinY = targetHalfH + floatingTopSafeMargin(floatingView.superview);
         CGFloat colMaxY = containerBounds.size.height - targetHalfH - 10.0f;
 
         BOOL isLeft = (targetCenter.x <= containerBounds.size.width / 2.0f);
@@ -922,7 +928,11 @@ static void checkHighCPU(double cpu) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (!cpuWindow || !cpuWindow.rootViewController) { logoutCounting = NO; return; }
             UIViewController *root = cpuWindow.rootViewController;
-            if (root.presentedViewController) return;
+            if (root.presentedViewController) {
+                logoutCounting = NO;
+                cpuHighStartTime = nil;
+                return;
+            }
 
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"SpringBoard CPU过高" message:@"5秒后自动注销" preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
@@ -1535,7 +1545,16 @@ static void applySystemRefreshRate(void) {
                 self.currentNotification = nil;
                 [historyNotifications removeAllObjects];
                 
-                [self collapseToEdgeAnimated:YES];
+                if (autoCollapseEnable) {
+                    [self collapseToEdgeAnimated:YES];
+                } else {
+                    [self updateLayoutWithShowCpuFreq:showCpuFrequency
+                                               showFps:showFps
+                                    showBatteryPercent:showBatteryPercent
+                                       showBatteryTemp:showBatteryTemperature
+                                    showBatteryCurrent:showBatteryCurrent
+                                            isCharging:isChargingInternal()];
+                }
                 
                 dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
                     dispatch_async(dispatch_get_main_queue(), ^{
@@ -1626,7 +1645,7 @@ static void applySystemRefreshRate(void) {
 
         CGFloat minX = halfW + 2.0f;
         CGFloat maxX = containerBounds.size.width - halfW - 2.0f;
-        CGFloat minY = halfH + 20.0f;
+        CGFloat minY = halfH + floatingTopSafeMargin(floatingView.superview);
         CGFloat maxY = containerBounds.size.height - halfH - 10.0f;
 
         if (maxX < minX) minX = maxX = containerBounds.size.width / 2.0f;
@@ -1930,7 +1949,7 @@ static void applySystemRefreshRate(void) {
     BOOL isLeft = (self.center.x <= containerBounds.size.width / 2.0f);
     CGFloat targetX = isLeft ? (targetHalfW + 4.0f) : (containerBounds.size.width - targetHalfW - 4.0f);
     
-    CGFloat minY = targetHalfH + 20.0f;
+    CGFloat minY = targetHalfH + floatingTopSafeMargin(parent);
     CGFloat maxY = containerBounds.size.height - targetHalfH - 10.0f;
     CGFloat targetY = MIN(MAX(self.center.y, minY), maxY);
 
@@ -1982,7 +2001,14 @@ static void applySystemRefreshRate(void) {
     };
 
     if (animated) {
-        [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.4 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:animationsBlock completion:completionBlock];
+        self.collapsedContainerView.hidden = YES;
+    self.collapsedContainerView.alpha = 0.0;
+    self.notificationContainer.hidden = NO;
+    self.notificationContainer.alpha = 1.0;
+    self.horizontalDiv.hidden = NO;
+    self.horizontalDiv.alpha = 1.0;
+
+    [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.4 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:animationsBlock completion:completionBlock];
     } else {
         animationsBlock();
         completionBlock(YES);
@@ -2022,7 +2048,7 @@ static void applySystemRefreshRate(void) {
     BOOL isLeft = (self.center.x <= containerBounds.size.width / 2.0f);
     CGFloat targetX = isLeft ? (expandedHalfW + 4.0f) : (containerBounds.size.width - expandedHalfW - 4.0f);
     
-    CGFloat minY = expandedHalfH + 20.0f;
+    CGFloat minY = expandedHalfH + floatingTopSafeMargin(parent);
     CGFloat maxY = containerBounds.size.height - expandedHalfH - 10.0f;
     CGFloat targetY = MIN(MAX(self.center.y, minY), maxY);
 
@@ -2495,7 +2521,9 @@ static void applySystemRefreshRate(void) {
 
 @implementation SBCPUWindow
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    if (settingsShowing || detailShowing) return [super hitTest:point withEvent:event];
+    if (settingsShowing || detailShowing || self.rootViewController.presentedViewController) {
+        return [super hitTest:point withEvent:event];
+    }
 
     if (floatingView && !floatingView.hidden && floatingView.alpha > 0.01) {
         CGPoint p = [self convertPoint:point toView:floatingView];
