@@ -614,19 +614,6 @@ static void applyExperimentalChargeLimit100(BOOL enable) {
     IOObjectRelease(service);
 }
 
-// 智能停充：直接设置 ChargeLimit 为任意值
-static void setChargeLimitValue(NSInteger value) {
-    io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
-    if (!service) return;
-    int val = (int)value;
-    CFNumberRef number = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &val);
-    if (number) {
-        IORegistryEntrySetCFProperty(service, CFSTR("ChargeLimit"), number);
-        CFRelease(number);
-    }
-    IOObjectRelease(service);
-}
-
 // 智能停充：设置停充状态（ChargeLimit + ChargeInhibit 双重控制，真正停充）
 static void setSmartChargeStopped(BOOL stopped) {
     io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
