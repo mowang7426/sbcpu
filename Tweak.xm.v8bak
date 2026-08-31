@@ -283,7 +283,6 @@ static NSInteger chargeLimitOriginalValue = 0;
 static BOOL showBatteryPercent = YES;
 static BOOL showBatteryTemperature = YES;
 static BOOL showBatteryCurrent = YES;
-static BOOL liquidGlassEnabled = YES; // 液态玻璃效果开关
 
 static CGRect keyboardBeforeFrame;
 static BOOL keyboardMoved = NO;
@@ -471,7 +470,6 @@ static void LoadPreferences(void) {
     showBatteryPercent = getBoolPref(CFSTR("showBatteryPercent"), YES);
     showBatteryTemperature = getBoolPref(CFSTR("showBatteryTemperature"), YES);
     showBatteryCurrent = getBoolPref(CFSTR("showBatteryCurrent"), YES);
-    liquidGlassEnabled = getBoolPref(CFSTR("liquidGlassEnabled"), YES);
     
     chargeBoostEnable = getBoolPref(CFSTR("chargeBoostEnable"), NO);
     forceFastChargeEnable = getBoolPref(CFSTR("forceFastChargeEnable"), NO);
@@ -520,7 +518,6 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("showBatteryPercent"), showBatteryPercent);
     setBoolPref(CFSTR("showBatteryTemperature"), showBatteryTemperature);
     setBoolPref(CFSTR("showBatteryCurrent"), showBatteryCurrent);
-    setBoolPref(CFSTR("liquidGlassEnabled"), liquidGlassEnabled);
     setBoolPref(CFSTR("chargeBoostEnable"), chargeBoostEnable);
     setBoolPref(CFSTR("forceFastChargeEnable"), forceFastChargeEnable);
     setBoolPref(CFSTR("notificationEnable"), notificationEnable);
@@ -1483,77 +1480,8 @@ static void LGApplyShadowToLabelsInView(UIView *view) {
         LGApplyShadowToLabelsInView(v);
     }
 }
-// 液态玻璃：去掉文字阴影（关闭液态玻璃时恢复原版）
-static void LGRemoveLabelShadowInView(UIView *view) {
-    if (!view) return;
-    for (UIView *v in view.subviews) {
-        if ([v isKindOfClass:[UILabel class]]) {
-            UILabel *lbl = (UILabel *)v;
-            lbl.layer.shadowOpacity = 0.0f;
-            lbl.shadowColor = nil;
-        }
-        LGRemoveLabelShadowInView(v);
-    }
-}
 
 @implementation SBCPUFloatingView
-
-// 液态玻璃：根据开关应用/取消液态玻璃样式
-- (void)applyLiquidGlassStyle {
-    BOOL enabled = liquidGlassEnabled;
-    _glassBackdropLayer.hidden = !enabled;
-    _glassSheenLayer.hidden = !enabled;
-    _glassBoostLayer.hidden = !enabled;
-    _glassEdgeLayer.hidden = !enabled;
-    if (_glassTintLayer) _glassTintLayer.hidden = !enabled;
-
-    if (enabled) {
-        if (_glassBackdropLayer) {
-            _blurView.effect = nil; // 用 CABackdropLayer 替代 UIVisualEffect
-        }
-        LGApplyShadowToLabelsInView(_blurView.contentView);
-    } else {
-        // 恢复原版 UIVisualEffectView 模糊
-        _blurView.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialLight];
-        LGRemoveLabelShadowInView(_blurView.contentView);
-    }
-    [self applyAdaptiveTextColors];
-}
-
-// 液态玻璃：根据深浅模式自适应文字颜色（反色），仅改静态颜色
-- (void)applyAdaptiveTextColors {
-    BOOL darkMode = (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark);
-    BOOL glass = liquidGlassEnabled;
-
-    UIColor *titleColor = (glass && darkMode)
-        ? [UIColor colorWithWhite:0.70 alpha:1.0f]
-        : [UIColor colorWithWhite:0.35 alpha:1.0f];
-    UIColor *monoColor = (glass && darkMode) ? [UIColor whiteColor] : [UIColor blackColor];
-
-    // 静态副标题
-    _cpuTitleLabel.textColor = titleColor;
-    _cpuFreqLabel.textColor = titleColor;
-    _fpsTitleLabel.textColor = titleColor;
-    _fpsSubLabel.textColor = titleColor;
-    _batterySubLabel.textColor = titleColor;
-    _tempSubLabel.textColor = titleColor;
-    _currentSubLabel.textColor = titleColor;
-    // 静态值（温度、电流、折叠态）
-    _tempValueLabel.textColor = monoColor;
-    _currentValueLabel.textColor = monoColor;
-    _miniCpuLabel.textColor = monoColor;
-    // 通知文字
-    _notifAppNameLabel.textColor = (glass && darkMode) ? [UIColor lightGrayColor] : [UIColor darkGrayColor];
-    _notifMessageLabel.textColor = (glass && darkMode) ? [UIColor colorWithWhite:0.8 alpha:1.0] : [UIColor colorWithWhite:0.15 alpha:1.0];
-}
-
-// 监听深浅模式变化，自动反色
-- (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
-    [super traitCollectionDidChange:previousTraitCollection];
-    if (liquidGlassEnabled) {
-        [self applyAdaptiveTextColors];
-    }
-}
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
@@ -1941,8 +1869,8 @@ static void LGRemoveLabelShadowInView(UIView *view) {
 
         [self resetInactivityTimer];
     }
-            // 液态玻璃：根据开关应用样式（开→液态玻璃+阴影+反色，关→原版）
-        [self applyLiquidGlassStyle];
+            // 液态玻璃：给所有数据文字加阴影，保证透明背景下可读
+        LGApplyShadowToLabelsInView(_blurView.contentView);
 
 return self;
 }
@@ -2828,8 +2756,6 @@ return self;
         else if (temp >= 38.0) statusColor = [UIColor systemOrangeColor];
         _statusDot.backgroundColor = statusColor;
     }
-    // 液态玻璃：每次数据刷新后更新文字反色（深浅模式自适应）
-    [self applyAdaptiveTextColors];
 }
 
 @end
@@ -3529,7 +3455,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     if (section == 5) return 1;
     if (section == 6) return 10;
     if (section == 7) return 2; 
-    if (section == 8) return 7;
+    if (section == 8) return 6;
     if (section == 9) return 5; // 📖 功能说明行数
     if (section == 10) return 8; // 🌡️ 温控功能说明
     return 0;
@@ -3877,13 +3803,6 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             sw.on = showBatteryCurrent;
             [sw addTarget:self action:@selector(changeShowCurrent:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
-        } else if (indexPath.row == 6) {
-            cell.textLabel.text = @"液态玻璃效果";
-            cell.detailTextLabel.text = @"开启后浮窗呈 iOS 26 液态玻璃风格（透明+高光+文字反色）";
-            UISwitch *sw = [UISwitch new];
-            sw.on = liquidGlassEnabled;
-            [sw addTarget:self action:@selector(changeLiquidGlass:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = sw;
         }
     }
     return cell;
@@ -4048,14 +3967,6 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 - (void)changeShowBattery:(UISwitch *)sw { showBatteryPercent = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowTemp:(UISwitch *)sw { showBatteryTemperature = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowCurrent:(UISwitch *)sw { showBatteryCurrent = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
-- (void)changeLiquidGlass:(UISwitch *)sw {
-    liquidGlassEnabled = sw.isOn;
-    SavePreferencesAndNotify();
-    if (floatingView) {
-        [floatingView applyLiquidGlassStyle];
-        [floatingView applyAdaptiveTextColors];
-    }
-}
 - (void)changeChargeBoost:(UISwitch *)sw {
     chargeBoostEnable = sw.isOn;
     chargeBoostStartTime = sw.isOn ? CFAbsoluteTimeGetCurrent() : 0;

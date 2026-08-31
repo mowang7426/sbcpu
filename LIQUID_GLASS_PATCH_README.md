@@ -26,6 +26,25 @@
 
 > 说明：展开/折叠/拖动/通知弹出/启动动画均沿用原布局逻辑，只在其上叠加玻璃效果；不改任何数据逻辑。
 
+## V9：文字反色 + 折叠态反色 + 液态玻璃开关
+用户反馈纯玻璃在深色背景上字看不清，要求文字跟着背景成反色、折叠态也反色、并加液态玻璃开关。
+- **文字反色**：新增 `applyAdaptiveTextColors`，根据 `traitCollection.userInterfaceStyle` 自适应：
+  - 深色模式 + 液态玻璃开：副标题→浅灰(70%)、温度/电流/折叠态→白色、通知文字→亮色
+  - 浅色模式或液态玻璃关：恢复原版颜色（深灰、黑色）
+  - 彩色值文字（绿/紫）保持彩色（在深色背景上本就可读）
+- **折叠态反色**：`_miniCpuLabel` 纳入反色范围，深色模式下白色
+- **深浅模式监听**：新增 `traitCollectionDidChange:`，切换深浅模式时自动反色
+- **数据刷新同步**：`updateDataWithCPU:` 末尾调用 `applyAdaptiveTextColors`
+- **液态玻璃开关**：设置页「位置与显示」section 新增「液态玻璃效果」开关（UISwitch）：
+  - 开：CABackdropLayer + specular 高光 + 文字阴影 + 反色
+  - 关：恢复原版 UIVisualEffectView SystemThinMaterialLight + 原版文字颜色 + 无阴影无高光
+  - 开关值存 NSUserDefaults（`liquidGlassEnabled`），默认开
+  - 新增 `applyLiquidGlassStyle` 方法统一管理开关切换
+  - 新增 `LGRemoveLabelShadowInView` 辅助函数（关闭时去掉文字阴影）
+
+**调参**：搜 `applyAdaptiveTextColors`，改 `titleColor`/`monoColor` 的颜色值；
+搜 `liquidGlassEnabled` 改默认值；设置页开关实时切换无需 Respring。
+
 ## V8：方案D 纯玻璃（无 tint + 文字阴影描边）
 用户从 4 个方案中选定方案 D：**纯玻璃无 tint 层**，完全靠 CABackdropLayer backdrop 模糊，
 背景最清晰通透；文字靠**强阴影 + 白色外发光（模拟描边）**保证可读。
