@@ -120,6 +120,8 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) CAShapeLayer *marqueeLayer;
 // iOS 26 液态玻璃：玻璃表面高光/反光层（覆盖在内容之上，zPosition 保持最上层）
 @property (nonatomic, strong) CAGradientLayer *glassSheenLayer;
+// iOS 26 液态玻璃：玻璃边缘内发光（亮-暗-亮折射）
+@property (nonatomic, strong) CAShapeLayer *glassEdgeLayer;
 @property (nonatomic, strong) UIView *horizontalDiv; 
 
 @property (nonatomic, strong) UIView *performanceContainer; 
@@ -1482,17 +1484,17 @@ static void applySystemRefreshRate(void) {
         [self addGestureRecognizer:self.longPressGesture];
 
         self.layer.shadowColor = [UIColor blackColor].CGColor;
-        self.layer.shadowOpacity = 0.18f;
-        self.layer.shadowOffset = CGSizeMake(0, 4);
-        self.layer.shadowRadius = 12.0f;
+        self.layer.shadowOpacity = 0.28f;
+        self.layer.shadowOffset = CGSizeMake(0, 6);
+        self.layer.shadowRadius = 18.0f;
 
         UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialLight];
         _blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
         CGFloat cornerRad = floatingCornerRadius;
         _blurView.layer.cornerRadius = cornerRad;
         _blurView.layer.masksToBounds = YES;
-        _blurView.layer.borderWidth = 0.8f;
-        _blurView.layer.borderColor = [UIColor colorWithWhite:1.0f alpha:0.78f].CGColor;
+        _blurView.layer.borderWidth = 1.0f;
+        _blurView.layer.borderColor = [UIColor colorWithWhite:1.0f alpha:0.90f].CGColor;
         _blurView.userInteractionEnabled = NO;
         [self addSubview:_blurView];
 
@@ -1502,24 +1504,43 @@ static void applySystemRefreshRate(void) {
         _marqueeLayer.lineWidth = 2.0f;
         _marqueeLayer.lineDashPattern = @[@14, @8];
         _marqueeLayer.hidden = YES;
+        _marqueeLayer.zPosition = 1001.0f; // 跑马灯在玻璃高光之上，保持清晰
         [_blurView.layer addSublayer:_marqueeLayer];
 
-        // === iOS 26 液态玻璃：表面高光/反光层 ===
+        // === iOS 26 液态玻璃：玻璃厚度 tint（位于内容之下，模拟玻璃吸光/厚度，衬托表面反光） ===
+        UIView *glassTint = [[UIView alloc] initWithFrame:_blurView.bounds];
+        glassTint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        glassTint.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.15f];
+        glassTint.userInteractionEnabled = NO;
+        [_blurView insertSubview:glassTint belowSubview:_blurView.contentView];
+
+        // === iOS 26 液态玻璃：表面高光/反光层（明暗对比，模拟真实玻璃反光） ===
         _glassSheenLayer = [CAGradientLayer layer];
         _glassSheenLayer.frame = _blurView.bounds;
         _glassSheenLayer.colors = @[
-            (id)[UIColor colorWithWhite:1.0f alpha:0.0f].CGColor,
-            (id)[UIColor colorWithWhite:1.0f alpha:0.28f].CGColor,
-            (id)[UIColor colorWithWhite:1.0f alpha:0.13f].CGColor,
-            (id)[UIColor colorWithWhite:1.0f alpha:0.0f].CGColor,
-            (id)[UIColor colorWithWhite:1.0f alpha:0.0f].CGColor,
+            (id)[UIColor colorWithWhite:1.0f alpha:0.00f].CGColor,
+            (id)[UIColor colorWithWhite:1.0f alpha:0.42f].CGColor,
+            (id)[UIColor colorWithWhite:1.0f alpha:0.10f].CGColor,
+            (id)[UIColor colorWithWhite:0.0f alpha:0.10f].CGColor,
+            (id)[UIColor colorWithWhite:0.0f alpha:0.00f].CGColor,
+            (id)[UIColor colorWithWhite:1.0f alpha:0.16f].CGColor,
         ];
-        _glassSheenLayer.locations = @[@0.0f, @0.25f, @0.47f, @0.66f, @1.0f];
+        _glassSheenLayer.locations = @[@0.0f, @0.16f, @0.34f, @0.56f, @0.80f, @1.0f];
         _glassSheenLayer.startPoint = CGPointMake(0.0f, 0.0f);
         _glassSheenLayer.endPoint = CGPointMake(1.0f, 1.0f);
-        _glassSheenLayer.opacity = 0.55f;
+        _glassSheenLayer.opacity = 0.85f;
         _glassSheenLayer.zPosition = 1000.0f; // 玻璃表面反光始终盖在内容之上
         [_blurView.layer addSublayer:_glassSheenLayer];
+
+        // === 液态玻璃：边缘内发光（玻璃边缘的亮-暗-亮折射光带） ===
+        _glassEdgeLayer = [CAShapeLayer layer];
+        _glassEdgeLayer.frame = _blurView.bounds;
+        _glassEdgeLayer.fillColor = [UIColor clearColor].CGColor;
+        _glassEdgeLayer.strokeColor = [UIColor colorWithWhite:1.0f alpha:0.50f].CGColor;
+        _glassEdgeLayer.lineWidth = 1.5f;
+        _glassEdgeLayer.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(_blurView.bounds, 0.75f, 0.75f) cornerRadius:cornerRad].CGPath;
+        _glassEdgeLayer.zPosition = 999.0f; // 在内容之上、高光之下
+        [_blurView.layer addSublayer:_glassEdgeLayer];
 
         UIView *content = _blurView.contentView;
         content.userInteractionEnabled = NO;
@@ -2248,8 +2269,10 @@ static void applySystemRefreshRate(void) {
     _marqueeLayer.frame = _blurView.bounds;
     _marqueeLayer.path = [UIBezierPath bezierPathWithRoundedRect:_blurView.bounds cornerRadius:cornerRad].CGPath;
 
-    // 液态玻璃高光层跟随布局
+    // 液态玻璃高光层与边缘光跟随布局
     _glassSheenLayer.frame = _blurView.bounds;
+    _glassEdgeLayer.frame = _blurView.bounds;
+    _glassEdgeLayer.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(_blurView.bounds, 0.75f, 0.75f) cornerRadius:cornerRad].CGPath;
 
     if (isCharging) {
         _marqueeLayer.hidden = NO;
@@ -2368,8 +2391,10 @@ static void applySystemRefreshRate(void) {
         self.marqueeLayer.frame = self.blurView.bounds;
         self.marqueeLayer.path = [UIBezierPath bezierPathWithRoundedRect:self.blurView.bounds cornerRadius:cornerRad].CGPath;
 
-        // 液态玻璃高光层跟随折叠尺寸
+        // 液态玻璃高光层与边缘光跟随折叠尺寸
         self.glassSheenLayer.frame = self.blurView.bounds;
+        self.glassEdgeLayer.frame = self.blurView.bounds;
+        self.glassEdgeLayer.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(self.blurView.bounds, 0.75f, 0.75f) cornerRadius:cornerRad].CGPath;
     };
 
     void (^completionBlock)(BOOL) = ^(BOOL finished) {
