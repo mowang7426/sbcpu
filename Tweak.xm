@@ -1597,7 +1597,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
     size_t height = CGImageGetHeight(cgImage);
     if (width == 0 || height == 0) return 0.5;
 
-    unsigned char *rawData = calloc(width * height * 4, 1);
+    unsigned char *rawData = (unsigned char *)calloc(width * height * 4, 1);
     if (!rawData) return 0.5;
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
     CGContextRef context = CGBitmapContextCreate(rawData, width, height, 8, width*4,
