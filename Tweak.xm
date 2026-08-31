@@ -614,7 +614,7 @@ static void applyExperimentalChargeLimit100(BOOL enable) {
     IOObjectRelease(service);
 }
 
-// 智能停充：直接设置 ChargeLimit 为任意值（真实硬件停充）
+// 智能停充：直接设置 ChargeLimit 为任意值
 static void setChargeLimitValue(NSInteger value) {
     io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
     if (!service) return;
@@ -627,32 +627,75 @@ static void setChargeLimitValue(NSInteger value) {
     IOObjectRelease(service);
 }
 
-// 智能停充核心逻辑：达到上限停充，降到下限恢复
+// 智能停充：设置停充状态（ChargeLimit + ChargeInhibit 双重控制，真正停充）
+static void setSmartChargeStopped(BOOL stopped) {
+    io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
+    if (!service) return;
+    if (stopped) {
+        // 设置 ChargeLimit 为上限
+        int limit = (int)smartChargeUpperLimit;
+        CFNumberRef num = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &limit);
+        if (num) {
+            IORegistryEntrySetCFProperty(service, CFSTR("ChargeLimit"), num);
+            CFRelease(num);
+        }
+        // 设置 ChargeInhibit = YES，真正禁止充电
+        IORegistryEntrySetCFProperty(service, CFSTR("ChargeInhibit"), kCFBooleanTrue);
+    } else {
+        // 清除 ChargeInhibit
+        IORegistryEntrySetCFProperty(service, CFSTR("ChargeInhibit"), kCFBooleanFalse);
+        // 恢复 ChargeLimit = 100
+        int limit = 100;
+        CFNumberRef num = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &limit);
+        if (num) {
+            IORegistryEntrySetCFProperty(service, CFSTR("ChargeLimit"), num);
+            CFRelease(num);
+        }
+    }
+    IOObjectRelease(service);
+}
+
+// 智能停充：用 IOKit 读取真实电量百分比（兼容 SpringBoard 环境）
+static NSInteger getBatteryPercentForSmartCharge(void) {
+    @try {
+        NSDictionary *info = getRealBatteryDetails();
+        NSInteger cur = [info[@"CurrentCapacity"] integerValue];
+        NSInteger max = [info[@"MaxCapacity"] integerValue];
+        if (max > 0 && cur > 0) {
+            return (NSInteger)(cur * 100.0 / max);
+        }
+    } @catch (id e) {}
+    // fallback: UIDevice
+    [UIDevice currentDevice].batteryMonitoringEnabled = YES;
+    float level = [UIDevice currentDevice].batteryLevel;
+    if (level > 0) return (NSInteger)(level * 100);
+    return -1;
+}
+
+// 智能停充核心逻辑：达到上限停充（ChargeInhibit），降到下限恢复
 static void updateSmartCharge(void) {
     if (!smartChargeEnable || !floatingView) {
         if (smartChargeStopped) {
             smartChargeStopped = NO;
-            setChargeLimitValue(100);
+            setSmartChargeStopped(NO);
         }
         return;
     }
     if (!isChargingInternal()) {
         if (smartChargeStopped) {
             smartChargeStopped = NO;
-            setChargeLimitValue(100);
+            setSmartChargeStopped(NO);
         }
         return;
     }
-    [UIDevice currentDevice].batteryMonitoringEnabled = YES;
-    float level = [UIDevice currentDevice].batteryLevel;
-    if (level < 0) return;
-    NSInteger percent = (NSInteger)(level * 100.0f);
+    NSInteger percent = getBatteryPercentForSmartCharge();
+    if (percent < 0) return; // 无法获取电量，跳过
 
     if (!smartChargeStopped && percent >= smartChargeUpperLimit) {
-        setChargeLimitValue(smartChargeUpperLimit);
+        setSmartChargeStopped(YES);
         smartChargeStopped = YES;
     } else if (smartChargeStopped && percent <= smartChargeLowerLimit) {
-        setChargeLimitValue(100);
+        setSmartChargeStopped(NO);
         smartChargeStopped = NO;
     }
 }
@@ -4262,7 +4305,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     SavePreferencesAndNotify();
     if (!smartChargeEnable && smartChargeStopped) {
         smartChargeStopped = NO;
-        setChargeLimitValue(100);
+        setSmartChargeStopped(NO);
     }
     [self.tableView reloadData];
 }
@@ -4274,7 +4317,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     else if (smartChargeMode == 1) { smartChargeUpperLimit = 100; smartChargeLowerLimit = 90; }
     else if (smartChargeMode == 2) { smartChargeUpperLimit = 60; smartChargeLowerLimit = 50; }
     SavePreferencesAndNotify();
-    if (smartChargeStopped) { smartChargeStopped = NO; setChargeLimitValue(100); }
+    if (smartChargeStopped) { smartChargeStopped = NO; setSmartChargeStopped(NO); }
     [self.tableView reloadData];
 }
 
@@ -4285,7 +4328,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         smartChargeLowerLimit = MAX(40, smartChargeUpperLimit - 5);
     }
     SavePreferencesAndNotify();
-    if (smartChargeStopped) { smartChargeStopped = NO; setChargeLimitValue(100); }
+    if (smartChargeStopped) { smartChargeStopped = NO; setSmartChargeStopped(NO); }
     [self.tableView reloadData];
 }
 
@@ -4377,6 +4420,12 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     if (indexPath.section == 6) {
         if (indexPath.row == 8) return 150.0;
         return (indexPath.row == 9) ? 72.0 : 64.0;
+    }
+    if (indexPath.section == 9) {
+        // 智能停充：预设按钮行和滑块行需要更高的高度
+        if (indexPath.row == 1) return 82.0;  // 预设按钮
+        if (indexPath.row == 2 || indexPath.row == 3) return 82.0; // 滑块
+        return 64.0;
     }
     if (indexPath.section == 11) {
         return 82.0;
