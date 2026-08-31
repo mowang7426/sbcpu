@@ -1458,18 +1458,14 @@ static void applySystemRefreshRate(void) {
 @end
 
 
-// 液态玻璃：给文字加阴影+白色外发光（模拟描边），保证纯透明玻璃背景下可读
+// 液态玻璃：给文字加阴影，保证透明背景下可读（iOS 系统玻璃组件标准做法）
 static void LGApplyGlassLabelShadow(UILabel *label) {
     if (!label) return;
-    // 黑色向下阴影：增强文字轮廓
-    label.layer.shadowColor = [UIColor colorWithWhite:0.0f alpha:0.65f].CGColor;
+    label.layer.shadowColor = [UIColor colorWithWhite:0.0f alpha:0.50f].CGColor;
     label.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
-    label.layer.shadowRadius = 3.0f;
+    label.layer.shadowRadius = 2.5f;
     label.layer.shadowOpacity = 1.0f;
     label.layer.masksToBounds = NO;
-    // UILabel 自带白色外发光：模拟描边，让文字在任何背景上都突出
-    label.shadowColor = [UIColor colorWithWhite:1.0f alpha:0.55f];
-    label.shadowOffset = CGSizeMake(0.0f, 0.0f);
 }
 static void LGApplyShadowToLabelsInView(UIView *view) {
     if (!view) return;
@@ -1546,8 +1542,14 @@ static void LGApplyShadowToLabelsInView(UIView *view) {
                 _glassBackdropLayer = bd;
                 _blurView.effect = nil; // 用 CABackdropLayer 替代 UIVisualEffect 模糊
 
-                // 方案D：纯玻璃无 tint，完全靠 CABackdropLayer 模糊 + 文字阴影描边保可读
-                _glassTintLayer = nil;
+                // 玻璃厚度层：半透明白色 tint，遮挡背景提升可读性（在 backdrop 之上、内容之下）
+                _glassTintLayer = [CALayer layer];
+                _glassTintLayer.frame = _blurView.bounds;
+                _glassTintLayer.cornerRadius = cornerRad;
+                _glassTintLayer.masksToBounds = YES;
+                _glassTintLayer.backgroundColor = [UIColor colorWithWhite:1.0f alpha:0.55f].CGColor;
+                _glassTintLayer.zPosition = 1.0f;
+                [_blurView.layer addSublayer:_glassTintLayer];
             }
         } @catch (NSException *e) {
             _glassBackdropLayer = nil;
