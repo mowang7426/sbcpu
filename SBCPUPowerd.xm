@@ -139,18 +139,17 @@ static void updateChargeState(void) {
     }
 }
 
-// 🔥 [激进升级] 欺骗系统读取操作 (温度伪装)
-static CFTypeRef hook_IORegistryEntryCreateCFProperty(io_registry_entry_t entry, 
-                                                      CFStringRef key, 
-                                                      CFAllocatorRef allocator, 
+// 🔥 [极致激进版] 欺骗系统读取操作：温度/容量/电压/循环/健康度全伪装
+static CFTypeRef hook_IORegistryEntryCreateCFProperty(io_registry_entry_t entry,
+                                                      CFStringRef key,
+                                                      CFAllocatorRef allocator,
                                                       IOOptionBits options) {
     CFTypeRef result = orig_IORegistryEntryCreateCFProperty(entry, key, allocator, options);
-    
+
     if (gForceFastCharge && key && result) {
         NSString *keyStr = (__bridge NSString *)key;
-        
-        // 伪装电池温度永远在 25°C (AppleSmartBattery 中温度单位通常为 0.1度，即 250)
-        // 这将彻底废掉 thermalmonitord 基于电池温度的降频保护
+
+        // 1. 伪装电池温度永远 25°C（单位 0.1度=250），废掉高温降流
         if ([keyStr isEqualToString:@"Temperature"] || [keyStr isEqualToString:@"BatteryTemperature"]) {
             if (CFGetTypeID(result) == CFNumberGetTypeID()) {
                 int fakeTemp = 250;
@@ -160,14 +159,50 @@ static CFTypeRef hook_IORegistryEntryCreateCFProperty(io_registry_entry_t entry,
             }
         }
 
-        // 🔥 伪装当前容量：真实电量 >75% 时伪装成 70%，让 powerd 认为还在快速充电阶段，避免 80% 后涓流
+        // 2. 伪装当前容量：真实电量 >50% 就伪装成 45%（基于百分比计算，兼容 mAh 单位）
         if ([keyStr isEqualToString:@"CurrentCapacity"] || [keyStr isEqualToString:@"AppleRawCurrentCapacity"]) {
             if (CFGetTypeID(result) == CFNumberGetTypeID()) {
                 int realCap = 0;
                 if (CFNumberGetValue((CFNumberRef)result, kCFNumberIntType, &realCap)) {
-                    if (realCap > 75) {
-                        int fakeCap = 70; // 伪装成 70%，永远不到 80% 涓流阈值
-                        CFNumberRef fakeNum = CFNumberCreate(allocator, kCFNumberIntType, &fakeCap);
+                    // 尝试读取 MaxCapacity 计算百分比
+                    int maxCap = 0;
+                    CFTypeRef maxVal = orig_IORegistryEntryCreateCFProperty(entry, CFSTR("AppleRawMaxCapacity"), kCFAllocatorDefault, 0);
+                    if (!maxVal) maxVal = orig_IORegistryEntryCreateCFProperty(entry, CFSTR("MaxCapacity"), kCFAllocatorDefault, 0);
+                    if (maxVal && CFGetTypeID(maxVal) == CFNumberGetTypeID()) {
+                        CFNumberGetValue((CFNumberRef)maxVal, kCFNumberIntType, &maxCap);
+                    }
+                    if (maxVal) CFRelease(maxVal);
+
+                    if (maxCap > 0) {
+                        // mAh 单位：计算百分比
+                        int percent = (int)(realCap * 100.0 / maxCap);
+                        if (percent > 50) {
+                            int fakeCap = (int)(maxCap * 0.45); // 伪装成 45%
+                            CFNumberRef fakeNum = CFNumberCreate(allocator, kCFNumberIntType, &fakeCap);
+                            CFRelease(result);
+                            return fakeNum;
+                        }
+                    } else {
+                        // 百分比单位：直接比较
+                        if (realCap > 50) {
+                            int fakeCap = 45;
+                            CFNumberRef fakeNum = CFNumberCreate(allocator, kCFNumberIntType, &fakeCap);
+                            CFRelease(result);
+                            return fakeNum;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. 伪装电压：>4000mV 伪装成 3900mV，让系统认为还没到恒压涓流阶段
+        if ([keyStr isEqualToString:@"Voltage"] || [keyStr isEqualToString:@"BatteryVoltage"]) {
+            if (CFGetTypeID(result) == CFNumberGetTypeID()) {
+                int realVolt = 0;
+                if (CFNumberGetValue((CFNumberRef)result, kCFNumberIntType, &realVolt)) {
+                    if (realVolt > 4000) {
+                        int fakeVolt = 3900;
+                        CFNumberRef fakeNum = CFNumberCreate(allocator, kCFNumberIntType, &fakeVolt);
                         CFRelease(result);
                         return fakeNum;
                     }
@@ -175,7 +210,38 @@ static CFTypeRef hook_IORegistryEntryCreateCFProperty(io_registry_entry_t entry,
             }
         }
 
-        // 🔥 伪装未充满：永远返回 NO，让系统认为电池还没充满，继续充电
+        // 4. 伪装循环次数为 0，让系统认为电池全新，不会因老化降流
+        if ([keyStr isEqualToString:@"CycleCount"] || [keyStr isEqualToString:@"AppleRawCycleCount"]) {
+            if (CFGetTypeID(result) == CFNumberGetTypeID()) {
+                int fakeCycle = 0;
+                CFNumberRef fakeNum = CFNumberCreate(allocator, kCFNumberIntType, &fakeCycle);
+                CFRelease(result);
+                return fakeNum;
+            }
+        }
+
+        // 5. 伪装最大容量 = 设计容量，让系统认为健康度 100%
+        if ([keyStr isEqualToString:@"AppleRawMaxCapacity"] || [keyStr isEqualToString:@"MaxCapacity"] || [keyStr isEqualToString:@"NominalChargeCapacity"]) {
+            if (CFGetTypeID(result) == CFNumberGetTypeID()) {
+                int realMax = 0;
+                if (CFNumberGetValue((CFNumberRef)result, kCFNumberIntType, &realMax)) {
+                    // 读取设计容量
+                    int designCap = 0;
+                    CFTypeRef designVal = orig_IORegistryEntryCreateCFProperty(entry, CFSTR("DesignCapacity"), kCFAllocatorDefault, 0);
+                    if (designVal && CFGetTypeID(designVal) == CFNumberGetTypeID()) {
+                        CFNumberGetValue((CFNumberRef)designVal, kCFNumberIntType, &designCap);
+                    }
+                    if (designVal) CFRelease(designVal);
+                    if (designCap > 0 && realMax < designCap) {
+                        CFNumberRef fakeNum = CFNumberCreate(allocator, kCFNumberIntType, &designCap);
+                        CFRelease(result);
+                        return fakeNum;
+                    }
+                }
+            }
+        }
+
+        // 6. 伪装未充满：永远 NO
         if ([keyStr isEqualToString:@"FullyCharged"]) {
             if (CFGetTypeID(result) == CFBooleanGetTypeID()) {
                 CFRelease(result);
@@ -183,11 +249,19 @@ static CFTypeRef hook_IORegistryEntryCreateCFProperty(io_registry_entry_t entry,
             }
         }
 
-        // 🔥 伪装非临界/非警告电量，避免系统因为电量状态触发降流
+        // 7. 伪装非临界/非警告
         if ([keyStr isEqualToString:@"AtCriticalLevel"] || [keyStr isEqualToString:@"AtWarnLevel"]) {
             if (CFGetTypeID(result) == CFBooleanGetTypeID()) {
                 CFRelease(result);
                 return kCFBooleanFalse;
+            }
+        }
+
+        // 8. 伪装外部可充电 = YES
+        if ([keyStr isEqualToString:@"ExternalChargeCapable"]) {
+            if (CFGetTypeID(result) == CFBooleanGetTypeID()) {
+                CFRelease(result);
+                return kCFBooleanTrue;
             }
         }
     }
