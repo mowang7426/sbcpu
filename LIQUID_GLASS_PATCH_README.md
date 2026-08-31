@@ -26,6 +26,17 @@
 
 > 说明：展开/折叠/拖动/通知弹出/启动动画均沿用原布局逻辑，只在其上叠加玻璃效果；不改任何数据逻辑。
 
+## V7：文字阴影（保持透明度 + 字清晰可读）
+V6 加了玻璃厚度但在复杂背景（如锁屏大时间、聊天文字）上仍可能透过来重叠。V7 给浮窗
+**所有文字加阴影**（iOS 系统玻璃组件标准做法，如控制中心、锁屏时间）：
+- 递归遍历 `_blurView.contentView` 所有 UILabel，统一加阴影
+- 阴影参数：`shadowColor 黑 50%`、`shadowOffset (0,1)`、`shadowRadius 2.5`、`masksToBounds=NO`
+- 文字在任何背景上都能突出可读，同时保持玻璃透明度
+- tint 厚度从 42% 提到 55%
+
+**调参**：搜 `LGApplyGlassLabelShadow`，改 `shadowColor` 透明度/`shadowRadius` 控制阴影强弱；
+搜 `alpha:0.55f` 改玻璃厚度。
+
 ## V6：玻璃厚度层（解决 CABackdropLayer 太透明）
 V5 的 CABackdropLayer  backdrop 模糊太透，在聊天/复杂背景上背景文字直接透过来与浮窗数据重叠，
 可读性差。V6 在 backdrop 层之上、内容之下加一层**半透明白色 tint 层**（`glassTintLayer`，

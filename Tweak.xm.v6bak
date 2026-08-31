@@ -1458,25 +1458,6 @@ static void applySystemRefreshRate(void) {
 @end
 
 
-// 液态玻璃：给文字加阴影，保证透明背景下可读（iOS 系统玻璃组件标准做法）
-static void LGApplyGlassLabelShadow(UILabel *label) {
-    if (!label) return;
-    label.layer.shadowColor = [UIColor colorWithWhite:0.0f alpha:0.50f].CGColor;
-    label.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
-    label.layer.shadowRadius = 2.5f;
-    label.layer.shadowOpacity = 1.0f;
-    label.layer.masksToBounds = NO;
-}
-static void LGApplyShadowToLabelsInView(UIView *view) {
-    if (!view) return;
-    for (UIView *v in view.subviews) {
-        if ([v isKindOfClass:[UILabel class]]) {
-            LGApplyGlassLabelShadow((UILabel *)v);
-        }
-        LGApplyShadowToLabelsInView(v);
-    }
-}
-
 @implementation SBCPUFloatingView
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -1547,7 +1528,7 @@ static void LGApplyShadowToLabelsInView(UIView *view) {
                 _glassTintLayer.frame = _blurView.bounds;
                 _glassTintLayer.cornerRadius = cornerRad;
                 _glassTintLayer.masksToBounds = YES;
-                _glassTintLayer.backgroundColor = [UIColor colorWithWhite:1.0f alpha:0.55f].CGColor;
+                _glassTintLayer.backgroundColor = [UIColor colorWithWhite:1.0f alpha:0.42f].CGColor;
                 _glassTintLayer.zPosition = 1.0f;
                 [_blurView.layer addSublayer:_glassTintLayer];
             }
@@ -1871,10 +1852,7 @@ static void LGApplyShadowToLabelsInView(UIView *view) {
 
         [self resetInactivityTimer];
     }
-            // 液态玻璃：给所有数据文字加阴影，保证透明背景下可读
-        LGApplyShadowToLabelsInView(_blurView.contentView);
-
-return self;
+    return self;
 }
 
 - (void)handleLongPress:(UILongPressGestureRecognizer *)longPress {
