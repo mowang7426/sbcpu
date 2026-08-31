@@ -57,7 +57,19 @@ static BOOL isProtectedChargeProperty(CFStringRef propertyName) {
             @"StepCharging",         // 拦截步进式充电降流
             @"AICLLimit",            // 拦截适配器防抖降流
             @"USBChargeCurrent",     // 拦截USB默认限流
-            @"ChargingVoltageLimit"  // 拦截恒压限制
+            @"ChargingVoltageLimit",  // 拦截恒压限制
+            @"ChargeInhibit",        // 拦截充电抑制
+            @"ForceDischarge",       // 拦截强制放电
+            @"BatteryChargeOverride",// 拦截电池充电覆盖
+            @"MinChargeCurrent",     // 拦截最小充电电流限制
+            @"SafeChargeCurrent",    // 拦截安全充电电流限制
+            @"ChargingCurrent",      // 拦截充电电流设置
+            @"ChargeCurrent",        // 拦截充电电流
+            @"BatterySafeCharge",    // 拦截电池安全充电
+            @"ThermalChargeLimit",   // 拦截热充电限制
+            @"ChargeVoltageLimit",   // 拦截充电电压限制
+            @"MaxChargingCurrent",   // 拦截最大充电电流
+            @"AppleSmartBatteryChargeLimit" // 拦截苹果智能电池充电限制
         ];
     });
     for (NSString *name in names) {
@@ -141,11 +153,41 @@ static CFTypeRef hook_IORegistryEntryCreateCFProperty(io_registry_entry_t entry,
         // 这将彻底废掉 thermalmonitord 基于电池温度的降频保护
         if ([keyStr isEqualToString:@"Temperature"] || [keyStr isEqualToString:@"BatteryTemperature"]) {
             if (CFGetTypeID(result) == CFNumberGetTypeID()) {
-                int fakeTemp = 250; 
+                int fakeTemp = 250;
                 CFNumberRef fakeNum = CFNumberCreate(allocator, kCFNumberIntType, &fakeTemp);
-                CFRelease(result); // 释放真实的温度对象，防止内存泄漏
-                // NSLog(@"[SBCPUPowerd] 🌡️ 成功伪装电池温度为 25°C");
+                CFRelease(result);
                 return fakeNum;
+            }
+        }
+
+        // 🔥 伪装当前容量：真实电量 >75% 时伪装成 70%，让 powerd 认为还在快速充电阶段，避免 80% 后涓流
+        if ([keyStr isEqualToString:@"CurrentCapacity"] || [keyStr isEqualToString:@"AppleRawCurrentCapacity"]) {
+            if (CFGetTypeID(result) == CFNumberGetTypeID()) {
+                int realCap = 0;
+                if (CFNumberGetValue((CFNumberRef)result, kCFNumberIntType, &realCap)) {
+                    if (realCap > 75) {
+                        int fakeCap = 70; // 伪装成 70%，永远不到 80% 涓流阈值
+                        CFNumberRef fakeNum = CFNumberCreate(allocator, kCFNumberIntType, &fakeCap);
+                        CFRelease(result);
+                        return fakeNum;
+                    }
+                }
+            }
+        }
+
+        // 🔥 伪装未充满：永远返回 NO，让系统认为电池还没充满，继续充电
+        if ([keyStr isEqualToString:@"FullyCharged"]) {
+            if (CFGetTypeID(result) == CFBooleanGetTypeID()) {
+                CFRelease(result);
+                return kCFBooleanFalse;
+            }
+        }
+
+        // 🔥 伪装非临界/非警告电量，避免系统因为电量状态触发降流
+        if ([keyStr isEqualToString:@"AtCriticalLevel"] || [keyStr isEqualToString:@"AtWarnLevel"]) {
+            if (CFGetTypeID(result) == CFBooleanGetTypeID()) {
+                CFRelease(result);
+                return kCFBooleanFalse;
             }
         }
     }
