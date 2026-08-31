@@ -26,6 +26,22 @@
 
 > 说明：展开/折叠/拖动/通知弹出/启动动画均沿用原布局逻辑，只在其上叠加玻璃效果；不改任何数据逻辑。
 
+## V5：真正 iOS 26 液态玻璃（CABackdropLayer 原生 backdrop 模糊）
+V4 用 `UIVisualEffectView` 模拟，模糊质量与 iOS 26 原生液态玻璃有差距。V5 直接引入
+SBLiquidGlass 同款的 **`CABackdropLayer` 私有 API**（render-server 级 backdrop 模糊），
+这才是 dock 栏液态玻璃的真正底层。
+
+- **CABackdropLayer**：`NSClassFromString(@"CABackdropLayer")` 动态获取，配置
+  `windowServerAware` / `groupName` / `groupNamespace` / `ignoresScreenClip` / `scale`
+  等私有属性（全部 `@try` 保护），插入 `_blurView.layer` 最底层做真正 backdrop 模糊
+- **成功后** `_blurView.effect = nil`，用 CABackdropLayer 替代 UIVisualEffect 模糊
+- **失败 fallback**：任何私有 API 异常都 `@catch`，自动回退到 UIVisualEffectView 模糊，不崩
+- specular 边缘高光增强：基础高光 `白0.50`、boost `白0.90`、边缘宽度 `1.25pt`
+- 折叠/展开/布局全部同步 `glassBackdropLayer.frame/cornerRadius`
+
+**注意**：CABackdropLayer 是私有 API，行为随 iOS 版本变化。若装 V5 后进安全模式，
+先 Exit Safe Mode 卸载，回退到 V4（UIVisualEffectView 安全版）。建议先在测试环境验证。
+
 ## V4：dock 液态效果（移植 SBLiquidGlass specular 配方）
 参考 SBLiquidGlass V1.1.0 的 Dock.x / LGLiveBackdropView 实现，浮窗玻璃改为其核心配方：
 - **specular 边缘高光**：双层 CAGradientLayer（`白0.30 → 透明 → 白0.30` 的 45° 渐变）
