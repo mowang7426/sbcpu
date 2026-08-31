@@ -26,6 +26,29 @@
 
 > 说明：展开/折叠/拖动/通知弹出/启动动画均沿用原布局逻辑，只在其上叠加玻璃效果；不改任何数据逻辑。
 
+## V4：dock 液态效果（移植 SBLiquidGlass specular 配方）
+参考 SBLiquidGlass V1.1.0 的 Dock.x / LGLiveBackdropView 实现，浮窗玻璃改为其核心配方：
+- **specular 边缘高光**：双层 CAGradientLayer（`白0.30 → 透明 → 白0.30` 的 45° 渐变）
+  + boost 层（`白0.70` + `compositingFilter=overlayBlendMode` 提亮）
+- **边缘 mask**：每层带 `clearColor背景 + blackColor边框(0.75pt) + 圆角` 的 CALayer mask，
+  让渐变高光**只露出玻璃边缘一圈**（rim light），与 iOS 26 dock 一致
+- **最外沿细亮描边**（1pt 白 55%）收边
+- 模糊仍用已验证安全的 `UIVisualEffectView`（SystemThinMaterialLight），背景透出模糊
+- 全部为 `addSublayer` 图层操作，不碰 UIVisualEffectView 内部结构，零崩溃风险
+
+**为何不用 SBLiquidGlass 的 CABackdropLayer**：那是 iOS 26 私有渲染 API（`CABackdropLayer` +
+CoreImage 高斯滤镜），只有系统材质视图可用，且与你若已安装的 SBLiquidGlass tweak 叠加易冲突。
+本版用安全的 UIKit 层复刻其视觉（半透明 + specular 边缘高光），观感接近 dock。
+
+**调参**（搜 `glassSheenLayer` / `glassBoostLayer`）：
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `alpha:0.30f`（sheen 两端） | 0.30 | 边缘高光基础强度 |
+| `alpha:0.70f`（boost 两端） | 0.70 | 高光提亮强度 |
+| `borderWidth`（mask） | 0.75 | 边缘高光宽度（越大高光越宽） |
+| `startPoint/endPoint` | (0,0)→(1,1) | 高光方向（45°） |
+| `cornerRadius` | 20 | 圆角（插件设置可改） |
+
 ## 液态玻璃效果组成（公开 UIKit API 模拟）
 
 ```

@@ -118,11 +118,9 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, assign) CGPoint lastPoint;
 @property (nonatomic, strong) UIVisualEffectView *blurView;
 @property (nonatomic, strong) CAShapeLayer *marqueeLayer;
-// iOS 26 液态玻璃：specular 边缘高光（SBLiquidGlass Dock 配方移植）
+// iOS 26 液态玻璃：玻璃表面高光/反光层（覆盖在内容之上，zPosition 保持最上层）
 @property (nonatomic, strong) CAGradientLayer *glassSheenLayer;
-@property (nonatomic, strong) CALayer *glassSheenMask;
-@property (nonatomic, strong) CAGradientLayer *glassBoostLayer;
-@property (nonatomic, strong) CALayer *glassBoostMask;
+// iOS 26 液态玻璃：玻璃边缘内发光（亮-暗-亮折射）
 @property (nonatomic, strong) CAShapeLayer *glassEdgeLayer;
 @property (nonatomic, strong) UIView *horizontalDiv; 
 
@@ -1509,57 +1507,32 @@ static void applySystemRefreshRate(void) {
         _marqueeLayer.zPosition = 1001.0f; // 跑马灯在玻璃高光之上，保持清晰
         [_blurView.layer addSublayer:_marqueeLayer];
 
-        // === 液态玻璃：specular 边缘高光（SBLiquidGlass Dock 配方：白-清-白 45° 渐变 + 边缘 mask 只露一圈） ===
+        // === iOS 26 液态玻璃：表面高光/反光层（明暗对比，模拟真实玻璃反光） ===
         _glassSheenLayer = [CAGradientLayer layer];
         _glassSheenLayer.frame = _blurView.bounds;
         _glassSheenLayer.colors = @[
-            (id)[UIColor colorWithWhite:1.0f alpha:0.30f].CGColor,
-            (id)[UIColor clearColor].CGColor,
-            (id)[UIColor colorWithWhite:1.0f alpha:0.30f].CGColor,
+            (id)[UIColor colorWithWhite:1.0f alpha:0.00f].CGColor,
+            (id)[UIColor colorWithWhite:1.0f alpha:0.42f].CGColor,
+            (id)[UIColor colorWithWhite:1.0f alpha:0.10f].CGColor,
+            (id)[UIColor colorWithWhite:0.0f alpha:0.10f].CGColor,
+            (id)[UIColor colorWithWhite:0.0f alpha:0.00f].CGColor,
+            (id)[UIColor colorWithWhite:1.0f alpha:0.16f].CGColor,
         ];
-        _glassSheenLayer.locations = @[@0.0f, @0.5f, @1.0f];
+        _glassSheenLayer.locations = @[@0.0f, @0.16f, @0.34f, @0.56f, @0.80f, @1.0f];
         _glassSheenLayer.startPoint = CGPointMake(0.0f, 0.0f);
         _glassSheenLayer.endPoint = CGPointMake(1.0f, 1.0f);
-        _glassSheenLayer.zPosition = 1000.0f; // 玻璃表面反光盖在内容之上
-        _glassSheenMask = [CALayer layer];
-        _glassSheenMask.frame = _blurView.bounds;
-        _glassSheenMask.backgroundColor = [UIColor clearColor].CGColor;
-        _glassSheenMask.borderColor = [UIColor blackColor].CGColor;
-        _glassSheenMask.borderWidth = 0.75f;
-        _glassSheenMask.cornerRadius = cornerRad;
-        _glassSheenLayer.mask = _glassSheenMask;
+        _glassSheenLayer.opacity = 0.85f;
+        _glassSheenLayer.zPosition = 1000.0f; // 玻璃表面反光始终盖在内容之上
         [_blurView.layer addSublayer:_glassSheenLayer];
 
-        // boost 层：overlayBlendMode 增强高光亮度
-        _glassBoostLayer = [CAGradientLayer layer];
-        _glassBoostLayer.frame = _blurView.bounds;
-        _glassBoostLayer.colors = @[
-            (id)[UIColor colorWithWhite:1.0f alpha:0.70f].CGColor,
-            (id)[UIColor clearColor].CGColor,
-            (id)[UIColor colorWithWhite:1.0f alpha:0.70f].CGColor,
-        ];
-        _glassBoostLayer.locations = @[@0.0f, @0.5f, @1.0f];
-        _glassBoostLayer.startPoint = _glassSheenLayer.startPoint;
-        _glassBoostLayer.endPoint = _glassSheenLayer.endPoint;
-        _glassBoostLayer.compositingFilter = @"overlayBlendMode";
-        _glassBoostLayer.zPosition = 999.0f;
-        _glassBoostMask = [CALayer layer];
-        _glassBoostMask.frame = _blurView.bounds;
-        _glassBoostMask.backgroundColor = [UIColor clearColor].CGColor;
-        _glassBoostMask.borderColor = [UIColor blackColor].CGColor;
-        _glassBoostMask.borderWidth = 0.75f;
-        _glassBoostMask.cornerRadius = cornerRad;
-        _glassBoostLayer.mask = _glassBoostMask;
-        [_blurView.layer addSublayer:_glassBoostLayer];
-
-        // === 液态玻璃：最外沿细亮描边（配合 specular 形成完整边缘光） ===
+        // === 液态玻璃：边缘内发光（玻璃边缘的亮-暗-亮折射光带） ===
         _glassEdgeLayer = [CAShapeLayer layer];
         _glassEdgeLayer.frame = _blurView.bounds;
         _glassEdgeLayer.fillColor = [UIColor clearColor].CGColor;
-        _glassEdgeLayer.strokeColor = [UIColor colorWithWhite:1.0f alpha:0.55f].CGColor;
-        _glassEdgeLayer.lineWidth = 1.0f;
-        _glassEdgeLayer.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(_blurView.bounds, 0.5f, 0.5f) cornerRadius:cornerRad].CGPath;
-        _glassEdgeLayer.zPosition = 998.0f;
+        _glassEdgeLayer.strokeColor = [UIColor colorWithWhite:1.0f alpha:0.50f].CGColor;
+        _glassEdgeLayer.lineWidth = 1.5f;
+        _glassEdgeLayer.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(_blurView.bounds, 0.75f, 0.75f) cornerRadius:cornerRad].CGPath;
+        _glassEdgeLayer.zPosition = 999.0f; // 在内容之上、高光之下
         [_blurView.layer addSublayer:_glassEdgeLayer];
 
         UIView *content = _blurView.contentView;
@@ -2289,15 +2262,10 @@ static void applySystemRefreshRate(void) {
     _marqueeLayer.frame = _blurView.bounds;
     _marqueeLayer.path = [UIBezierPath bezierPathWithRoundedRect:_blurView.bounds cornerRadius:cornerRad].CGPath;
 
-    // 液态玻璃 specular 高光层与边缘光跟随布局
+    // 液态玻璃高光层与边缘光跟随布局
     _glassSheenLayer.frame = _blurView.bounds;
-    _glassSheenMask.frame = _blurView.bounds;
-    _glassSheenMask.cornerRadius = cornerRad;
-    _glassBoostLayer.frame = _blurView.bounds;
-    _glassBoostMask.frame = _blurView.bounds;
-    _glassBoostMask.cornerRadius = cornerRad;
     _glassEdgeLayer.frame = _blurView.bounds;
-    _glassEdgeLayer.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(_blurView.bounds, 0.5f, 0.5f) cornerRadius:cornerRad].CGPath;
+    _glassEdgeLayer.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(_blurView.bounds, 0.75f, 0.75f) cornerRadius:cornerRad].CGPath;
 
     if (isCharging) {
         _marqueeLayer.hidden = NO;
@@ -2416,15 +2384,10 @@ static void applySystemRefreshRate(void) {
         self.marqueeLayer.frame = self.blurView.bounds;
         self.marqueeLayer.path = [UIBezierPath bezierPathWithRoundedRect:self.blurView.bounds cornerRadius:cornerRad].CGPath;
 
-        // 液态玻璃 specular 高光层与边缘光跟随折叠尺寸
+        // 液态玻璃高光层与边缘光跟随折叠尺寸
         self.glassSheenLayer.frame = self.blurView.bounds;
-        self.glassSheenMask.frame = self.blurView.bounds;
-        self.glassSheenMask.cornerRadius = cornerRad;
-        self.glassBoostLayer.frame = self.blurView.bounds;
-        self.glassBoostMask.frame = self.blurView.bounds;
-        self.glassBoostMask.cornerRadius = cornerRad;
         self.glassEdgeLayer.frame = self.blurView.bounds;
-        self.glassEdgeLayer.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(self.blurView.bounds, 0.5f, 0.5f) cornerRadius:cornerRad].CGPath;
+        self.glassEdgeLayer.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(self.blurView.bounds, 0.75f, 0.75f) cornerRadius:cornerRad].CGPath;
     };
 
     void (^completionBlock)(BOOL) = ^(BOOL finished) {
