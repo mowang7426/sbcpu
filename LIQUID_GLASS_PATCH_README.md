@@ -26,6 +26,19 @@
 
 > 说明：展开/折叠/拖动/通知弹出/启动动画均沿用原布局逻辑，只在其上叠加玻璃效果；不改任何数据逻辑。
 
+## V6：玻璃厚度层（解决 CABackdropLayer 太透明）
+V5 的 CABackdropLayer  backdrop 模糊太透，在聊天/复杂背景上背景文字直接透过来与浮窗数据重叠，
+可读性差。V6 在 backdrop 层之上、内容之下加一层**半透明白色 tint 层**（`glassTintLayer`，
+白 42% alpha），模拟玻璃厚度：
+- 遮挡/软化背景，浮窗数据清晰可读
+- 仍保留玻璃通透感（不是纯色不透明底）
+- `CALayer` 加到 `_blurView.layer`，zPosition=1，不碰 UIVisualEffectView 内部结构
+- 折叠/展开/布局同步 frame/cornerRadius
+- CABackdropLayer 失败时 tint 层也不创建，自动 fallback
+
+**调参**：搜 `alpha:0.42f`，想更不透明就调大（0.5~0.6），想更通透就调小（0.25~0.35）。
+想换玻璃颜色（比如深色玻璃）就改 `colorWithWhite:1.0f` 为其他颜色。
+
 ## V5：真正 iOS 26 液态玻璃（CABackdropLayer 原生 backdrop 模糊）
 V4 用 `UIVisualEffectView` 模拟，模糊质量与 iOS 26 原生液态玻璃有差距。V5 直接引入
 SBLiquidGlass 同款的 **`CABackdropLayer` 私有 API**（render-server 级 backdrop 模糊），

@@ -126,8 +126,6 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) CAShapeLayer *glassEdgeLayer;
 // iOS 26 原生液态玻璃：CABackdropLayer 真正 backdrop 模糊（SBLiquidGlass 同款）
 @property (nonatomic, strong) CALayer *glassBackdropLayer;
-// 液态玻璃厚度层：半透明白色 tint，遮挡背景提升可读性
-@property (nonatomic, strong) CALayer *glassTintLayer;
 @property (nonatomic, strong) UIView *horizontalDiv; 
 
 @property (nonatomic, strong) UIView *performanceContainer; 
@@ -1522,19 +1520,9 @@ static void applySystemRefreshRate(void) {
                 [_blurView.layer insertSublayer:bd atIndex:0];
                 _glassBackdropLayer = bd;
                 _blurView.effect = nil; // 用 CABackdropLayer 替代 UIVisualEffect 模糊
-
-                // 玻璃厚度层：半透明白色 tint，遮挡背景提升可读性（在 backdrop 之上、内容之下）
-                _glassTintLayer = [CALayer layer];
-                _glassTintLayer.frame = _blurView.bounds;
-                _glassTintLayer.cornerRadius = cornerRad;
-                _glassTintLayer.masksToBounds = YES;
-                _glassTintLayer.backgroundColor = [UIColor colorWithWhite:1.0f alpha:0.42f].CGColor;
-                _glassTintLayer.zPosition = 1.0f;
-                [_blurView.layer addSublayer:_glassTintLayer];
             }
         } @catch (NSException *e) {
             _glassBackdropLayer = nil;
-            _glassTintLayer = nil;
             // fallback：保留 UIVisualEffectView 模糊
         }
 
@@ -2332,10 +2320,6 @@ static void applySystemRefreshRate(void) {
         _glassBackdropLayer.frame = _blurView.bounds;
         _glassBackdropLayer.cornerRadius = cornerRad;
     }
-    if (_glassTintLayer) {
-        _glassTintLayer.frame = _blurView.bounds;
-        _glassTintLayer.cornerRadius = cornerRad;
-    }
     _glassSheenLayer.frame = _blurView.bounds;
     _glassSheenMask.frame = _blurView.bounds;
     _glassSheenMask.cornerRadius = cornerRad;
@@ -2466,10 +2450,6 @@ static void applySystemRefreshRate(void) {
         if (self.glassBackdropLayer) {
             self.glassBackdropLayer.frame = self.blurView.bounds;
             self.glassBackdropLayer.cornerRadius = cornerRad;
-        }
-        if (self.glassTintLayer) {
-            self.glassTintLayer.frame = self.blurView.bounds;
-            self.glassTintLayer.cornerRadius = cornerRad;
         }
         self.glassSheenLayer.frame = self.blurView.bounds;
         self.glassSheenMask.frame = self.blurView.bounds;
