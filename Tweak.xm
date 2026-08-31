@@ -285,6 +285,12 @@ static BOOL showBatteryPercent = YES;
 static BOOL showBatteryTemperature = YES;
 static BOOL showBatteryCurrent = YES;
 static BOOL liquidGlassEnabled = YES; // 液态玻璃效果开关
+// 智能停充
+static BOOL smartChargeEnable = NO;
+static NSInteger smartChargeUpperLimit = 80;  // 停充上限
+static NSInteger smartChargeLowerLimit = 70;  // 回充下限
+static NSInteger smartChargeMode = 0;          // 0=日常80%, 1=出行100%, 2=保养60%
+static BOOL smartChargeStopped = NO;           // 当前是否处于停充状态
 
 static CGRect keyboardBeforeFrame;
 static BOOL keyboardMoved = NO;
@@ -473,6 +479,10 @@ static void LoadPreferences(void) {
     showBatteryTemperature = getBoolPref(CFSTR("showBatteryTemperature"), YES);
     showBatteryCurrent = getBoolPref(CFSTR("showBatteryCurrent"), YES);
     liquidGlassEnabled = getBoolPref(CFSTR("liquidGlassEnabled"), YES);
+    smartChargeEnable = getBoolPref(CFSTR("smartChargeEnable"), NO);
+    smartChargeUpperLimit = (NSInteger)getFloatPref(CFSTR("smartChargeUpperLimit"), 80.0f);
+    smartChargeLowerLimit = (NSInteger)getFloatPref(CFSTR("smartChargeLowerLimit"), 70.0f);
+    smartChargeMode = (NSInteger)getFloatPref(CFSTR("smartChargeMode"), 0.0f);
     
     chargeBoostEnable = getBoolPref(CFSTR("chargeBoostEnable"), NO);
     forceFastChargeEnable = getBoolPref(CFSTR("forceFastChargeEnable"), NO);
@@ -522,6 +532,10 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("showBatteryTemperature"), showBatteryTemperature);
     setBoolPref(CFSTR("showBatteryCurrent"), showBatteryCurrent);
     setBoolPref(CFSTR("liquidGlassEnabled"), liquidGlassEnabled);
+    setBoolPref(CFSTR("smartChargeEnable"), smartChargeEnable);
+    setFloatPref(CFSTR("smartChargeUpperLimit"), (float)smartChargeUpperLimit);
+    setFloatPref(CFSTR("smartChargeLowerLimit"), (float)smartChargeLowerLimit);
+    setFloatPref(CFSTR("smartChargeMode"), (float)smartChargeMode);
     setBoolPref(CFSTR("chargeBoostEnable"), chargeBoostEnable);
     setBoolPref(CFSTR("forceFastChargeEnable"), forceFastChargeEnable);
     setBoolPref(CFSTR("notificationEnable"), notificationEnable);
@@ -598,6 +612,49 @@ static void applyExperimentalChargeLimit100(BOOL enable) {
     }
 
     IOObjectRelease(service);
+}
+
+// 智能停充：直接设置 ChargeLimit 为任意值（真实硬件停充）
+static void setChargeLimitValue(NSInteger value) {
+    io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
+    if (!service) return;
+    int val = (int)value;
+    CFNumberRef number = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &val);
+    if (number) {
+        IORegistryEntrySetCFProperty(service, CFSTR("ChargeLimit"), number);
+        CFRelease(number);
+    }
+    IOObjectRelease(service);
+}
+
+// 智能停充核心逻辑：达到上限停充，降到下限恢复
+static void updateSmartCharge(void) {
+    if (!smartChargeEnable || !floatingView) {
+        if (smartChargeStopped) {
+            smartChargeStopped = NO;
+            setChargeLimitValue(100);
+        }
+        return;
+    }
+    if (!isChargingInternal()) {
+        if (smartChargeStopped) {
+            smartChargeStopped = NO;
+            setChargeLimitValue(100);
+        }
+        return;
+    }
+    [UIDevice currentDevice].batteryMonitoringEnabled = YES;
+    float level = [UIDevice currentDevice].batteryLevel;
+    if (level < 0) return;
+    NSInteger percent = (NSInteger)(level * 100.0f);
+
+    if (!smartChargeStopped && percent >= smartChargeUpperLimit) {
+        setChargeLimitValue(smartChargeUpperLimit);
+        smartChargeStopped = YES;
+    } else if (smartChargeStopped && percent <= smartChargeLowerLimit) {
+        setChargeLimitValue(100);
+        smartChargeStopped = NO;
+    }
 }
 
 static NSString *getChargeBoostStatus(double watts, double temp, NSInteger battery, BOOL charging) {
@@ -1157,6 +1214,7 @@ static void updateCPU(void) {
     double fps = [SBCPUFPSHelper sharedInstance].currentFPS;
 
     checkHighCPU(cpu);
+    updateSmartCharge(); // 智能停充：检测电量，达到上限停充，降到下限恢复
 
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!floatingView) return;
@@ -2862,7 +2920,10 @@ return self;
     }
     
     if (!fastChargeStartupAnimating) {
-        if (forceFastChargeEnable && isCharging) {
+        if (smartChargeEnable && smartChargeStopped) {
+            _statusLabel.text = [NSString stringWithFormat:@"🛑 智能停充 · %ld%%", (long)smartChargeUpperLimit];
+            _statusLabel.textColor = [UIColor systemOrangeColor];
+        } else if (forceFastChargeEnable && isCharging) {
             NSDictionary *chargeInfo = getRealBatteryDetails();
             double watts = [chargeInfo[@"CalculatedWatts"] doubleValue];
             _statusLabel.text = [NSString stringWithFormat:@"🔥 强制满血快充 · %.1fW", MAX(0.0, watts)];
@@ -3598,7 +3659,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { 
     (void)tableView;
-    return 11; 
+    return 12;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
@@ -3612,8 +3673,9 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     if (section == 6) return 10;
     if (section == 7) return 2; 
     if (section == 8) return 7;
-    if (section == 9) return 5; // 📖 功能说明行数
-    if (section == 10) return 8; // 🌡️ 温控功能说明
+    if (section == 9) return 4; // 🔋 智能停充
+    if (section == 10) return 5; // 📖 功能说明行数
+    if (section == 11) return 8; // 🌡️ 温控功能说明
     return 0;
 }
 
@@ -3628,8 +3690,9 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     if (section == 6) return @"🌡️ 温度保护"; 
     if (section == 7) return @"🔌 充电增强";
     if (section == 8) return @"📍 位置与显示";
-    if (section == 9) return @"📖 功能与使用说明";
-    if (section == 10) return @"🌡️ 温度保护功能说明"; 
+    if (section == 9) return @"🔋 智能停充";
+    if (section == 10) return @"📖 功能与使用说明";
+    if (section == 11) return @"🌡️ 温度保护功能说明"; 
     return @"";
 }
 
@@ -3646,6 +3709,60 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     }
 
     if (indexPath.section == 9) {
+        if (indexPath.row == 0) {
+            cell.textLabel.text = @"智能停充";
+            cell.detailTextLabel.text = @"充到指定电量自动停充，降到下限自动恢复，保护电池";
+            UISwitch *sw = [UISwitch new];
+            sw.on = smartChargeEnable;
+            [sw addTarget:self action:@selector(changeSmartChargeEnable:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
+        } else if (indexPath.row == 1) {
+            cell.textLabel.text = @"预设模式";
+            NSArray *titles = @[@"日常保护 80%", @"满电出行 100%", @"深度保养 60%"];
+            CGFloat btnW = (cell.contentView.bounds.size.width > 320) ? (cell.contentView.bounds.size.width - 40) / 3.0 : 90;
+            for (int i = 0; i < 3; i++) {
+                UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+                btn.frame = CGRectMake(15 + i * (btnW + 5), 34, btnW, 30);
+                [btn setTitle:titles[i] forState:UIControlStateNormal];
+                btn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
+                btn.layer.cornerRadius = 8;
+                btn.layer.borderWidth = 1;
+                if (smartChargeMode == i) {
+                    btn.backgroundColor = [UIColor systemBlueColor];
+                    [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+                    btn.layer.borderColor = [UIColor systemBlueColor].CGColor;
+                } else {
+                    btn.backgroundColor = [UIColor clearColor];
+                    [btn setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
+                    btn.layer.borderColor = [UIColor systemBlueColor].CGColor;
+                }
+                btn.tag = i;
+                [btn addTarget:self action:@selector(changeSmartChargeMode:) forControlEvents:UIControlEventTouchUpInside];
+                [cell.contentView addSubview:btn];
+            }
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else if (indexPath.row == 2) {
+            cell.textLabel.text = [NSString stringWithFormat:@"停充上限: %ld%%", (long)smartChargeUpperLimit];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(15, 42, cell.contentView.bounds.size.width - 30, 30)];
+            slider.minimumValue = 50;
+            slider.maximumValue = 100;
+            slider.value = smartChargeUpperLimit;
+            [slider addTarget:self action:@selector(changeSmartChargeUpper:) forControlEvents:UIControlEventValueChanged];
+            [cell.contentView addSubview:slider];
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else if (indexPath.row == 3) {
+            cell.textLabel.text = [NSString stringWithFormat:@"回充下限: %ld%%", (long)smartChargeLowerLimit];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(15, 42, cell.contentView.bounds.size.width - 30, 30)];
+            slider.minimumValue = 40;
+            slider.maximumValue = 90;
+            slider.value = smartChargeLowerLimit;
+            [slider addTarget:self action:@selector(changeSmartChargeLower:) forControlEvents:UIControlEventValueChanged];
+            [cell.contentView addSubview:slider];
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        }
+    }
+
+    if (indexPath.section == 10) {
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         cell.textLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
         cell.textLabel.textColor = [UIColor darkGrayColor];
@@ -3659,7 +3776,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     }
 
     // 🌡️ 温控功能说明：独立放在温控设置下面，避免右侧开关挤压说明文字
-    if (indexPath.section == 10) {
+    if (indexPath.section == 11) {
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         cell.textLabel.font = [UIFont systemFontOfSize:15.0 weight:UIFontWeightSemibold];
         cell.textLabel.textColor = [UIColor darkTextColor];
@@ -4138,6 +4255,49 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         [floatingView applyAdaptiveTextColors];
     }
 }
+
+// 智能停充：开关
+- (void)changeSmartChargeEnable:(UISwitch *)sw {
+    smartChargeEnable = sw.isOn;
+    SavePreferencesAndNotify();
+    if (!smartChargeEnable && smartChargeStopped) {
+        smartChargeStopped = NO;
+        setChargeLimitValue(100);
+    }
+    [self.tableView reloadData];
+}
+
+// 智能停充：预设模式
+- (void)changeSmartChargeMode:(UIButton *)btn {
+    smartChargeMode = btn.tag;
+    if (smartChargeMode == 0) { smartChargeUpperLimit = 80; smartChargeLowerLimit = 70; }
+    else if (smartChargeMode == 1) { smartChargeUpperLimit = 100; smartChargeLowerLimit = 90; }
+    else if (smartChargeMode == 2) { smartChargeUpperLimit = 60; smartChargeLowerLimit = 50; }
+    SavePreferencesAndNotify();
+    if (smartChargeStopped) { smartChargeStopped = NO; setChargeLimitValue(100); }
+    [self.tableView reloadData];
+}
+
+// 智能停充：停充上限
+- (void)changeSmartChargeUpper:(UISlider *)slider {
+    smartChargeUpperLimit = (NSInteger)slider.value;
+    if (smartChargeUpperLimit <= smartChargeLowerLimit) {
+        smartChargeLowerLimit = MAX(40, smartChargeUpperLimit - 5);
+    }
+    SavePreferencesAndNotify();
+    if (smartChargeStopped) { smartChargeStopped = NO; setChargeLimitValue(100); }
+    [self.tableView reloadData];
+}
+
+// 智能停充：回充下限
+- (void)changeSmartChargeLower:(UISlider *)slider {
+    smartChargeLowerLimit = (NSInteger)slider.value;
+    if (smartChargeLowerLimit >= smartChargeUpperLimit) {
+        smartChargeUpperLimit = MIN(100, smartChargeLowerLimit + 5);
+    }
+    SavePreferencesAndNotify();
+    [self.tableView reloadData];
+}
 - (void)changeChargeBoost:(UISwitch *)sw {
     chargeBoostEnable = sw.isOn;
     chargeBoostStartTime = sw.isOn ? CFAbsoluteTimeGetCurrent() : 0;
@@ -4218,7 +4378,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         if (indexPath.row == 8) return 150.0;
         return (indexPath.row == 9) ? 72.0 : 64.0;
     }
-    if (indexPath.section == 10) {
+    if (indexPath.section == 11) {
         return 82.0;
     }
     return UITableViewAutomaticDimension;
