@@ -128,6 +128,7 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) CALayer *glassBackdropLayer;
 // 液态玻璃厚度层：半透明白色 tint，遮挡背景提升可读性
 @property (nonatomic, strong) CALayer *glassTintLayer;
+@property (nonatomic, strong) NSTimer *adaptiveTimer; // 实时背景采样反色定时器
 @property (nonatomic, strong) UIView *horizontalDiv; 
 
 @property (nonatomic, strong) UIView *performanceContainer; 
@@ -1520,15 +1521,20 @@ static void LGRemoveLabelShadowInView(UIView *view) {
     [self applyAdaptiveTextColors];
 }
 
-// 液态玻璃：根据深浅模式自适应文字颜色（反色），仅改静态颜色
+// 液态玻璃：实时采样浮窗下方背景亮度，文字自动反色（亮背景→黑字，暗背景→白字）
 - (void)applyAdaptiveTextColors {
-    BOOL darkMode = (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark);
     BOOL glass = liquidGlassEnabled;
+    BOOL lightBg = YES; // 默认浅色背景→黑字
 
-    UIColor *titleColor = (glass && darkMode)
-        ? [UIColor colorWithWhite:0.70 alpha:1.0f]
-        : [UIColor colorWithWhite:0.35 alpha:1.0f];
-    UIColor *monoColor = (glass && darkMode) ? [UIColor whiteColor] : [UIColor blackColor];
+    if (glass) {
+        CGFloat lum = [self sampleBackgroundLuminance];
+        lightBg = (lum > 0.5);
+    }
+
+    UIColor *titleColor = lightBg
+        ? [UIColor colorWithWhite:0.32 alpha:1.0f]
+        : [UIColor colorWithWhite:0.82 alpha:1.0f];
+    UIColor *monoColor = lightBg ? [UIColor blackColor] : [UIColor whiteColor];
 
     // 静态副标题
     _cpuTitleLabel.textColor = titleColor;
@@ -1543,16 +1549,88 @@ static void LGRemoveLabelShadowInView(UIView *view) {
     _currentValueLabel.textColor = monoColor;
     _miniCpuLabel.textColor = monoColor;
     // 通知文字
-    _notifAppNameLabel.textColor = (glass && darkMode) ? [UIColor lightGrayColor] : [UIColor darkGrayColor];
-    _notifMessageLabel.textColor = (glass && darkMode) ? [UIColor colorWithWhite:0.8 alpha:1.0] : [UIColor colorWithWhite:0.15 alpha:1.0];
+    _notifAppNameLabel.textColor = lightBg ? [UIColor darkGrayColor] : [UIColor lightGrayColor];
+    _notifMessageLabel.textColor = lightBg ? [UIColor colorWithWhite:0.15 alpha:1.0] : [UIColor colorWithWhite:0.85 alpha:1.0];
 }
 
-// 监听深浅模式变化，自动反色
+// 实时采样浮窗下方背景的平均亮度（0-1），用 UIScreen 私有截屏 API
+- (CGFloat)sampleBackgroundLuminance {
+    if (!self.superview) return 0.5;
+    @try {
+        UIView *snapshot = [UIScreen.mainScreen performSelector:@selector(snapshotView)];
+        if (!snapshot) return 0.5;
+
+        UIImage *snapshotImage = nil;
+        if ([snapshot isKindOfClass:[UIImageView class]]) {
+            snapshotImage = ((UIImageView *)snapshot).image;
+        }
+        if (!snapshotImage) {
+            CGSize s = UIScreen.mainScreen.bounds.size;
+            UIGraphicsBeginImageContextWithOptions(s, NO, 0);
+            [snapshot drawViewHierarchyInRect:CGRectMake(0,0,s.width,s.height) afterScreenUpdates:NO];
+            snapshotImage = UIGraphicsGetImageFromCurrentImageContext();
+            UIGraphicsEndImageContext();
+        }
+        if (!snapshotImage || !snapshotImage.CGImage) return 0.5;
+
+        // 裁剪浮窗中心 30x30 区域
+        CGFloat scale = UIScreen.mainScreen.scale;
+        CGRect sampleRect = CGRectMake((CGRectGetMidX(self.frame) - 15.0f) * scale,
+                                         (CGRectGetMidY(self.frame) - 15.0f) * scale,
+                                         30.0f * scale, 30.0f * scale);
+        CGImageRef cropped = CGImageCreateWithImageInRect(snapshotImage.CGImage, sampleRect);
+        if (!cropped) return 0.5;
+        UIImage *croppedImage = [UIImage imageWithCGImage:cropped];
+        CGImageRelease(cropped);
+
+        return [self averageLuminanceFromImage:croppedImage];
+    } @catch (NSException *e) {
+        return 0.5; // 截屏失败时 fallback 中性亮度
+    }
+}
+
+// 计算图片平均亮度（ITU-R BT.601）
+- (CGFloat)averageLuminanceFromImage:(UIImage *)image {
+    CGImageRef cgImage = image.CGImage;
+    if (!cgImage) return 0.5;
+    size_t width = CGImageGetWidth(cgImage);
+    size_t height = CGImageGetHeight(cgImage);
+    if (width == 0 || height == 0) return 0.5;
+
+    unsigned char *rawData = calloc(width * height * 4, 1);
+    if (!rawData) return 0.5;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(rawData, width, height, 8, width*4,
+                                                   colorSpace, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(colorSpace);
+    if (!context) { free(rawData); return 0.5; }
+    CGContextDrawImage(context, CGRectMake(0,0,width,height), cgImage);
+    CGContextRelease(context);
+
+    CGFloat total = 0;
+    NSInteger count = width * height;
+    for (NSInteger i = 0; i < count; i++) {
+        CGFloat r = rawData[i*4] / 255.0f;
+        CGFloat g = rawData[i*4+1] / 255.0f;
+        CGFloat b = rawData[i*4+2] / 255.0f;
+        total += 0.299f*r + 0.587f*g + 0.114f*b;
+    }
+    free(rawData);
+    return total / count;
+}
+
+// 监听深浅模式变化，触发反色更新
 - (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
     [super traitCollectionDidChange:previousTraitCollection];
     if (liquidGlassEnabled) {
         [self applyAdaptiveTextColors];
     }
+}
+
+// 清理反色定时器
+- (void)dealloc {
+    [_adaptiveTimer invalidate];
+    _adaptiveTimer = nil;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -1943,6 +2021,10 @@ static void LGRemoveLabelShadowInView(UIView *view) {
     }
             // 液态玻璃：根据开关应用样式（开→液态玻璃+阴影+反色，关→原版）
         [self applyLiquidGlassStyle];
+
+        // 实时背景采样反色定时器：每 0.5 秒采样浮窗下方背景亮度，文字自动反色
+        _adaptiveTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:self selector:@selector(applyAdaptiveTextColors) userInfo:nil repeats:YES];
+        [[NSRunLoop mainRunLoop] addTimer:_adaptiveTimer forMode:NSRunLoopCommonModes];
 
 return self;
 }
