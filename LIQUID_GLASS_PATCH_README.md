@@ -3,6 +3,14 @@
 > 针对 **SBCPUFloating V3.1.19 源码**（横屏模式开关修复版）的浮窗外观增强。
 > 目标：让性能浮窗呈现 **iOS 26 液态玻璃**质感。
 
+## 重要：V3 修复记录（装 V2 进安全模式请看这里）
+- **崩溃原因**：V2 的"玻璃厚度层"用了 `insertSubview:belowSubview:_blurView.contentView`。
+  `UIVisualEffectView.contentView` 是懒加载的，初始化早期还不是 `_blurView` 的直接子视图，
+  而 `insertSubview:belowSubview:` 要求参照视图必须是子视图 → SpringBoard 启动即抛异常 → 安全模式。
+- **修复**：已删除该行。玻璃厚度改为**不碰 UIVisualEffectView 内部结构**的纯 layer 方案
+  （高光层/边缘光全部用 `addSublayer` 挂在 `_blurView.layer` 上，零崩溃风险）。
+- 若你已装 V2 进安全模式：先点 **Exit Safe Mode** 恢复正常 → 卸载旧 deb → 安装本版 → Respring。
+
 ## 改了什么
 
 源码版本本来就有毛玻璃基础（`_blurView` = UIVisualEffectView + `SystemThinMaterialLight` 模糊 + 圆角 + 白描边），这次在它基础上补齐了液态玻璃最关键的**表面高光/反光**，并强化玻璃边缘。

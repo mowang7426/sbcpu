@@ -1507,13 +1507,6 @@ static void applySystemRefreshRate(void) {
         _marqueeLayer.zPosition = 1001.0f; // 跑马灯在玻璃高光之上，保持清晰
         [_blurView.layer addSublayer:_marqueeLayer];
 
-        // === iOS 26 液态玻璃：玻璃厚度 tint（位于内容之下，模拟玻璃吸光/厚度，衬托表面反光） ===
-        UIView *glassTint = [[UIView alloc] initWithFrame:_blurView.bounds];
-        glassTint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        glassTint.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.15f];
-        glassTint.userInteractionEnabled = NO;
-        [_blurView insertSubview:glassTint belowSubview:_blurView.contentView];
-
         // === iOS 26 液态玻璃：表面高光/反光层（明暗对比，模拟真实玻璃反光） ===
         _glassSheenLayer = [CAGradientLayer layer];
         _glassSheenLayer.frame = _blurView.bounds;
