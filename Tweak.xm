@@ -3775,7 +3775,11 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
                     btn.layer.shadowRadius = 4;
                     btn.layer.shadowOffset = CGSizeMake(0, 2);
                 } else {
-                    btn.backgroundColor = [UIColor colorWithWhite:0.95 alpha:1.0];
+                    btn.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *trait) {
+                        return trait.userInterfaceStyle == UIUserInterfaceStyleDark
+                            ? [UIColor colorWithWhite:0.2 alpha:1.0]
+                            : [UIColor colorWithWhite:0.95 alpha:1.0];
+                    }];
                     [btn setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
                 }
                 btn.tag = i;
@@ -3790,7 +3794,11 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             CGFloat barX = 20, barW = cell.contentView.bounds.size.width - 40, barY = 50, barH = 10;
             // 背景条
             UIView *bgBar = [[UIView alloc] initWithFrame:CGRectMake(barX, barY, barW, barH)];
-            bgBar.backgroundColor = [UIColor colorWithWhite:0.9 alpha:1.0];
+            bgBar.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *trait) {
+                return trait.userInterfaceStyle == UIUserInterfaceStyleDark
+                    ? [UIColor colorWithWhite:0.25 alpha:1.0]
+                    : [UIColor colorWithWhite:0.9 alpha:1.0];
+            }];
             bgBar.layer.cornerRadius = barH / 2;
             [cell.contentView addSubview:bgBar];
             // 高亮区间
@@ -3804,13 +3812,13 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             UILabel *lowLbl = [[UILabel alloc] initWithFrame:CGRectMake(barX - 10, barY + barH + 4, 60, 16)];
             lowLbl.text = [NSString stringWithFormat:@"↓ %ld%%", (long)smartChargeLowerLimit];
             lowLbl.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
-            lowLbl.textColor = [UIColor systemGrayColor];
+            lowLbl.textColor = [UIColor labelColor];
             [cell.contentView addSubview:lowLbl];
             // 上限标记
             UILabel *highLbl = [[UILabel alloc] initWithFrame:CGRectMake(barX + barW - 50, barY + barH + 4, 60, 16)];
             highLbl.text = [NSString stringWithFormat:@"%ld%% ↑", (long)smartChargeUpperLimit];
             highLbl.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
-            highLbl.textColor = [UIColor systemGrayColor];
+            highLbl.textColor = [UIColor labelColor];
             highLbl.textAlignment = NSTextAlignmentRight;
             [cell.contentView addSubview:highLbl];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
