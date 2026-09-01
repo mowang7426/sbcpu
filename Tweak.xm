@@ -2507,10 +2507,16 @@ return self;
     _thermalStatusLabel.frame = CGRectMake(12.0f, currentY, finalW - 24.0f, 16.0f);
     currentY += 16.0f;
 
-    // 时间显示行
-    currentY += 2.0f;
-    _timeLabel.frame = CGRectMake(12.0f, currentY, finalW - 24.0f, 14.0f);
-    currentY += 14.0f;
+    // 时间显示行（仅横屏显示，竖屏隐藏并节省高度）
+    BOOL isLandscapeNow = ([UIScreen mainScreen].bounds.size.width > [UIScreen mainScreen].bounds.size.height);
+    if (isLandscapeNow) {
+        _timeLabel.hidden = NO;
+        currentY += 2.0f;
+        _timeLabel.frame = CGRectMake(12.0f, currentY, finalW - 24.0f, 14.0f);
+        currentY += 14.0f;
+    } else {
+        _timeLabel.hidden = YES;
+    }
 
     if (showCombinedMode) {
         self.horizontalDiv.hidden = NO;
