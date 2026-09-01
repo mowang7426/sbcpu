@@ -14,9 +14,27 @@ static CFStringRef const kSBCPUPowerdReadyNotification = CFSTR("com.yourname.sbc
 
 static BOOL gForceFastCharge = NO;
 static BOOL gOriginalChargeLimitSaved = NO;
+// 智能停充（powerd 进程内执行，避免被 SpringBoard 设置覆盖）
+static BOOL gSmartChargeEnable = NO;
+static int gSmartChargeUpperLimit = 80;
+static int gSmartChargeLowerLimit = 70;
+static BOOL gSmartChargeStopped = NO;
 static int gOriginalChargeLimit = 100;
 static BOOL gHookInstalled = NO;
 
+static int readIntPref(CFStringRef key, int fallback) {
+    CFPreferencesAppSynchronize(kSBCPUPrefAppID);
+    CFPropertyListRef v = CFPreferencesCopyValue(key, kSBCPUPrefAppID,
+                                                   kCFPreferencesCurrentUser,
+                                                   kCFPreferencesAnyHost);
+    if (!v) return fallback;
+    int result = fallback;
+    if (CFGetTypeID(v) == CFNumberGetTypeID()) {
+        CFNumberGetValue((CFNumberRef)v, kCFNumberIntType, &result);
+    }
+    CFRelease(v);
+    return result;
+}
 static BOOL readBoolPref(CFStringRef key, BOOL fallback) {
     CFPreferencesAppSynchronize(kSBCPUPrefAppID);
     CFPropertyListRef v = CFPreferencesCopyValue(key, kSBCPUPrefAppID,
@@ -104,7 +122,105 @@ static void setChargeLimitUsingOriginal(int value) {
     IOObjectRelease(service);
 }
 
+// 智能停充：用原始函数设置布尔属性（避免被自己的 hook 拦截）
+static void setSmartChargeBoolProperty(CFStringRef key, BOOL value) {
+    if (!orig_IORegistryEntrySetCFProperty) return;
+    io_service_t service = IOServiceGetMatchingService(kIOMasterPortDefault,
+                                                         IOServiceMatching("AppleSmartBattery"));
+    if (!service) return;
+    orig_IORegistryEntrySetCFProperty(service, key, value ? kCFBooleanTrue : kCFBooleanFalse);
+    IOObjectRelease(service);
+}
+
+// 智能停充：读取真实电量百分比（用 orig 函数，避免被伪装）
+static int getRealBatteryPercentPowerd(void) {
+    if (!orig_IORegistryEntryCreateCFProperty) return -1;
+    io_service_t service = IOServiceGetMatchingService(kIOMasterPortDefault,
+                                                         IOServiceMatching("AppleSmartBattery"));
+    if (!service) return -1;
+    int percent = -1, curCap = 0, maxCap = 0;
+    CFTypeRef curVal = orig_IORegistryEntryCreateCFProperty(service, CFSTR("AppleRawCurrentCapacity"), kCFAllocatorDefault, 0);
+    if (!curVal) curVal = orig_IORegistryEntryCreateCFProperty(service, CFSTR("CurrentCapacity"), kCFAllocatorDefault, 0);
+    if (curVal && CFGetTypeID(curVal) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)curVal, kCFNumberIntType, &curCap);
+    if (curVal) CFRelease(curVal);
+    CFTypeRef maxVal = orig_IORegistryEntryCreateCFProperty(service, CFSTR("AppleRawMaxCapacity"), kCFAllocatorDefault, 0);
+    if (!maxVal) maxVal = orig_IORegistryEntryCreateCFProperty(service, CFSTR("MaxCapacity"), kCFAllocatorDefault, 0);
+    if (!maxVal) maxVal = orig_IORegistryEntryCreateCFProperty(service, CFSTR("NominalChargeCapacity"), kCFAllocatorDefault, 0);
+    if (maxVal && CFGetTypeID(maxVal) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)maxVal, kCFNumberIntType, &maxCap);
+    if (maxVal) CFRelease(maxVal);
+    if (maxCap > 0 && curCap > 0) percent = (int)(curCap * 100.0 / maxCap);
+    else if (curCap > 0 && curCap <= 100) percent = curCap;
+    IOObjectRelease(service);
+    return percent;
+}
+
+// 智能停充：检测是否正在充电（用 orig 函数）
+static BOOL isChargingPowerd(void) {
+    if (!orig_IORegistryEntryCreateCFProperty) return NO;
+    io_service_t service = IOServiceGetMatchingService(kIOMasterPortDefault,
+                                                         IOServiceMatching("AppleSmartBattery"));
+    if (!service) return NO;
+    BOOL charging = NO;
+    CFTypeRef val = orig_IORegistryEntryCreateCFProperty(service, CFSTR("IsCharging"), kCFAllocatorDefault, 0);
+    if (val && CFGetTypeID(val) == CFBooleanGetTypeID()) charging = CFBooleanGetValue((CFBooleanRef)val);
+    if (val) CFRelease(val);
+    IOObjectRelease(service);
+    return charging;
+}
+
+// 智能停充：把停充状态写入偏好，供 Tweak.xm 读取显示
+static void writeSmartChargeStoppedState(BOOL stopped) {
+    CFPreferencesSetValue(CFSTR("smartChargeStopped"), stopped ? kCFBooleanTrue : kCFBooleanFalse,
+                          kSBCPUPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    CFPreferencesAppSynchronize(kSBCPUPrefAppID);
+}
+
 static void updateChargeState(void) {
+    // === 智能停充逻辑（powerd 进程内执行，每次都检测）===
+    BOOL scEnable = readBoolPref(CFSTR("smartChargeEnable"), NO);
+    int scUpper = readIntPref(CFSTR("smartChargeUpperLimit"), 80);
+    int scLower = readIntPref(CFSTR("smartChargeLowerLimit"), 70);
+    gSmartChargeEnable = scEnable;
+    gSmartChargeUpperLimit = scUpper;
+    gSmartChargeLowerLimit = scLower;
+
+    if (scEnable) {
+        int percent = getRealBatteryPercentPowerd();
+        BOOL charging = isChargingPowerd();
+        if (charging && percent >= 0) {
+            if (!gSmartChargeStopped && percent >= scUpper) {
+                setChargeLimitUsingOriginal(scUpper);
+                setSmartChargeBoolProperty(CFSTR("ChargeInhibit"), YES);
+                setSmartChargeBoolProperty(CFSTR("ExternalChargeCapable"), NO);
+                gSmartChargeStopped = YES;
+                writeSmartChargeStoppedState(YES);
+                NSLog(@"[SBCPUPowerd] 智能停充触发: %d%% >= %d%%", percent, scUpper);
+            } else if (gSmartChargeStopped && percent <= scLower) {
+                setSmartChargeBoolProperty(CFSTR("ChargeInhibit"), NO);
+                setSmartChargeBoolProperty(CFSTR("ExternalChargeCapable"), YES);
+                setChargeLimitUsingOriginal(100);
+                gSmartChargeStopped = NO;
+                writeSmartChargeStoppedState(NO);
+                NSLog(@"[SBCPUPowerd] 智能停充恢复: %d%% <= %d%%", percent, scLower);
+            }
+        } else if (!charging && gSmartChargeStopped) {
+            setSmartChargeBoolProperty(CFSTR("ChargeInhibit"), NO);
+            setSmartChargeBoolProperty(CFSTR("ExternalChargeCapable"), YES);
+            setChargeLimitUsingOriginal(100);
+            gSmartChargeStopped = NO;
+            writeSmartChargeStoppedState(NO);
+        }
+    } else if (gSmartChargeStopped) {
+        setSmartChargeBoolProperty(CFSTR("ChargeInhibit"), NO);
+        setSmartChargeBoolProperty(CFSTR("ExternalChargeCapable"), YES);
+        setChargeLimitUsingOriginal(100);
+        gSmartChargeStopped = NO;
+        writeSmartChargeStoppedState(NO);
+    }
+
+    // 停充时跳过快充逻辑，避免冲突
+    if (gSmartChargeStopped) return;
+
     BOOL enabled = readBoolPref(CFSTR("forceFastChargeEnable"), NO);
     if (enabled == gForceFastCharge) return;
 
@@ -146,7 +262,7 @@ static CFTypeRef hook_IORegistryEntryCreateCFProperty(io_registry_entry_t entry,
                                                       IOOptionBits options) {
     CFTypeRef result = orig_IORegistryEntryCreateCFProperty(entry, key, allocator, options);
 
-    if (gForceFastCharge && key && result) {
+    if (gForceFastCharge && !gSmartChargeStopped && key && result) {
         NSString *keyStr = (__bridge NSString *)key;
 
         // 1. 伪装电池温度永远 25°C（单位 0.1度=250），废掉高温降流
@@ -272,8 +388,15 @@ static kern_return_t hook_IORegistryEntrySetCFProperty(io_registry_entry_t entry
                                                          CFStringRef propertyName,
                                                          CFTypeRef property) {
     if (gForceFastCharge && isProtectedChargeProperty(propertyName)) {
-        // NSLog(@"[SBCPUPowerd] 拦截 powerd 充电降流: %@", (__bridge NSString *)propertyName);
-        return KERN_SUCCESS; // 直接吞掉指令
+        return KERN_SUCCESS;
+    }
+    // 智能停充已停充时，拦截 powerd 对停充相关属性的覆盖
+    if (gSmartChargeStopped && propertyName) {
+        NSString *s = (__bridge NSString *)propertyName;
+        if ([s isEqualToString:@"ChargeLimit"] || [s isEqualToString:@"ChargeInhibit"] ||
+            [s isEqualToString:@"ExternalChargeCapable"] || [s isEqualToString:@"BatteryChargeOverride"]) {
+            return KERN_SUCCESS;
+        }
     }
     return orig_IORegistryEntrySetCFProperty
         ? orig_IORegistryEntrySetCFProperty(entry, propertyName, property)

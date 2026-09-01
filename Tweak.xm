@@ -614,34 +614,6 @@ static void applyExperimentalChargeLimit100(BOOL enable) {
     IOObjectRelease(service);
 }
 
-// 智能停充：设置停充状态（ChargeLimit + ChargeInhibit 双重控制，真正停充）
-static void setSmartChargeStopped(BOOL stopped) {
-    io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
-    if (!service) return;
-    if (stopped) {
-        // 设置 ChargeLimit 为上限
-        int limit = (int)smartChargeUpperLimit;
-        CFNumberRef num = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &limit);
-        if (num) {
-            IORegistryEntrySetCFProperty(service, CFSTR("ChargeLimit"), num);
-            CFRelease(num);
-        }
-        // 设置 ChargeInhibit = YES，真正禁止充电
-        IORegistryEntrySetCFProperty(service, CFSTR("ChargeInhibit"), kCFBooleanTrue);
-    } else {
-        // 清除 ChargeInhibit
-        IORegistryEntrySetCFProperty(service, CFSTR("ChargeInhibit"), kCFBooleanFalse);
-        // 恢复 ChargeLimit = 100
-        int limit = 100;
-        CFNumberRef num = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &limit);
-        if (num) {
-            IORegistryEntrySetCFProperty(service, CFSTR("ChargeLimit"), num);
-            CFRelease(num);
-        }
-    }
-    IOObjectRelease(service);
-}
-
 // 智能停充：用 IOKit 读取真实电量百分比（兼容 SpringBoard 环境）
 static NSInteger getBatteryPercentForSmartCharge(void) {
     @try {
@@ -659,32 +631,31 @@ static NSInteger getBatteryPercentForSmartCharge(void) {
     return -1;
 }
 
-// 智能停充核心逻辑：达到上限停充（ChargeInhibit），降到下限恢复
+// 智能停充：停充逻辑由 SBCPUPowerd.xm（powerd 进程）执行
+// 这里只从偏好读取 powerd 写入的停充状态，用于浮窗显示
 static void updateSmartCharge(void) {
     if (!smartChargeEnable || !floatingView) {
-        if (smartChargeStopped) {
-            smartChargeStopped = NO;
-            setSmartChargeStopped(NO);
-        }
-        return;
-    }
-    if (!isChargingInternal()) {
-        if (smartChargeStopped) {
-            smartChargeStopped = NO;
-            setSmartChargeStopped(NO);
-        }
-        return;
-    }
-    NSInteger percent = getBatteryPercentForSmartCharge();
-    if (percent < 0) return; // 无法获取电量，跳过
-
-    if (!smartChargeStopped && percent >= smartChargeUpperLimit) {
-        setSmartChargeStopped(YES);
-        smartChargeStopped = YES;
-    } else if (smartChargeStopped && percent <= smartChargeLowerLimit) {
-        setSmartChargeStopped(NO);
         smartChargeStopped = NO;
+        return;
     }
+    // 从偏好读取 powerd 写入的停充状态
+    CFPreferencesAppSynchronize(CFSTR("com.yourname.sbcpufloating"));
+    CFPropertyListRef v = CFPreferencesCopyValue(CFSTR("smartChargeStopped"),
+                                                    CFSTR("com.yourname.sbcpufloating"),
+                                                    kCFPreferencesCurrentUser,
+                                                    kCFPreferencesAnyHost);
+    BOOL stopped = NO;
+    if (v) {
+        if (CFGetTypeID(v) == CFBooleanGetTypeID()) {
+            stopped = CFBooleanGetValue((CFBooleanRef)v);
+        } else if (CFGetTypeID(v) == CFNumberGetTypeID()) {
+            int n = 0;
+            CFNumberGetValue((CFNumberRef)v, kCFNumberIntType, &n);
+            stopped = (n != 0);
+        }
+        CFRelease(v);
+    }
+    smartChargeStopped = stopped;
 }
 
 static NSString *getChargeBoostStatus(double watts, double temp, NSInteger battery, BOOL charging) {
@@ -2950,9 +2921,18 @@ return self;
     }
     
     if (!fastChargeStartupAnimating) {
-        if (smartChargeEnable && smartChargeStopped) {
-            _statusLabel.text = [NSString stringWithFormat:@"🛑 智能停充 · %ld%%", (long)smartChargeUpperLimit];
-            _statusLabel.textColor = [UIColor systemOrangeColor];
+        if (smartChargeEnable) {
+            NSInteger scPercent = getBatteryPercentForSmartCharge();
+            if (smartChargeStopped) {
+                _statusLabel.text = [NSString stringWithFormat:@"🛑 停充中 · %ld%% (上限%ld)", (long)scPercent, (long)smartChargeUpperLimit];
+                _statusLabel.textColor = [UIColor systemOrangeColor];
+            } else if (isCharging) {
+                _statusLabel.text = [NSString stringWithFormat:@"🔋 智能停充待触发 · %ld%%→%ld%%", (long)scPercent, (long)smartChargeUpperLimit];
+                _statusLabel.textColor = [UIColor systemBlueColor];
+            } else {
+                _statusLabel.text = [NSString stringWithFormat:@"🔋 智能停充已启用 · %ld%%", (long)scPercent];
+                _statusLabel.textColor = [UIColor systemGrayColor];
+            }
         } else if (forceFastChargeEnable && isCharging) {
             NSDictionary *chargeInfo = getRealBatteryDetails();
             double watts = [chargeInfo[@"CalculatedWatts"] doubleValue];
@@ -4290,9 +4270,8 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 - (void)changeSmartChargeEnable:(UISwitch *)sw {
     smartChargeEnable = sw.isOn;
     SavePreferencesAndNotify();
-    if (!smartChargeEnable && smartChargeStopped) {
+    if (!smartChargeEnable) {
         smartChargeStopped = NO;
-        setSmartChargeStopped(NO);
     }
     [self.tableView reloadData];
 }
@@ -4304,7 +4283,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     else if (smartChargeMode == 1) { smartChargeUpperLimit = 100; smartChargeLowerLimit = 90; }
     else if (smartChargeMode == 2) { smartChargeUpperLimit = 60; smartChargeLowerLimit = 50; }
     SavePreferencesAndNotify();
-    if (smartChargeStopped) { smartChargeStopped = NO; setSmartChargeStopped(NO); }
+    smartChargeStopped = NO;
     [self.tableView reloadData];
 }
 
@@ -4315,7 +4294,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         smartChargeLowerLimit = MAX(40, smartChargeUpperLimit - 5);
     }
     SavePreferencesAndNotify();
-    if (smartChargeStopped) { smartChargeStopped = NO; setSmartChargeStopped(NO); }
+    smartChargeStopped = NO;
     [self.tableView reloadData];
 }
 
