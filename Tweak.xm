@@ -3747,52 +3747,75 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     }
 
     if (indexPath.section == 9) {
+        // 清理 cell 复用残留的自定义 view（tag >= 900）
+        for (UIView *v in [cell.contentView.subviews copy]) {
+            if (v.tag >= 900) [v removeFromSuperview];
+        }
         if (indexPath.row == 0) {
             cell.textLabel.text = @"智能停充";
             cell.detailTextLabel.text = @"充到上限自动停充，降到下限自动恢复，延长电池寿命";
+            cell.textLabel.hidden = NO;
+            cell.detailTextLabel.hidden = NO;
             UISwitch *sw = [UISwitch new];
             sw.on = smartChargeEnable;
             [sw addTarget:self action:@selector(changeSmartChargeEnable:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 1) {
             cell.textLabel.text = @"预设模式";
+            cell.detailTextLabel.text = nil;
+            cell.textLabel.hidden = NO;
+            cell.detailTextLabel.hidden = YES;
             NSArray *titles = @[@"🛡 日常 80%", @"✈ 出行 100%", @"💚 保养 60%"];
             CGFloat btnW = (cell.contentView.bounds.size.width > 320) ? (cell.contentView.bounds.size.width - 40) / 3.0 : 95;
             for (int i = 0; i < 3; i++) {
                 UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
                 btn.frame = CGRectMake(15 + i * (btnW + 6), 42, btnW, 32);
-                [btn setTitle:titles[i] forState:UIControlStateNormal];
-                btn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold];
+                btn.tag = 900 + i;
+                // 用 NSAttributedString 明确去掉下划线
+                UIColor *titleColor = (smartChargeMode == i) ? [UIColor whiteColor] : [UIColor systemBlueColor];
+                NSDictionary *attrs = @{NSFontAttributeName: [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold],
+                                         NSForegroundColorAttributeName: titleColor,
+                                         NSUnderlineStyleAttributeName: @(NSUnderlineStyleNone)};
+                NSAttributedString *attrTitle = [[NSAttributedString alloc] initWithString:titles[i] attributes:attrs];
+                [btn setAttributedTitle:attrTitle forState:UIControlStateNormal];
                 btn.titleLabel.adjustsFontSizeToFitWidth = YES;
                 btn.titleLabel.minimumScaleFactor = 0.65;
                 btn.layer.cornerRadius = 10;
                 btn.clipsToBounds = YES;
                 if (smartChargeMode == i) {
                     btn.backgroundColor = [UIColor systemBlueColor];
-                    [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-                    btn.layer.shadowColor = [UIColor systemBlueColor].CGColor;
-                    btn.layer.shadowOpacity = 0.3;
-                    btn.layer.shadowRadius = 4;
-                    btn.layer.shadowOffset = CGSizeMake(0, 2);
                 } else {
                     btn.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *trait) {
                         return trait.userInterfaceStyle == UIUserInterfaceStyleDark
                             ? [UIColor colorWithWhite:0.2 alpha:1.0]
                             : [UIColor colorWithWhite:0.95 alpha:1.0];
                     }];
-                    [btn setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
                 }
-                btn.tag = i;
                 [btn addTarget:self action:@selector(changeSmartChargeMode:) forControlEvents:UIControlEventTouchUpInside];
                 [cell.contentView addSubview:btn];
             }
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 2) {
-            // 充电区间可视化
-            cell.textLabel.text = @"充电区间";
-            cell.detailTextLabel.text = [NSString stringWithFormat:@"电池在 %ld%% ~ %ld%% 之间循环", (long)smartChargeLowerLimit, (long)smartChargeUpperLimit];
-            CGFloat barX = 20, barW = cell.contentView.bounds.size.width - 40, barY = 50, barH = 10;
-            // 背景条
+            // 充电区间可视化：隐藏默认 label，完全自定义
+            cell.textLabel.hidden = YES;
+            cell.detailTextLabel.hidden = YES;
+            CGFloat barX = 20, barW = cell.contentView.bounds.size.width - 40;
+            // 标题
+            UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(barX, 12, barW, 18)];
+            titleLbl.text = @"充电区间";
+            titleLbl.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+            titleLbl.textColor = [UIColor labelColor];
+            titleLbl.tag = 900;
+            [cell.contentView addSubview:titleLbl];
+            // 副标题
+            UILabel *subLbl = [[UILabel alloc] initWithFrame:CGRectMake(barX, 32, barW, 16)];
+            subLbl.text = [NSString stringWithFormat:@"电池在 %ld%% ~ %ld%% 之间循环", (long)smartChargeLowerLimit, (long)smartChargeUpperLimit];
+            subLbl.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
+            subLbl.textColor = [UIColor secondaryLabelColor];
+            subLbl.tag = 901;
+            [cell.contentView addSubview:subLbl];
+            // 进度条
+            CGFloat barY = 56, barH = 10;
             UIView *bgBar = [[UIView alloc] initWithFrame:CGRectMake(barX, barY, barW, barH)];
             bgBar.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *trait) {
                 return trait.userInterfaceStyle == UIUserInterfaceStyleDark
@@ -3800,47 +3823,59 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
                     : [UIColor colorWithWhite:0.9 alpha:1.0];
             }];
             bgBar.layer.cornerRadius = barH / 2;
+            bgBar.tag = 902;
             [cell.contentView addSubview:bgBar];
             // 高亮区间
             CGFloat rangeStart = barX + (smartChargeLowerLimit / 100.0) * barW;
             CGFloat rangeEnd = barX + (smartChargeUpperLimit / 100.0) * barW;
-            UIView *rangeBar = [[UIView alloc] initWithFrame:CGRectMake(rangeStart, barY, rangeEnd - rangeStart, barH)];
+            UIView *rangeBar = [[UIView alloc] initWithFrame:CGRectMake(rangeStart, barY, MAX(barH, rangeEnd - rangeStart), barH)];
             rangeBar.backgroundColor = [UIColor systemGreenColor];
             rangeBar.layer.cornerRadius = barH / 2;
+            rangeBar.tag = 903;
             [cell.contentView addSubview:rangeBar];
             // 下限标记
-            UILabel *lowLbl = [[UILabel alloc] initWithFrame:CGRectMake(barX - 10, barY + barH + 4, 60, 16)];
+            UILabel *lowLbl = [[UILabel alloc] initWithFrame:CGRectMake(barX - 10, barY + barH + 6, 70, 16)];
             lowLbl.text = [NSString stringWithFormat:@"↓ %ld%%", (long)smartChargeLowerLimit];
             lowLbl.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
-            lowLbl.textColor = [UIColor labelColor];
+            lowLbl.textColor = [UIColor secondaryLabelColor];
+            lowLbl.tag = 904;
             [cell.contentView addSubview:lowLbl];
             // 上限标记
-            UILabel *highLbl = [[UILabel alloc] initWithFrame:CGRectMake(barX + barW - 50, barY + barH + 4, 60, 16)];
+            UILabel *highLbl = [[UILabel alloc] initWithFrame:CGRectMake(barX + barW - 60, barY + barH + 6, 70, 16)];
             highLbl.text = [NSString stringWithFormat:@"%ld%% ↑", (long)smartChargeUpperLimit];
             highLbl.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
-            highLbl.textColor = [UIColor labelColor];
+            highLbl.textColor = [UIColor secondaryLabelColor];
             highLbl.textAlignment = NSTextAlignmentRight;
+            highLbl.tag = 905;
             [cell.contentView addSubview:highLbl];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 3) {
             cell.textLabel.text = [NSString stringWithFormat:@"停充上限: %ld%%", (long)smartChargeUpperLimit];
+            cell.detailTextLabel.text = nil;
+            cell.textLabel.hidden = NO;
+            cell.detailTextLabel.hidden = YES;
             UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(15, 44, cell.contentView.bounds.size.width - 30, 30)];
             slider.minimumValue = 50;
             slider.maximumValue = 100;
             slider.value = smartChargeUpperLimit;
             slider.continuous = NO;
             slider.minimumTrackTintColor = [UIColor systemGreenColor];
+            slider.tag = 910;
             [slider addTarget:self action:@selector(changeSmartChargeUpper:) forControlEvents:UIControlEventValueChanged];
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 4) {
             cell.textLabel.text = [NSString stringWithFormat:@"回充下限: %ld%%", (long)smartChargeLowerLimit];
+            cell.detailTextLabel.text = nil;
+            cell.textLabel.hidden = NO;
+            cell.detailTextLabel.hidden = YES;
             UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(15, 44, cell.contentView.bounds.size.width - 30, 30)];
             slider.minimumValue = 40;
             slider.maximumValue = 90;
             slider.value = smartChargeLowerLimit;
             slider.continuous = NO;
             slider.minimumTrackTintColor = [UIColor systemOrangeColor];
+            slider.tag = 911;
             [slider addTarget:self action:@selector(changeSmartChargeLower:) forControlEvents:UIControlEventValueChanged];
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
