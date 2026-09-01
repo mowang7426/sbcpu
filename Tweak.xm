@@ -3629,7 +3629,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"SBCPUFloating V3.3.3";
+    self.title = @"SBCPUFloating V3.1.11";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeSettings)];
 }
 
@@ -3711,7 +3711,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     if (section == 6) return 10;
     if (section == 7) return 2; 
     if (section == 8) return 7;
-    if (section == 9) return 4; // 🔋 智能停充
+    if (section == 9) return 5; // 🔋 智能停充
     if (section == 10) return 5; // 📖 功能说明行数
     if (section == 11) return 8; // 🌡️ 温控功能说明
     return 0;
@@ -3749,32 +3749,34 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     if (indexPath.section == 9) {
         if (indexPath.row == 0) {
             cell.textLabel.text = @"智能停充";
-            cell.detailTextLabel.text = @"充到指定电量自动停充，降到下限自动恢复，保护电池";
+            cell.detailTextLabel.text = @"充到上限自动停充，降到下限自动恢复，延长电池寿命";
             UISwitch *sw = [UISwitch new];
             sw.on = smartChargeEnable;
             [sw addTarget:self action:@selector(changeSmartChargeEnable:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 1) {
             cell.textLabel.text = @"预设模式";
-            NSArray *titles = @[@"日常保护 80%", @"满电出行 100%", @"深度保养 60%"];
-            CGFloat btnW = (cell.contentView.bounds.size.width > 320) ? (cell.contentView.bounds.size.width - 40) / 3.0 : 90;
+            NSArray *titles = @[@"🛡 日常 80%", @"✈ 出行 100%", @"💚 保养 60%"];
+            CGFloat btnW = (cell.contentView.bounds.size.width > 320) ? (cell.contentView.bounds.size.width - 40) / 3.0 : 95;
             for (int i = 0; i < 3; i++) {
-                UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-                btn.frame = CGRectMake(15 + i * (btnW + 5), 44, btnW, 28);
+                UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+                btn.frame = CGRectMake(15 + i * (btnW + 6), 42, btnW, 32);
                 [btn setTitle:titles[i] forState:UIControlStateNormal];
-                btn.titleLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
+                btn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold];
                 btn.titleLabel.adjustsFontSizeToFitWidth = YES;
-                btn.titleLabel.minimumScaleFactor = 0.7;
-                btn.layer.cornerRadius = 8;
-                btn.layer.borderWidth = 1;
+                btn.titleLabel.minimumScaleFactor = 0.65;
+                btn.layer.cornerRadius = 10;
+                btn.clipsToBounds = YES;
                 if (smartChargeMode == i) {
                     btn.backgroundColor = [UIColor systemBlueColor];
                     [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-                    btn.layer.borderColor = [UIColor systemBlueColor].CGColor;
+                    btn.layer.shadowColor = [UIColor systemBlueColor].CGColor;
+                    btn.layer.shadowOpacity = 0.3;
+                    btn.layer.shadowRadius = 4;
+                    btn.layer.shadowOffset = CGSizeMake(0, 2);
                 } else {
-                    btn.backgroundColor = [UIColor clearColor];
+                    btn.backgroundColor = [UIColor colorWithWhite:0.95 alpha:1.0];
                     [btn setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
-                    btn.layer.borderColor = [UIColor systemBlueColor].CGColor;
                 }
                 btn.tag = i;
                 [btn addTarget:self action:@selector(changeSmartChargeMode:) forControlEvents:UIControlEventTouchUpInside];
@@ -3782,22 +3784,55 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             }
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 2) {
+            // 充电区间可视化
+            cell.textLabel.text = @"充电区间";
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"电池在 %ld%% ~ %ld%% 之间循环", (long)smartChargeLowerLimit, (long)smartChargeUpperLimit];
+            CGFloat barX = 20, barW = cell.contentView.bounds.size.width - 40, barY = 50, barH = 10;
+            // 背景条
+            UIView *bgBar = [[UIView alloc] initWithFrame:CGRectMake(barX, barY, barW, barH)];
+            bgBar.backgroundColor = [UIColor colorWithWhite:0.9 alpha:1.0];
+            bgBar.layer.cornerRadius = barH / 2;
+            [cell.contentView addSubview:bgBar];
+            // 高亮区间
+            CGFloat rangeStart = barX + (smartChargeLowerLimit / 100.0) * barW;
+            CGFloat rangeEnd = barX + (smartChargeUpperLimit / 100.0) * barW;
+            UIView *rangeBar = [[UIView alloc] initWithFrame:CGRectMake(rangeStart, barY, rangeEnd - rangeStart, barH)];
+            rangeBar.backgroundColor = [UIColor systemGreenColor];
+            rangeBar.layer.cornerRadius = barH / 2;
+            [cell.contentView addSubview:rangeBar];
+            // 下限标记
+            UILabel *lowLbl = [[UILabel alloc] initWithFrame:CGRectMake(barX - 10, barY + barH + 4, 60, 16)];
+            lowLbl.text = [NSString stringWithFormat:@"↓ %ld%%", (long)smartChargeLowerLimit];
+            lowLbl.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
+            lowLbl.textColor = [UIColor systemGrayColor];
+            [cell.contentView addSubview:lowLbl];
+            // 上限标记
+            UILabel *highLbl = [[UILabel alloc] initWithFrame:CGRectMake(barX + barW - 50, barY + barH + 4, 60, 16)];
+            highLbl.text = [NSString stringWithFormat:@"%ld%% ↑", (long)smartChargeUpperLimit];
+            highLbl.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
+            highLbl.textColor = [UIColor systemGrayColor];
+            highLbl.textAlignment = NSTextAlignmentRight;
+            [cell.contentView addSubview:highLbl];
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else if (indexPath.row == 3) {
             cell.textLabel.text = [NSString stringWithFormat:@"停充上限: %ld%%", (long)smartChargeUpperLimit];
             UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(15, 44, cell.contentView.bounds.size.width - 30, 30)];
             slider.minimumValue = 50;
             slider.maximumValue = 100;
             slider.value = smartChargeUpperLimit;
             slider.continuous = NO;
+            slider.minimumTrackTintColor = [UIColor systemGreenColor];
             [slider addTarget:self action:@selector(changeSmartChargeUpper:) forControlEvents:UIControlEventValueChanged];
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
-        } else if (indexPath.row == 3) {
+        } else if (indexPath.row == 4) {
             cell.textLabel.text = [NSString stringWithFormat:@"回充下限: %ld%%", (long)smartChargeLowerLimit];
             UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(15, 44, cell.contentView.bounds.size.width - 30, 30)];
             slider.minimumValue = 40;
             slider.maximumValue = 90;
             slider.value = smartChargeLowerLimit;
             slider.continuous = NO;
+            slider.minimumTrackTintColor = [UIColor systemOrangeColor];
             [slider addTarget:self action:@selector(changeSmartChargeLower:) forControlEvents:UIControlEventValueChanged];
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
@@ -4420,9 +4455,9 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         return (indexPath.row == 9) ? 72.0 : 64.0;
     }
     if (indexPath.section == 9) {
-        // 智能停充：预设按钮行和滑块行需要更高的高度
-        if (indexPath.row == 1) return 82.0;  // 预设按钮
-        if (indexPath.row == 2 || indexPath.row == 3) return 82.0; // 滑块
+        if (indexPath.row == 1) return 82.0;   // 预设按钮
+        if (indexPath.row == 2) return 100.0;  // 充电区间可视化
+        if (indexPath.row == 3 || indexPath.row == 4) return 82.0; // 滑块
         return 64.0;
     }
     if (indexPath.section == 11) {
