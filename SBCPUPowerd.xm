@@ -122,14 +122,52 @@ static void setChargeLimitUsingOriginal(int value) {
     IOObjectRelease(service);
 }
 
-// 智能停充：用原始函数设置布尔属性（避免被自己的 hook 拦截）
-static void setSmartChargeBoolProperty(CFStringRef key, BOOL value) {
-    if (!orig_IORegistryEntrySetCFProperty) return;
-    io_service_t service = IOServiceGetMatchingService(kIOMasterPortDefault,
+// 智能停充：参考 CPUthermal BatteryTempBypass.xm 实现
+// 同时操作 AppleSmartBatteryManager + AppleSmartBattery，设置4个充电抑制属性
+static void applySmartChargeState(BOOL stopped) {
+    CFTypeRef boolVal = stopped ? kCFBooleanTrue : kCFBooleanFalse;
+    NSDictionary *props = @{
+        @"ChargeInhibit": @(stopped),
+        @"ChargeBlocked": @(stopped),
+        @"ChargingPaused": @(stopped),
+        @"PredictiveChargingInhibit": @(stopped)
+    };
+
+    // 1. 操作 AppleSmartBatteryManager（充电管理器，核心）
+    io_service_t manager = IOServiceGetMatchingService(kIOMasterPortDefault,
+                                                         IOServiceMatching("AppleSmartBatteryManager"));
+    if (manager != IO_OBJECT_NULL) {
+        if (orig_IORegistryEntrySetCFProperty) {
+            orig_IORegistryEntrySetCFProperty(manager, CFSTR("ChargeInhibit"), boolVal);
+            orig_IORegistryEntrySetCFProperty(manager, CFSTR("ChargeBlocked"), boolVal);
+            orig_IORegistryEntrySetCFProperty(manager, CFSTR("ChargingPaused"), boolVal);
+        }
+        IOObjectRelease(manager);
+    }
+
+    // 2. 操作 AppleSmartBattery（电池服务）
+    io_service_t battery = IOServiceGetMatchingService(kIOMasterPortDefault,
                                                          IOServiceMatching("AppleSmartBattery"));
-    if (!service) return;
-    orig_IORegistryEntrySetCFProperty(service, key, value ? kCFBooleanTrue : kCFBooleanFalse);
-    IOObjectRelease(service);
+    if (battery != IO_OBJECT_NULL) {
+        // 批量写入（复数API，更可靠）
+        IORegistryEntrySetCFProperties(battery, (__bridge CFTypeRef)props);
+        IOObjectRelease(battery);
+    }
+
+    // 3. ChargeLimit 单独设置
+    if (orig_IORegistryEntrySetCFProperty) {
+        io_service_t bat2 = IOServiceGetMatchingService(kIOMasterPortDefault,
+                                                          IOServiceMatching("AppleSmartBattery"));
+        if (bat2 != IO_OBJECT_NULL) {
+            int limit = stopped ? (int)gSmartChargeUpperLimit : 100;
+            CFNumberRef num = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &limit);
+            if (num) {
+                orig_IORegistryEntrySetCFProperty(bat2, CFSTR("ChargeLimit"), num);
+                CFRelease(num);
+            }
+            IOObjectRelease(bat2);
+        }
+    }
 }
 
 // 智能停充：读取真实电量百分比（用 orig 函数，避免被伪装）
@@ -189,33 +227,30 @@ static void updateChargeState(void) {
         BOOL charging = isChargingPowerd();
         if (charging && percent >= 0) {
             if (!gSmartChargeStopped && percent >= scUpper) {
-                setChargeLimitUsingOriginal(scUpper);
-                setSmartChargeBoolProperty(CFSTR("ChargeInhibit"), YES);
-                setSmartChargeBoolProperty(CFSTR("ExternalChargeCapable"), NO);
+                applySmartChargeState(YES);
                 gSmartChargeStopped = YES;
                 writeSmartChargeStoppedState(YES);
                 NSLog(@"[SBCPUPowerd] 智能停充触发: %d%% >= %d%%", percent, scUpper);
             } else if (gSmartChargeStopped && percent <= scLower) {
-                setSmartChargeBoolProperty(CFSTR("ChargeInhibit"), NO);
-                setSmartChargeBoolProperty(CFSTR("ExternalChargeCapable"), YES);
-                setChargeLimitUsingOriginal(100);
+                applySmartChargeState(NO);
                 gSmartChargeStopped = NO;
                 writeSmartChargeStoppedState(NO);
                 NSLog(@"[SBCPUPowerd] 智能停充恢复: %d%% <= %d%%", percent, scLower);
             }
         } else if (!charging && gSmartChargeStopped) {
-            setSmartChargeBoolProperty(CFSTR("ChargeInhibit"), NO);
-            setSmartChargeBoolProperty(CFSTR("ExternalChargeCapable"), YES);
-            setChargeLimitUsingOriginal(100);
+            applySmartChargeState(NO);
             gSmartChargeStopped = NO;
             writeSmartChargeStoppedState(NO);
         }
     } else if (gSmartChargeStopped) {
-        setSmartChargeBoolProperty(CFSTR("ChargeInhibit"), NO);
-        setSmartChargeBoolProperty(CFSTR("ExternalChargeCapable"), YES);
-        setChargeLimitUsingOriginal(100);
+        applySmartChargeState(NO);
         gSmartChargeStopped = NO;
         writeSmartChargeStoppedState(NO);
+    }
+
+    // 关键：停充状态下每2秒重新设置一次抑制位，抵消powerd周期性清除
+    if (gSmartChargeStopped) {
+        applySmartChargeState(YES);
     }
 
     // 停充时跳过快充逻辑，避免冲突
