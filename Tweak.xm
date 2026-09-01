@@ -157,6 +157,7 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) UILabel *statusLabel;
 // 实时温控状态：直接读取 SBCPUThermal 的诊断通知，不依赖设置页面缓存。
 @property (nonatomic, strong) UILabel *thermalStatusLabel;
+@property (nonatomic, strong) UILabel *timeLabel; // 游戏/横屏时显示时间 HH:mm:ss
 @property (nonatomic, strong) UIView *collapsedContainerView;
 @property (nonatomic, strong) UIView *statusDot;
 @property (nonatomic, strong) UILabel *miniCpuLabel;
@@ -1607,6 +1608,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
     _tempValueLabel.textColor = monoColor;
     _currentValueLabel.textColor = monoColor;
     _miniCpuLabel.textColor = monoColor;
+    _timeLabel.textColor = monoColor; // 时间显示也参与反色
     // 通知文字
     _notifAppNameLabel.textColor = lightBg ? [UIColor darkGrayColor] : [UIColor lightGrayColor];
     _notifMessageLabel.textColor = lightBg ? [UIColor colorWithWhite:0.15 alpha:1.0] : [UIColor colorWithWhite:0.85 alpha:1.0];
@@ -1978,6 +1980,16 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _thermalStatusLabel.adjustsFontSizeToFitWidth = YES;
         _thermalStatusLabel.minimumScaleFactor = 0.75f;
         [_performanceContainer addSubview:_thermalStatusLabel];
+
+        // 时间显示：游戏/横屏时看不到状态栏时间，在浮窗底部显示
+        _timeLabel = [[UILabel alloc] init];
+        _timeLabel.text = @"00:00:00";
+        _timeLabel.textColor = [UIColor darkGrayColor];
+        _timeLabel.font = [UIFont monospacedDigitSystemFontOfSize:11 weight:UIFontWeightSemibold];
+        _timeLabel.textAlignment = NSTextAlignmentCenter;
+        _timeLabel.adjustsFontSizeToFitWidth = YES;
+        _timeLabel.minimumScaleFactor = 0.75f;
+        [_performanceContainer addSubview:_timeLabel];
 
         // 超级快充启动动画：直接使用现有浮窗本体，不创建独立 UIWindow。
         // 这样插入充电器时只是把原浮窗临时变成一个紧凑的启动卡片，完成后恢复原样。
@@ -2495,6 +2507,11 @@ return self;
     _thermalStatusLabel.frame = CGRectMake(12.0f, currentY, finalW - 24.0f, 16.0f);
     currentY += 16.0f;
 
+    // 时间显示行
+    currentY += 2.0f;
+    _timeLabel.frame = CGRectMake(12.0f, currentY, finalW - 24.0f, 14.0f);
+    currentY += 14.0f;
+
     if (showCombinedMode) {
         self.horizontalDiv.hidden = NO;
         self.notificationContainer.hidden = NO;
@@ -2981,6 +2998,11 @@ return self;
         else if (temp >= 38.0) statusColor = [UIColor systemOrangeColor];
         _statusDot.backgroundColor = statusColor;
     }
+    // 更新时间显示（HH:mm:ss）
+    NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+    fmt.dateFormat = @"HH:mm:ss";
+    _timeLabel.text = [fmt stringFromDate:[NSDate date]];
+
     // 液态玻璃：每次数据刷新后更新文字反色（深浅模式自适应）
     [self applyAdaptiveTextColors];
 }
