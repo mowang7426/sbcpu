@@ -3732,9 +3732,11 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             CGFloat btnW = (cell.contentView.bounds.size.width > 320) ? (cell.contentView.bounds.size.width - 40) / 3.0 : 90;
             for (int i = 0; i < 3; i++) {
                 UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-                btn.frame = CGRectMake(15 + i * (btnW + 5), 34, btnW, 30);
+                btn.frame = CGRectMake(15 + i * (btnW + 5), 44, btnW, 28);
                 [btn setTitle:titles[i] forState:UIControlStateNormal];
-                btn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
+                btn.titleLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
+                btn.titleLabel.adjustsFontSizeToFitWidth = YES;
+                btn.titleLabel.minimumScaleFactor = 0.7;
                 btn.layer.cornerRadius = 8;
                 btn.layer.borderWidth = 1;
                 if (smartChargeMode == i) {
@@ -3753,19 +3755,21 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 2) {
             cell.textLabel.text = [NSString stringWithFormat:@"停充上限: %ld%%", (long)smartChargeUpperLimit];
-            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(15, 42, cell.contentView.bounds.size.width - 30, 30)];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(15, 44, cell.contentView.bounds.size.width - 30, 30)];
             slider.minimumValue = 50;
             slider.maximumValue = 100;
             slider.value = smartChargeUpperLimit;
+            slider.continuous = NO;
             [slider addTarget:self action:@selector(changeSmartChargeUpper:) forControlEvents:UIControlEventValueChanged];
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 3) {
             cell.textLabel.text = [NSString stringWithFormat:@"回充下限: %ld%%", (long)smartChargeLowerLimit];
-            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(15, 42, cell.contentView.bounds.size.width - 30, 30)];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(15, 44, cell.contentView.bounds.size.width - 30, 30)];
             slider.minimumValue = 40;
             slider.maximumValue = 90;
             slider.value = smartChargeLowerLimit;
+            slider.continuous = NO;
             [slider addTarget:self action:@selector(changeSmartChargeLower:) forControlEvents:UIControlEventValueChanged];
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
