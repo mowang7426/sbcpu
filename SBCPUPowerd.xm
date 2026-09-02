@@ -19,6 +19,7 @@ static BOOL gSmartChargeEnable = NO;
 static int gSmartChargeUpperLimit = 80;
 static int gSmartChargeLowerLimit = 70;
 static BOOL gSmartChargeStopped = NO;
+static BOOL gSmartChargeActive = NO; // 智能停充激活标志：停充时hook读取返回停充状态
 static int gOriginalChargeLimit = 100;
 static BOOL gHookInstalled = NO;
 
@@ -125,6 +126,7 @@ static void setChargeLimitUsingOriginal(int value) {
 // 智能停充：参考 CPUthermal BatteryTempBypass.xm 实现
 // 同时操作 AppleSmartBatteryManager + AppleSmartBattery，设置4个充电抑制属性
 static void applySmartChargeState(BOOL stopped) {
+    gSmartChargeActive = stopped; // 设置停充激活标志，hook读取时返回停充状态
     CFTypeRef boolVal = stopped ? kCFBooleanTrue : kCFBooleanFalse;
     NSDictionary *props = @{
         @"ChargeInhibit": @(stopped),
@@ -297,6 +299,50 @@ static CFTypeRef hook_IORegistryEntryCreateCFProperty(io_registry_entry_t entry,
                                                       IOOptionBits options) {
     CFTypeRef result = orig_IORegistryEntryCreateCFProperty(entry, key, allocator, options);
 
+    // 🔥 智能停充激活时：hook读取返回停充状态，让powerd自己认为应该停止充电
+    if (gSmartChargeActive && key && result) {
+        NSString *keyStr = (__bridge NSString *)key;
+        // 充电抑制属性返回 true
+        if ([keyStr isEqualToString:@"ChargeInhibit"] ||
+            [keyStr isEqualToString:@"ChargeBlocked"] ||
+            [keyStr isEqualToString:@"ChargingPaused"] ||
+            [keyStr isEqualToString:@"PredictiveChargingInhibit"]) {
+            if (CFGetTypeID(result) == CFBooleanGetTypeID()) {
+                CFRelease(result);
+                return CFRetain(kCFBooleanTrue);
+            }
+        }
+        // 最大充电电流返回 0（即使充电也没有电流）
+        if ([keyStr isEqualToString:@"MaxChargeCurrent"] ||
+            [keyStr isEqualToString:@"ChargeCurrentLimit"] ||
+            [keyStr isEqualToString:@"ChargingCurrent"] ||
+            [keyStr isEqualToString:@"ChargeCurrent"] ||
+            [keyStr isEqualToString:@"MaxChargingCurrent"] ||
+            [keyStr isEqualToString:@"ThermalMaxChargeCurrent"]) {
+            if (CFGetTypeID(result) == CFNumberGetTypeID()) {
+                int zero = 0;
+                CFNumberRef fakeNum = CFNumberCreate(allocator, kCFNumberIntType, &zero);
+                CFRelease(result);
+                return fakeNum;
+            }
+        }
+        // 已充满返回 true
+        if ([keyStr isEqualToString:@"FullyCharged"]) {
+            if (CFGetTypeID(result) == CFBooleanGetTypeID()) {
+                CFRelease(result);
+                return CFRetain(kCFBooleanTrue);
+            }
+        }
+        // 外部可充电返回 false
+        if ([keyStr isEqualToString:@"ExternalChargeCapable"]) {
+            if (CFGetTypeID(result) == CFBooleanGetTypeID()) {
+                CFRelease(result);
+                return CFRetain(kCFBooleanFalse);
+            }
+        }
+        return result;
+    }
+
     if (gForceFastCharge && !gSmartChargeStopped && key && result) {
         NSString *keyStr = (__bridge NSString *)key;
 
@@ -425,11 +471,20 @@ static kern_return_t hook_IORegistryEntrySetCFProperty(io_registry_entry_t entry
     if (gForceFastCharge && isProtectedChargeProperty(propertyName)) {
         return KERN_SUCCESS;
     }
-    // 智能停充已停充时，拦截 powerd 对停充相关属性的覆盖
+    // 智能停充已停充时，拦截 powerd 对所有停充相关属性的覆盖
     if (gSmartChargeStopped && propertyName) {
         NSString *s = (__bridge NSString *)propertyName;
         if ([s isEqualToString:@"ChargeLimit"] || [s isEqualToString:@"ChargeInhibit"] ||
-            [s isEqualToString:@"ExternalChargeCapable"] || [s isEqualToString:@"BatteryChargeOverride"]) {
+            [s isEqualToString:@"ChargeBlocked"] || [s isEqualToString:@"ChargingPaused"] ||
+            [s isEqualToString:@"PredictiveChargingInhibit"] ||
+            [s isEqualToString:@"ExternalChargeCapable"] ||
+            [s isEqualToString:@"BatteryChargeOverride"] ||
+            [s isEqualToString:@"MaxChargeCurrent"] ||
+            [s isEqualToString:@"ChargeCurrentLimit"] ||
+            [s isEqualToString:@"ChargingCurrent"] ||
+            [s isEqualToString:@"ChargeCurrent"] ||
+            [s isEqualToString:@"MaxChargingCurrent"] ||
+            [s isEqualToString:@"FullyCharged"]) {
             return KERN_SUCCESS;
         }
     }
