@@ -3765,12 +3765,17 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             cell.detailTextLabel.text = nil;
             cell.textLabel.hidden = NO;
             cell.detailTextLabel.hidden = YES;
+            [cell layoutIfNeeded];
             NSArray *titles = @[@"🛡 日常 80%", @"✈ 出行 100%", @"💚 保养 60%"];
-            CGFloat btnW = (cell.contentView.bounds.size.width > 320) ? (cell.contentView.bounds.size.width - 40) / 3.0 : 95;
+            CGFloat cellW = cell.contentView.bounds.size.width;
+            if (cellW < 100) cellW = self.tableView.bounds.size.width - 32;
+            CGFloat btnW = (cellW > 320) ? (cellW - 42) / 3.0 : 95;
             for (int i = 0; i < 3; i++) {
                 UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
                 btn.frame = CGRectMake(15 + i * (btnW + 6), 42, btnW, 32);
                 btn.tag = 900 + i;
+                btn.userInteractionEnabled = YES;
+                btn.exclusiveTouch = YES;
                 // 用 NSAttributedString 明确去掉下划线
                 UIColor *titleColor = (smartChargeMode == i) ? [UIColor whiteColor] : [UIColor systemBlueColor];
                 NSDictionary *attrs = @{NSFontAttributeName: [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold],
@@ -3799,7 +3804,9 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             // 充电区间可视化：隐藏默认 label，完全自定义
             cell.textLabel.hidden = YES;
             cell.detailTextLabel.hidden = YES;
+            [cell layoutIfNeeded];
             CGFloat barX = 20, barW = cell.contentView.bounds.size.width - 40;
+            if (barW < 100) barW = self.tableView.bounds.size.width - 72;
             // 标题
             UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(barX, 12, barW, 18)];
             titleLbl.text = @"充电区间";
@@ -3854,7 +3861,10 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             cell.detailTextLabel.text = nil;
             cell.textLabel.hidden = NO;
             cell.detailTextLabel.hidden = YES;
-            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(15, 44, cell.contentView.bounds.size.width - 30, 30)];
+            [cell layoutIfNeeded];
+            CGFloat sliderW = cell.contentView.bounds.size.width - 30;
+            if (sliderW < 100) sliderW = self.tableView.bounds.size.width - 62;
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(15, 44, sliderW, 30)];
             slider.minimumValue = 50;
             slider.maximumValue = 100;
             slider.value = smartChargeUpperLimit;
@@ -3869,7 +3879,10 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             cell.detailTextLabel.text = nil;
             cell.textLabel.hidden = NO;
             cell.detailTextLabel.hidden = YES;
-            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(15, 44, cell.contentView.bounds.size.width - 30, 30)];
+            [cell layoutIfNeeded];
+            CGFloat sliderW = cell.contentView.bounds.size.width - 30;
+            if (sliderW < 100) sliderW = self.tableView.bounds.size.width - 62;
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(15, 44, sliderW, 30)];
             slider.minimumValue = 40;
             slider.maximumValue = 90;
             slider.value = smartChargeLowerLimit;
