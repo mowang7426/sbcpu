@@ -4417,7 +4417,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
 // 智能停充：预设模式
 - (void)changeSmartChargeMode:(UIButton *)btn {
-    smartChargeMode = btn.tag;
+    smartChargeMode = btn.tag - 900; // 按钮tag=900+i，还原为0/1/2
     if (smartChargeMode == 0) { smartChargeUpperLimit = 80; smartChargeLowerLimit = 70; }
     else if (smartChargeMode == 1) { smartChargeUpperLimit = 100; smartChargeLowerLimit = 90; }
     else if (smartChargeMode == 2) { smartChargeUpperLimit = 60; smartChargeLowerLimit = 50; }
