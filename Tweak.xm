@@ -3697,7 +3697,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { 
     (void)tableView;
-    return 12;
+    return 13;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
@@ -3714,6 +3714,11 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     if (section == 9) return 5; // 🔋 智能停充
     if (section == 10) return 5; // 📖 功能说明行数
     if (section == 11) return 8; // 🌡️ 温控功能说明
+    if (section == 12) {
+        // 🔍 插件冲突检测：1状态卡片 + 冲突数 + 插件数
+        if (!gPluginScanDone) return 1;
+        return 1 + gPluginConflictCount + gPluginTotalCount;
+    }
     return 0;
 }
 
@@ -3731,6 +3736,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     if (section == 9) return @"🔋 智能停充";
     if (section == 10) return @"📖 功能与使用说明";
     if (section == 11) return @"🌡️ 温度保护功能说明"; 
+    if (section == 12) return @"🔍 插件冲突检测";
     return @"";
 }
 
@@ -3908,6 +3914,104 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             [slider addTarget:self action:@selector(changeSmartChargeLower:) forControlEvents:UIControlEventValueChanged];
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        }
+    }
+
+    // 🔍 插件冲突检测
+    if (indexPath.section == 12) {
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        cell.textLabel.hidden = YES;
+        cell.detailTextLabel.hidden = YES;
+        cell.accessoryType = UITableViewCellAccessoryNone;
+        
+        if (indexPath.row == 0) {
+            // 状态卡片
+            cell.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
+                return t.userInterfaceStyle == UIUserInterfaceStyleDark ?
+                    [UIColor colorWithWhite:0.12 alpha:1.0] : [UIColor colorWithWhite:0.97 alpha:1.0];
+            }];
+            // 标题
+            UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, 200, 22)];
+            titleLbl.text = @"🔍 插件冲突检测";
+            titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
+            titleLbl.textColor = [UIColor labelColor];
+            [cell.contentView addSubview:titleLbl];
+            // 扫描按钮
+            UIButton *scanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+            scanBtn.frame = CGRectMake(cell.contentView.bounds.size.width - 90, 10, 74, 30);
+            [scanBtn setTitle:gPluginScanDone ? @"重新扫描" : @"开始扫描" forState:UIControlStateNormal];
+            scanBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+            scanBtn.backgroundColor = [UIColor systemBlueColor];
+            [scanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            scanBtn.layer.cornerRadius = 8;
+            [scanBtn addTarget:self action:@selector(scanPluginsTapped:) forControlEvents:UIControlEventTouchUpInside];
+            [cell.contentView addSubview:scanBtn];
+            // 状态信息
+            UILabel *statusLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 40, cell.contentView.bounds.size.width - 32, 20)];
+            if (!gPluginScanDone) {
+                statusLbl.text = @"点击右上角按钮开始扫描已安装插件";
+                statusLbl.textColor = [UIColor secondaryLabelColor];
+            } else if (gPluginConflictCount > 0) {
+                statusLbl.text = [NSString stringWithFormat:@"已扫描 %ld 个插件，发现 %ld 个潜在冲突 ⚠️",
+                                  (long)gPluginTotalCount, (long)gPluginConflictCount];
+                statusLbl.textColor = [UIColor systemOrangeColor];
+            } else {
+                statusLbl.text = [NSString stringWithFormat:@"已扫描 %ld 个插件，未发现冲突 ✅", (long)gPluginTotalCount];
+                statusLbl.textColor = [UIColor systemGreenColor];
+            }
+            statusLbl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+            [cell.contentView addSubview:statusLbl];
+        } else if (indexPath.row <= gPluginConflictCount) {
+            // 冲突警告
+            NSInteger conflictIdx = indexPath.row - 1;
+            if (conflictIdx < (NSInteger)gPluginConflicts.count) {
+                NSDictionary *conflict = gPluginConflicts[conflictIdx];
+                NSInteger severity = [conflict[@"severity"] integerValue];
+                UIColor *bgColor, *textColor;
+                if (severity == 0) {
+                    bgColor = [UIColor colorWithRed:1.0 green:0.9 blue:0.9 alpha:1.0];
+                    textColor = [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:1.0];
+                } else if (severity == 1) {
+                    bgColor = [UIColor colorWithRed:1.0 green:0.95 blue:0.85 alpha:1.0];
+                    textColor = [UIColor colorWithRed:0.9 green:0.5 blue:0.1 alpha:1.0];
+                } else {
+                    bgColor = [UIColor colorWithRed:1.0 green:1.0 blue:0.85 alpha:1.0];
+                    textColor = [UIColor colorWithRed:0.7 green:0.6 blue:0.1 alpha:1.0];
+                }
+                cell.backgroundColor = bgColor;
+                // 标题
+                UILabel *tLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, 8, cell.contentView.bounds.size.width - 28, 20)];
+                tLbl.text = [NSString stringWithFormat:@"⚠️ %@", conflict[@"title"]];
+                tLbl.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+                tLbl.textColor = textColor;
+                [cell.contentView addSubview:tLbl];
+                // 描述
+                UILabel *dLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, 30, cell.contentView.bounds.size.width - 28, 40)];
+                dLbl.text = conflict[@"desc"];
+                dLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+                dLbl.textColor = [UIColor darkGrayColor];
+                dLbl.numberOfLines = 2;
+                [cell.contentView addSubview:dLbl];
+            }
+        } else {
+            // 已安装插件列表
+            NSInteger pluginIdx = indexPath.row - 1 - gPluginConflictCount;
+            if (pluginIdx < (NSInteger)gInstalledPlugins.count) {
+                NSDictionary *plugin = gInstalledPlugins[pluginIdx];
+                cell.backgroundColor = [UIColor whiteColor];
+                cell.textLabel.hidden = NO;
+                cell.detailTextLabel.hidden = NO;
+                cell.textLabel.text = plugin[@"name"];
+                cell.textLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+                NSString *ver = plugin[@"version"];
+                NSString *cat = plugin[@"category"];
+                NSArray *injected = plugin[@"injectedBundles"];
+                cell.detailTextLabel.text = [NSString stringWithFormat:@"%@  |  %@  |  注入%ld个进程",
+                                              ver, cat, (long)injected.count];
+                cell.detailTextLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
+                cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            }
         }
     }
 
@@ -4446,6 +4550,20 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     SavePreferencesAndNotify();
     [self.tableView reloadData];
 }
+
+// 🔍 插件冲突检测：扫描按钮
+- (void)scanPluginsTapped:(UIButton *)sender {
+    sender.enabled = NO;
+    [sender setTitle:@"扫描中..." forState:UIControlStateNormal];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        scanInstalledPlugins();
+        dispatch_async(dispatch_get_main_queue(), ^{
+            sender.enabled = YES;
+            [self.tableView reloadData];
+        });
+    });
+}
+
 - (void)changeChargeBoost:(UISwitch *)sw {
     chargeBoostEnable = sw.isOn;
     chargeBoostStartTime = sw.isOn ? CFAbsoluteTimeGetCurrent() : 0;
@@ -4455,6 +4573,269 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     chargeBoostVerified = NO;
     applyExperimentalChargeLimit100(chargeBoostEnable);
     SavePreferencesAndNotify();
+}
+
+#pragma mark - 🔍 插件冲突检测核心逻辑
+
+// 插件信息（用 NSDictionary 存储：name/bundleID/version/desc/injectedBundles/category）
+static NSMutableArray *gInstalledPlugins = nil;
+static NSMutableArray *gPluginConflicts = nil;
+static BOOL gPluginScanDone = NO;
+static NSInteger gPluginTotalCount = 0;
+static NSInteger gPluginConflictCount = 0;
+
+// 分类数据库：BundleID → 分类
+static NSDictionary *pluginCategoryMap(void) {
+    return @{
+        // 充电/电池管理
+        @"com.mowang.sbcpufloating": @"充电管理",
+        @"com.alexander.cputhermal": @"充电管理",
+        @"com.opa334.appstore++": @"充电管理",
+        // 系统监控
+        @"com.nscube.cpu": @"系统监控",
+        @"com.artikus.statusvol": @"系统监控",
+        // 手势/交互
+        @"com.rpetrich.activator": @"手势增强",
+        // 主题/美化
+        @"com.anemos.neon": @"主题美化",
+        // 控制中心
+        @"com.a3tweaks.ctcenter": @"控制中心",
+    };
+}
+
+// 分类关键词（名称/描述包含关键词则归类）
+static NSDictionary *categoryKeywords(void) {
+    return @{
+        @"充电管理": @[@"charge", @"battery", @"充电", @"电池", @"power", @"快充", @"cputhermal"],
+        @"系统监控": @[@"cpu", @"fps", @"monitor", @"监控", @"status", @"system", @"thermal", @"温度"],
+        @"手势增强": @[@"gesture", @"activator", @"手势", @"swipe", @"touch"],
+        @"主题美化": @[@"theme", @"winterboard", @"snowboard", @"主题", @"美化", @"icon"],
+        @"控制中心": @[@"control", @"cc", @"控制中心", @"module"],
+        @"通知中心": @[@"notification", @"nc", @"通知"],
+        @"锁屏": @[@"lockscreen", @"锁屏", @"lock"],
+        @"文件管理": @[@"file", @"filza", @"文件"],
+        @"应用修改": @[@"tweak", @"hack", @"修改", @"破解", @"plus", @"pro"],
+    };
+}
+
+// 已知冲突对：[bundleID1, bundleID2, 标题, 描述, 严重程度(0高1中2低)]
+static NSArray *knownConflictPairs(void) {
+    return @[
+        @[@"com.mowang.sbcpufloating", @"com.alexander.cputhermal",
+          @"充电管理冲突", @"两个插件同时注入 powerd 并修改充电属性，可能导致充电策略互相覆盖", @0],
+        @[@"com.mowang.sbcpufloating", @"com.nscube.cpu",
+          @"系统监控冲突", @"两个插件同时高频读取 CPU/温度传感器，可能导致读数冲突", @1],
+        @[@"com.rpetrich.activator", @"com.a3tweaks.ctcenter",
+          @"手势冲突", @"Activator 和控制中心插件可能在底部手势区域冲突", @2],
+    ];
+}
+
+// 根据 BundleID 或名称分类
+static NSString *categorizePlugin(NSString *bundleID, NSString *name, NSString *desc) {
+    NSDictionary *catMap = pluginCategoryMap();
+    if (bundleID && catMap[bundleID]) return catMap[bundleID];
+    
+    NSDictionary *kwMap = categoryKeywords();
+    NSString *lower = [NSString stringWithFormat:@"%@ %@ %@",
+                        bundleID ?: @"", name ?: @"", desc ?: @""].lowercaseString;
+    for (NSString *cat in kwMap) {
+        for (NSString *kw in kwMap[cat]) {
+            if ([lower containsString:kw.lowercaseString]) return cat;
+        }
+    }
+    return @"其他";
+}
+
+// 扫描已安装插件
+static void scanInstalledPlugins(void) {
+    gInstalledPlugins = [NSMutableArray array];
+    gPluginConflicts = [NSMutableArray array];
+    gPluginTotalCount = 0;
+    gPluginConflictCount = 0;
+    
+    NSFileManager *fm = [NSFileManager defaultManager];
+    
+    // 1. 读取 DynamicLibraries 目录下的 plist（Substrate/Substitute 通用路径）
+    NSArray *libPaths = @[
+        @"/Library/MobileSubstrate/DynamicLibraries",
+        @"/usr/lib/TweakInject",
+        @"/Library/TweakInject",
+    ];
+    
+    NSMutableDictionary *plistMap = [NSMutableDictionary dictionary]; // dylib名 → 注入bundle列表
+    for (NSString *libPath in libPaths) {
+        NSError *err = nil;
+        NSArray *files = [fm contentsOfDirectoryAtPath:libPath error:&err];
+        if (!files) continue;
+        for (NSString *f in files) {
+            if (![f.pathExtension isEqualToString:@"plist"]) continue;
+            NSString *plistPath = [libPath stringByAppendingPathComponent:f];
+            NSDictionary *plist = [NSDictionary dictionaryWithContentsOfFile:plistPath];
+            if (!plist) continue;
+            NSMutableArray *bundles = [NSMutableArray array];
+            NSDictionary *filter = plist[@"Filter"];
+            if (filter) {
+                NSArray *b = filter[@"Bundles"];
+                if (b) [bundles addObjectsFromArray:b];
+                NSArray *e = filter[@"Executables"];
+                if (e) [bundles addObjectsFromArray:e];
+            } else {
+                [bundles addObject:@"*（全局注入）"];
+            }
+            NSString *dylibName = [f.stringByDeletingPathExtension lowercaseString];
+            plistMap[dylibName] = bundles;
+        }
+    }
+    
+    // 2. 读取 dpkg status 获取包信息
+    NSString *dpkgPath = @"/var/lib/dpkg/status";
+    NSString *dpkgContent = [NSString stringWithContentsOfFile:dpkgPath encoding:NSUTF8StringEncoding error:nil];
+    if (!dpkgContent) {
+        gPluginScanDone = YES;
+        return;
+    }
+    
+    // 按空行分割每个包
+    NSArray *packages = [dpkgContent componentsSeparatedByString:@"\n\n"];
+    for (NSString *pkg in packages) {
+        NSString *package = @"";
+        NSString *version = @"";
+        NSString *desc = @"";
+        NSString *name = @"";
+        NSString *status = @"";
+        
+        NSArray *lines = [pkg componentsSeparatedByString:@"\n"];
+        for (NSString *line in lines) {
+            if ([line hasPrefix:@"Package: "]) package = [line substringFromIndex:9];
+            else if ([line hasPrefix:@"Version: "]) version = [line substringFromIndex:9];
+            else if ([line hasPrefix:@"Description: "]) desc = [line substringFromIndex:13];
+            else if ([line hasPrefix:@"Name: "]) name = [line substringFromIndex:6];
+            else if ([line hasPrefix:@"Status: "]) status = [line substringFromIndex:8];
+        }
+        
+        // 只处理已安装的包，且过滤掉系统包（只保留看起来像插件的）
+        if (![status containsString:@"install ok installed"]) continue;
+        if (package.length == 0) continue;
+        // 过滤明显的系统包和库
+        if ([package hasPrefix:@"gsc."] || [package hasPrefix:@"cy+"] ||
+            [package hasPrefix:@"apt"] || [package hasPrefix:@"dpkg"] ||
+            [package hasPrefix:@"coreutils"] || [package hasPrefix:@"sed"] ||
+            [package hasPrefix:@"grep"] || [package hasPrefix:@"bash"] ||
+            [package hasPrefix:@"lib"] || [package hasPrefix:@"perl"] ||
+            [package hasPrefix:@"python"] || [package hasPrefix:@"zstd"] ||
+            [package hasPrefix:@"xz"] || [package hasPrefix:@"tar"] ||
+            [package hasPrefix:@"gzip"] || [package hasPrefix:@"findutils"]) continue;
+        
+        if (name.length == 0) name = package;
+        
+        // 匹配 plist 注入信息
+        NSArray *injected = @[];
+        NSString *pkgLower = package.lowercaseString;
+        for (NSString *key in plistMap) {
+            if ([pkgLower containsString:key] || [key containsString:pkgLower]) {
+                injected = plistMap[key];
+                break;
+            }
+        }
+        
+        NSString *category = categorizePlugin(package, name, desc);
+        
+        NSDictionary *pluginInfo = @{
+            @"name": name,
+            @"bundleID": package,
+            @"version": version ?: @"",
+            @"desc": desc ?: @"",
+            @"injectedBundles": injected,
+            @"category": category,
+        };
+        [gInstalledPlugins addObject:pluginInfo];
+        gPluginTotalCount++;
+    }
+    
+    // 3. 按分类排序
+    [gInstalledPlugins sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        return [a[@"category"] compare:b[@"category"]];
+    }];
+    
+    // 4. 冲突检测
+    detectPluginConflicts();
+    
+    gPluginScanDone = YES;
+}
+
+// 冲突检测
+static void detectPluginConflicts(void) {
+    // 4a. 已知冲突对
+    NSArray *pairs = knownConflictPairs();
+    for (NSArray *pair in pairs) {
+        NSString *id1 = pair[0], *id2 = pair[1];
+        NSString *title = pair[2], *desc = pair[3];
+        NSInteger severity = [pair[4] integerValue];
+        BOOL found1 = NO, found2 = NO;
+        for (NSDictionary *p in gInstalledPlugins) {
+            NSString *bid = p[@"bundleID"];
+            if ([bid isEqualToString:id1] || [bid.lowercaseString containsString:id1.lowercaseString]) found1 = YES;
+            if ([bid isEqualToString:id2] || [bid.lowercaseString containsString:id2.lowercaseString]) found2 = YES;
+        }
+        if (found1 && found2) {
+            [gPluginConflicts addObject:@{
+                @"title": title, @"desc": desc, @"severity": @(severity),
+                @"plugins": @[id1, id2],
+            }];
+            gPluginConflictCount++;
+        }
+    }
+    
+    // 4b. 同分类多插件检测
+    NSMutableDictionary *catCount = [NSMutableDictionary dictionary];
+    for (NSDictionary *p in gInstalledPlugins) {
+        NSString *cat = p[@"category"];
+        catCount[cat] = @([catCount[cat] integerValue] + 1);
+    }
+    NSArray *highRiskCats = @[@"充电管理", @"系统监控", @"温度监控"];
+    for (NSString *cat in highRiskCats) {
+        NSInteger count = [catCount[cat] integerValue];
+        if (count >= 2) {
+            NSMutableArray *names = [NSMutableArray array];
+            for (NSDictionary *p in gInstalledPlugins) {
+                if ([p[@"category"] isEqualToString:cat]) [names addObject:p[@"name"]];
+            }
+            [gPluginConflicts addObject:@{
+                @"title": [NSString stringWithFormat:@"%@类插件过多", cat],
+                @"desc": [NSString stringWithFormat:@"已安装 %ld 个%@插件（%@），可能存在功能冲突",
+                          (long)count, cat, [names componentsJoinedByString:@"、"]],
+                @"severity": @1,
+                @"plugins": names,
+            }];
+            gPluginConflictCount++;
+        }
+    }
+    
+    // 4c. SpringBoard 注入过多检测
+    NSInteger sbCount = 0;
+    for (NSDictionary *p in gInstalledPlugins) {
+        NSArray *bundles = p[@"injectedBundles"];
+        for (NSString *b in bundles) {
+            if ([b containsString:@"springboard"] || [b isEqualToString:@"*（全局注入）"]) {
+                sbCount++;
+                break;
+            }
+        }
+    }
+    if (sbCount >= 20) {
+        [gPluginConflicts addObject:@{
+            @"title": @"SpringBoard 注入过多",
+            @"desc": [NSString stringWithFormat:@"%ld 个插件注入 SpringBoard，可能影响系统稳定性和流畅度", (long)sbCount],
+            @"severity": @2,
+            @"plugins": @[],
+        }];
+        gPluginConflictCount++;
+    }
+    
+    // 按严重程度排序
+    [gPluginConflicts sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        return [a[@"severity"] compare:b[@"severity"]];
+    }];
 }
 
 - (void)changeForceFastCharge:(UISwitch *)sw {
@@ -4534,6 +4915,11 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     }
     if (indexPath.section == 11) {
         return 82.0;
+    }
+    if (indexPath.section == 12) {
+        if (indexPath.row == 0) return 68.0;
+        if (indexPath.row <= gPluginConflictCount) return 72.0;
+        return 56.0;
     }
     return UITableViewAutomaticDimension;
 }
