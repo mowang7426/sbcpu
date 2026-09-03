@@ -4687,9 +4687,25 @@ static void scanInstalledPlugins(void) {
         }
     }
     
-    // 2. 读取 dpkg status 获取包信息
-    NSString *dpkgPath = @"/var/lib/dpkg/status";
-    NSString *dpkgContent = [NSString stringWithContentsOfFile:dpkgPath encoding:NSUTF8StringEncoding error:nil];
+    // 2. 读取 dpkg status 获取包信息（多路径尝试，兼容各种越狱环境）
+    NSArray *dpkgPaths = @[
+        @"/var/lib/dpkg/status",
+        @"/private/var/lib/dpkg/status",
+        @"/var/jb/var/lib/dpkg/status",
+        @"/var/mobile/Library/dpkg/status",
+    ];
+    NSString *dpkgContent = nil;
+    NSString *usedPath = nil;
+    for (NSString *p in dpkgPaths) {
+        NSError *err = nil;
+        NSString *content = [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:&err];
+        if (content && content.length > 100) {
+            dpkgContent = content;
+            usedPath = p;
+            break;
+        }
+    }
+    NSLog(@"[SBCPUFloating] dpkg status path: %@, length: %ld", usedPath, (long)dpkgContent.length);
     if (!dpkgContent) {
         gPluginScanDone = YES;
         return;
@@ -4697,6 +4713,7 @@ static void scanInstalledPlugins(void) {
     
     // 按空行分割每个包
     NSArray *packages = [dpkgContent componentsSeparatedByString:@"\n\n"];
+    NSLog(@"[SBCPUFloating] total packages parsed: %ld", (long)packages.count);
     for (NSString *pkg in packages) {
         NSString *package = @"";
         NSString *version = @"";
@@ -4713,18 +4730,19 @@ static void scanInstalledPlugins(void) {
             else if ([line hasPrefix:@"Status: "]) status = [line substringFromIndex:8];
         }
         
-        // 只处理已安装的包，且过滤掉系统包（只保留看起来像插件的）
-        if (![status containsString:@"install ok installed"]) continue;
+        // 只处理已安装的包（放宽判断，只要包含 install 即可）
         if (package.length == 0) continue;
-        // 过滤明显的系统包和库
+        if (status.length > 0 && ![status containsString:@"install"]) continue;
+        // 过滤明显的系统包和基础工具（保留 lib 因为很多插件包名含 lib）
         if ([package hasPrefix:@"gsc."] || [package hasPrefix:@"cy+"] ||
             [package hasPrefix:@"apt"] || [package hasPrefix:@"dpkg"] ||
-            [package hasPrefix:@"coreutils"] || [package hasPrefix:@"sed"] ||
-            [package hasPrefix:@"grep"] || [package hasPrefix:@"bash"] ||
-            [package hasPrefix:@"lib"] || [package hasPrefix:@"perl"] ||
-            [package hasPrefix:@"python"] || [package hasPrefix:@"zstd"] ||
-            [package hasPrefix:@"xz"] || [package hasPrefix:@"tar"] ||
-            [package hasPrefix:@"gzip"] || [package hasPrefix:@"findutils"]) continue;
+            [package isEqualToString:@"coreutils"] || [package isEqualToString:@"sed"] ||
+            [package isEqualToString:@"grep"] || [package isEqualToString:@"bash"] ||
+            [package isEqualToString:@"perl"] || [package isEqualToString:@"python"] ||
+            [package isEqualToString:@"zstd"] || [package isEqualToString:@"xz"] ||
+            [package isEqualToString:@"tar"] || [package isEqualToString:@"gzip"] ||
+            [package isEqualToString:@"findutils"] || [package hasPrefix:@"system-cmds"] ||
+            [package hasPrefix:@"firmware"] || [package hasPrefix:@"base"]) continue;
         
         if (name.length == 0) name = package;
         
