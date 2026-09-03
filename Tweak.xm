@@ -4658,8 +4658,11 @@ static void scanInstalledPlugins(void) {
     // 1. 读取 DynamicLibraries 目录下的 plist（Substrate/Substitute 通用路径）
     NSArray *libPaths = @[
         @"/Library/MobileSubstrate/DynamicLibraries",
+        @"/var/jb/Library/MobileSubstrate/DynamicLibraries",
         @"/usr/lib/TweakInject",
+        @"/var/jb/usr/lib/TweakInject",
         @"/Library/TweakInject",
+        @"/var/jb/Library/TweakInject",
     ];
     
     NSMutableDictionary *plistMap = [NSMutableDictionary dictionary]; // dylib名 → 注入bundle列表
@@ -4687,27 +4690,81 @@ static void scanInstalledPlugins(void) {
         }
     }
     
-    // 2. 读取 dpkg status 获取包信息（多路径尝试，兼容各种越狱环境）
-    NSArray *dpkgPaths = @[
+    // 2. 读取 dpkg status 获取包信息（多路径尝试，兼容 roothide/rootful 各种越狱环境）
+    NSMutableArray *dpkgPaths = [NSMutableArray arrayWithArray:@[
         @"/var/lib/dpkg/status",
         @"/private/var/lib/dpkg/status",
+    ]];
+    // roothide: 通过环境变量获取 JBROOT 前缀
+    NSString *jbRoot = [NSString stringWithUTF8String:getenv("JBROOT") ?: ""];
+    if (jbRoot.length > 0) {
+        [dpkgPaths addObject:[jbRoot stringByAppendingPathComponent:@"var/lib/dpkg/status"]];
+        [dpkgPaths addObject:[jbRoot stringByAppendingPathComponent:@"lib/dpkg/status"]];
+    }
+    // 常见 roothide 前缀
+    [dpkgPaths addObjectsFromArray:@[
         @"/var/jb/var/lib/dpkg/status",
+        @"/var/jb/lib/dpkg/status",
+        @"/private/var/jb/var/lib/dpkg/status",
         @"/var/mobile/Library/dpkg/status",
-    ];
+        @"/var/tmp/dpkg/status",
+    ]];
     NSString *dpkgContent = nil;
     NSString *usedPath = nil;
+    NSFileManager *fm = [NSFileManager defaultManager];
     for (NSString *p in dpkgPaths) {
+        BOOL exists = [fm fileExistsAtPath:p];
+        NSLog(@"[SBCPUFloating] dpkg path %@ exists: %d", p, exists);
+        if (!exists) continue;
         NSError *err = nil;
         NSString *content = [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:&err];
+        NSLog(@"[SBCPUFloating] dpkg path %@ read length: %ld, err: %@", p, (long)content.length, err);
         if (content && content.length > 100) {
             dpkgContent = content;
             usedPath = p;
             break;
         }
     }
-    NSLog(@"[SBCPUFloating] dpkg status path: %@, length: %ld", usedPath, (long)dpkgContent.length);
+    NSLog(@"[SBCPUFloating] dpkg status used path: %@, length: %ld", usedPath, (long)dpkgContent.length);
+    
+    // 如果 dpkg status 读不到，fallback：直接从 DynamicLibraries 目录枚举插件
     if (!dpkgContent) {
+        NSLog(@"[SBCPUFloating] dpkg status not found, using DynamicLibraries fallback");
+        NSArray *libPaths = @[
+            @"/Library/MobileSubstrate/DynamicLibraries",
+            @"/var/jb/Library/MobileSubstrate/DynamicLibraries",
+            @"/usr/lib/TweakInject",
+            @"/var/jb/usr/lib/TweakInject",
+            @"/Library/TweakInject",
+        ];
+        for (NSString *libPath in libPaths) {
+            NSError *err = nil;
+            NSArray *files = [fm contentsOfDirectoryAtPath:libPath error:&err];
+            NSLog(@"[SBCPUFloating] DynamicLibraries %@ count: %ld, err: %@", libPath, (long)files.count, err);
+            if (!files || files.count == 0) continue;
+            for (NSString *f in files) {
+                if (![f.pathExtension isEqualToString:@"dylib"]) continue;
+                NSString *pluginName = [f.stringByDeletingPathExtension copy];
+                NSDictionary *pluginInfo = @{
+                    @"name": pluginName,
+                    @"bundleID": pluginName,
+                    @"version": @"",
+                    @"desc": @"",
+                    @"injectedBundles": @[],
+                    @"category": categorizePlugin(pluginName, pluginName, @""),
+                };
+                [gInstalledPlugins addObject:pluginInfo];
+                gPluginTotalCount++;
+            }
+            if (gPluginTotalCount > 0) break;
+        }
+        // 按分类排序
+        [gInstalledPlugins sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+            return [a[@"category"] compare:b[@"category"]];
+        }];
+        detectPluginConflicts();
         gPluginScanDone = YES;
+        NSLog(@"[SBCPUFloating] fallback scan done, plugins: %ld", (long)gPluginTotalCount);
         return;
     }
     
