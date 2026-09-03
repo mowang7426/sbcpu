@@ -4711,7 +4711,6 @@ static void scanInstalledPlugins(void) {
     ]];
     NSString *dpkgContent = nil;
     NSString *usedPath = nil;
-    NSFileManager *fm = [NSFileManager defaultManager];
     for (NSString *p in dpkgPaths) {
         BOOL exists = [fm fileExistsAtPath:p];
         NSLog(@"[SBCPUFloating] dpkg path %@ exists: %d", p, exists);
