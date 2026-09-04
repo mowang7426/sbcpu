@@ -4606,9 +4606,11 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         detailVC.view.backgroundColor = [UIColor systemBackgroundColor];
         detailVC.title = @"插件详情";
         
-        // 导航栏关闭按钮
-        UIBarButtonItem *closeBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:detailVC action:@selector(dismissViewControllerAnimated:completion:)];
+        // 导航栏关闭按钮（用 self 处理，避免参数不匹配崩溃）
+        UIBarButtonItem *closeBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closePluginDetail:)];
         detailVC.navigationItem.rightBarButtonItem = closeBtn;
+        // 保存当前 presentedViewController 引用，用于关闭
+        objc_setAssociatedObject(self, "presentedPluginDetail", navVC, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         
         // 滚动视图
         UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:detailVC.view.bounds];
@@ -4656,7 +4658,10 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         [scrollView addSubview:descTitle];
         y += 26;
         
-        // 描述内容
+        // 描述内容（为空时显示默认值）
+        if (desc.length == 0 || [desc isEqualToString:@"暂无描述"]) {
+            desc = @"该插件未提供描述信息";
+        }
         UILabel *descLbl = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 0)];
         descLbl.text = desc;
         descLbl.font = [UIFont systemFontOfSize:14 weight:UIFontWeightRegular];
@@ -5632,6 +5637,14 @@ static void detectPluginConflicts(void) {
     [gPluginConflicts sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
         return [a[@"severity"] compare:b[@"severity"]];
     }];
+}
+
+- (void)closePluginDetail:(UIBarButtonItem *)sender {
+    UIViewController *vc = objc_getAssociatedObject(self, "presentedPluginDetail");
+    if (vc) {
+        [vc dismissViewControllerAnimated:YES completion:nil];
+        objc_setAssociatedObject(self, "presentedPluginDetail", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
 }
 
 - (void)changeForceFastCharge:(UISwitch *)sw {
