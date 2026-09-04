@@ -4609,8 +4609,6 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         // 导航栏关闭按钮（用 self 处理，避免参数不匹配崩溃）
         UIBarButtonItem *closeBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closePluginDetail:)];
         detailVC.navigationItem.rightBarButtonItem = closeBtn;
-        // 保存当前 presentedViewController 引用，用于关闭
-        objc_setAssociatedObject(self, "presentedPluginDetail", navVC, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         
         // 滚动视图
         UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:detailVC.view.bounds];
@@ -4710,6 +4708,8 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         // 用导航控制器包裹，显示导航栏
         UINavigationController *navVC = [[UINavigationController alloc] initWithRootViewController:detailVC];
         navVC.modalPresentationStyle = UIModalPresentationFormSheet;
+        // 保存当前 presentedViewController 引用，用于关闭
+        objc_setAssociatedObject(self, "presentedPluginDetail", navVC, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [self presentViewController:navVC animated:YES completion:nil];
         return;
     }
@@ -5477,6 +5477,12 @@ static void detectPluginConflicts(void) {
             NSString *cat1 = p1[@"category"], *cat2 = p2[@"category"];
             // 只检测同分类插件
             if (![cat1 isEqualToString:cat2]) continue;
+            // 排除同一个主插件的不同子组件（名称前缀相同）
+            NSString *name1 = [p1[@"name"] lowercaseString];
+            NSString *name2 = [p2[@"name"] lowercaseString];
+            NSString *prefix1 = (name1.length >= 6) ? [name1 substringToIndex:6] : name1;
+            NSString *prefix2 = (name2.length >= 6) ? [name2 substringToIndex:6] : name2;
+            if ([prefix1 isEqualToString:prefix2]) continue;
             NSArray *b1 = p1[@"injectedBundles"], *b2 = p2[@"injectedBundles"];
             // 计算交集
             NSMutableArray *overlap = [NSMutableArray array];
@@ -5519,12 +5525,18 @@ static void detectPluginConflicts(void) {
         NSArray *keywords = group[@"keywords"];
         NSInteger groupSeverity = [group[@"severity"] integerValue];
         NSMutableArray *matched = [NSMutableArray array];
+        NSMutableSet *seenPrefixes = [NSMutableSet set]; // 去重：同一个主插件的不同子组件只算一个
         for (NSDictionary *p in gInstalledPlugins) {
             NSString *name = [p[@"name"] lowercaseString];
             NSString *cat = [p[@"category"] lowercaseString];
             for (NSString *kw in keywords) {
                 if ([name containsString:[kw lowercaseString]] || [cat containsString:[kw lowercaseString]]) {
-                    [matched addObject:p];
+                    // 提取插件名称前缀（前6个字符），用于识别同一个主插件的不同子组件
+                    NSString *prefix = (name.length >= 6) ? [name substringToIndex:6] : name;
+                    if (![seenPrefixes containsObject:prefix]) {
+                        [seenPrefixes addObject:prefix];
+                        [matched addObject:p];
+                    }
                     break;
                 }
             }
