@@ -3964,8 +3964,8 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             // 调试信息（第二行）
             UILabel *debugLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 58, cell.contentView.bounds.size.width - 32, 18)];
             if (gPluginScanDone) {
-                debugLbl.text = [NSString stringWithFormat:@"方式:%@ | dpkg输出:%ld | 解析:%ld | 最终:%ld",
-                                  gScanMethod, (long)gDpkgOutputLength, (long)gDpkgParsedCount, (long)gPluginTotalCount];
+                debugLbl.text = [NSString stringWithFormat:@"方式:%@ | dpkg:%ld | 解析:%ld | dylib:%ld | 最终:%ld",
+                                  gScanMethod, (long)gDpkgOutputLength, (long)gDpkgParsedCount, (long)gDylibCount, (long)gPluginTotalCount];
             } else {
                 debugLbl.text = @"等待扫描...";
             }
@@ -4598,6 +4598,8 @@ static NSInteger gDpkgOutputLength = 0;
 static NSInteger gDpkgParsedCount = 0;
 static NSString *gScanMethod = @"";
 static NSString *gScanError = @"";
+static NSInteger gDylibCount = 0;
+static NSString *gDylibPath = @"";
 
 // 分类数据库：BundleID → 分类
 static NSDictionary *pluginCategoryMap(void) {
@@ -4681,11 +4683,19 @@ static void scanInstalledPlugins(void) {
     ];
     
     NSMutableDictionary *plistMap = [NSMutableDictionary dictionary]; // dylib名 → 注入bundle列表
+    NSMutableArray *dylibNames = [NSMutableArray array]; // 所有.dylib文件名（fallback用）
     for (NSString *libPath in libPaths) {
         NSError *err = nil;
         NSArray *files = [fm contentsOfDirectoryAtPath:libPath error:&err];
+        NSLog(@"[SBCPUFloating] DynamicLibraries %@ files:%ld err:%@", libPath, (long)files.count, err);
         if (!files) continue;
+        if (gDylibCount == 0) gDylibPath = libPath;
         for (NSString *f in files) {
+            if ([f.pathExtension isEqualToString:@"dylib"]) {
+                NSString *dn = [f.stringByDeletingPathExtension copy];
+                if (![dylibNames containsObject:dn]) { [dylibNames addObject:dn]; gDylibCount++; }
+                continue;
+            }
             if (![f.pathExtension isEqualToString:@"plist"]) continue;
             NSString *plistPath = [libPath stringByAppendingPathComponent:f];
             NSDictionary *plist = [NSDictionary dictionaryWithContentsOfFile:plistPath];
@@ -4778,6 +4788,15 @@ static void scanInstalledPlugins(void) {
                 }
                 break;
             }
+        }
+    }
+    
+    // 如果 dpkg 完全不可用，用 DynamicLibraries 枚举到的 .dylib 文件作为插件列表
+    if (packages.count == 0 && dylibNames.count > 0) {
+        NSLog(@"[SBCPUFloating] dpkg unavailable, using %ld dylib files as plugin list", (long)dylibNames.count);
+        gScanMethod = [NSString stringWithFormat:@"dylib枚举(%@)", gDylibPath];
+        for (NSString *dylibName in dylibNames) {
+            [packages addObject:@{@"package": dylibName, @"version": @"", @"desc": @""}];
         }
     }
     
