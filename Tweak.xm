@@ -4609,8 +4609,6 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         // 导航栏关闭按钮（用 self 处理，避免参数不匹配崩溃）
         UIBarButtonItem *closeBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closePluginDetail:)];
         detailVC.navigationItem.rightBarButtonItem = closeBtn;
-        // 保存当前 presentedViewController 引用，用于关闭
-        objc_setAssociatedObject(self, "presentedPluginDetail", navVC, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         
         // 滚动视图
         UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:detailVC.view.bounds];
@@ -4710,6 +4708,8 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         // 用导航控制器包裹，显示导航栏
         UINavigationController *navVC = [[UINavigationController alloc] initWithRootViewController:detailVC];
         navVC.modalPresentationStyle = UIModalPresentationFormSheet;
+        // 保存当前 presentedViewController 引用，用于关闭
+        objc_setAssociatedObject(self, "presentedPluginDetail", navVC, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [self presentViewController:navVC animated:YES completion:nil];
         return;
     }
