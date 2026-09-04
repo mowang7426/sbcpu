@@ -5427,13 +5427,16 @@ static void detectPluginConflicts(void) {
     }
     
     // ========== 4d. 同进程注入过多检测（增强） ==========
-    // 统计每个进程被多少插件注入
+    // 统计每个进程被多少插件注入，同时收集插件列表
     NSMutableDictionary *processCount = [NSMutableDictionary dictionary];
+    NSMutableDictionary *processPlugins = [NSMutableDictionary dictionary];
     for (NSDictionary *p in gInstalledPlugins) {
         NSArray *bundles = p[@"injectedBundles"];
         for (NSString *b in bundles) {
             if ([b isEqualToString:@"*（全局注入）"]) continue;
             processCount[b] = @([processCount[b] integerValue] + 1);
+            if (!processPlugins[b]) processPlugins[b] = [NSMutableArray array];
+            [processPlugins[b] addObject:p[@"name"]];
         }
     }
     // 找出注入最多的进程
@@ -5444,11 +5447,12 @@ static void detectPluginConflicts(void) {
         NSInteger count = [processCount[proc] integerValue];
         if (count >= 8) {
             NSInteger severity = (count >= 15) ? 0 : (count >= 10 ? 1 : 2);
+            NSArray *plugins = processPlugins[proc];
             [gPluginConflicts addObject:@{
                 @"title": [NSString stringWithFormat:@"%@ 注入过多", proc],
                 @"desc": [NSString stringWithFormat:@"%ld 个插件注入 %@ 进程，可能影响该进程稳定性", (long)count, proc],
                 @"severity": @(severity),
-                @"plugins": @[],
+                @"plugins": plugins,
             }];
             gPluginConflictCount++;
         }
@@ -5478,11 +5482,13 @@ static void detectPluginConflicts(void) {
     
     // ========== 4f. SpringBoard 注入过多检测（保留） ==========
     NSInteger sbCount = 0;
+    NSMutableArray *sbPlugins = [NSMutableArray array];
     for (NSDictionary *p in gInstalledPlugins) {
         NSArray *bundles = p[@"injectedBundles"];
         for (NSString *b in bundles) {
             if ([b containsString:@"springboard"] || [b isEqualToString:@"*（全局注入）"]) {
                 sbCount++;
+                [sbPlugins addObject:p[@"name"]];
                 break;
             }
         }
@@ -5492,7 +5498,7 @@ static void detectPluginConflicts(void) {
             @"title": @"SpringBoard 注入过多",
             @"desc": [NSString stringWithFormat:@"%ld 个插件注入 SpringBoard，可能影响系统稳定性和流畅度", (long)sbCount],
             @"severity": @2,
-            @"plugins": @[],
+            @"plugins": sbPlugins,
         }];
         gPluginConflictCount++;
     }
