@@ -3315,8 +3315,13 @@ return self;
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     if (indexPath.section != 12) return;
-    if (indexPath.row == 0 || !gPluginScanDone) return;
+    if (indexPath.row == 0) return;
+    if (gInstalledPlugins.count == 0) return;
+    // 计算插件索引，越界时自动回退
     NSInteger pluginIndex = indexPath.row - 1 - gPluginConflictCount;
+    if (pluginIndex < 0 || pluginIndex >= (NSInteger)gInstalledPlugins.count) {
+        pluginIndex = indexPath.row - 1; // 回退：假设没有冲突警告
+    }
     if (pluginIndex < 0 || pluginIndex >= (NSInteger)gInstalledPlugins.count) return;
     
     NSDictionary *plugin = gInstalledPlugins[pluginIndex];
