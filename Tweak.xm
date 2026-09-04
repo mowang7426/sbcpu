@@ -4115,7 +4115,9 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
                 [UIColor systemBlueColor], [UIColor systemGreenColor], [UIColor systemOrangeColor],
                 [UIColor systemPurpleColor], [UIColor systemPinkColor], [UIColor systemTealColor],
                 [UIColor systemIndigoColor], [UIColor systemBrownColor], [UIColor systemRedColor],
-                [UIColor systemCyanColor], [UIColor systemMintColor], [UIColor systemYellowColor]
+                [UIColor colorWithRed:0.0 green:0.8 blue:1.0 alpha:1.0],
+                [UIColor colorWithRed:0.0 green:0.8 blue:0.6 alpha:1.0],
+                [UIColor systemYellowColor]
             ];
             for (NSInteger catIdx = 0; catIdx < (NSInteger)gPluginCategories.count; catIdx++) {
                 NSDictionary *catInfo = gPluginCategories[catIdx];
