@@ -44,6 +44,7 @@ static NSString *gScanMethod = @"";
 static NSString *gScanError = @"";
 static NSInteger gDylibCount = 0;
 static NSString *gDylibPath = @"";
+static NSMutableArray *gPluginCategories = nil; // 分类列表：[{name, count, startRow}]
 
 
 @interface NSObject (SBCPUDummySafeCalls)
@@ -3767,9 +3768,10 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     if (section == 10) return 5; // 📖 功能说明行数
     if (section == 11) return 8; // 🌡️ 温控功能说明
     if (section == 12) {
-        // 🔍 插件冲突检测：1状态卡片 + 冲突数 + 插件数
+        // 🔍 插件冲突检测：1状态卡片 + 冲突数 + 分类标题数 + 插件数
         if (!gPluginScanDone) return 1;
-        return 1 + gPluginConflictCount + gPluginTotalCount;
+        NSInteger categoryHeaderCount = gPluginCategories.count;
+        return 1 + gPluginConflictCount + categoryHeaderCount + gPluginTotalCount;
     }
     return 0;
 }
@@ -4009,7 +4011,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
                 statusLbl.text = @"点击右上角按钮开始扫描已安装插件";
                 statusLbl.textColor = [UIColor secondaryLabelColor];
             } else if (gPluginConflictCount > 0) {
-                statusLbl.text = [NSString stringWithFormat:@"已扫描 %ld 个插件，发现 %ld 个潜在冲突 ⚠️",
+                statusLbl.text = [NSString stringWithFormat:@"已扫描 %ld 个插件 / %ld 个分类，发现 %ld 个潜在冲突 ⚠️",
                                   (long)gPluginTotalCount, (long)gPluginConflictCount];
                 statusLbl.textColor = [UIColor systemOrangeColor];
             } else {
@@ -4073,23 +4075,50 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
                 [cell.contentView addSubview:dLbl];
             }
         } else {
-            // 已安装插件列表
-            NSInteger pluginIdx = indexPath.row - 1 - gPluginConflictCount;
-            if (pluginIdx < (NSInteger)gInstalledPlugins.count) {
-                NSDictionary *plugin = gInstalledPlugins[pluginIdx];
-                cell.backgroundColor = [UIColor whiteColor];
-                cell.textLabel.hidden = NO;
-                cell.detailTextLabel.hidden = NO;
-                cell.textLabel.text = plugin[@"name"];
-                cell.textLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-                NSString *ver = plugin[@"version"];
-                NSString *cat = plugin[@"category"];
-                NSArray *injected = plugin[@"injectedBundles"];
-                cell.detailTextLabel.text = [NSString stringWithFormat:@"%@  |  %@  |  注入%ld个进程",
-                                              ver, cat, (long)injected.count];
-                cell.detailTextLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
-                cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
-                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            // 📂 分类标题行 + 插件列表
+            NSInteger listStartRow = 1 + gPluginConflictCount;
+            NSInteger relativeRow = indexPath.row - listStartRow;
+            NSInteger currentRow = 0;
+            for (NSInteger catIdx = 0; catIdx < (NSInteger)gPluginCategories.count; catIdx++) {
+                NSDictionary *catInfo = gPluginCategories[catIdx];
+                NSInteger catCount = [catInfo[@"count"] integerValue];
+                NSInteger catStart = [catInfo[@"startIndex"] integerValue];
+                // 分类标题行
+                if (relativeRow == currentRow) {
+                    cell.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
+                        return t.userInterfaceStyle == UIUserInterfaceStyleDark ? [UIColor colorWithWhite:0.15 alpha:1.0] : [UIColor colorWithWhite:0.93 alpha:1.0];
+                    }];
+                    cell.textLabel.hidden = NO;
+                    cell.detailTextLabel.hidden = YES;
+                    cell.textLabel.text = [NSString stringWithFormat:@"📂 %@（%ld个）", catInfo[@"name"], (long)catCount];
+                    cell.textLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+                    cell.textLabel.textColor = [UIColor secondaryLabelColor];
+                    cell.accessoryType = UITableViewCellAccessoryNone;
+                    cell.selectionStyle = UITableViewCellSelectionStyleNone;
+                    return cell;
+                }
+                currentRow++;
+                // 该分类的插件行
+                for (NSInteger j = 0; j < catCount; j++) {
+                    if (relativeRow == currentRow) {
+                        NSInteger pluginIdx = catStart + j;
+                        if (pluginIdx >= 0 && pluginIdx < (NSInteger)gInstalledPlugins.count) {
+                            NSDictionary *plugin = gInstalledPlugins[pluginIdx];
+                            cell.backgroundColor = [UIColor clearColor];
+                            cell.textLabel.hidden = NO;
+                            cell.detailTextLabel.hidden = NO;
+                            cell.textLabel.text = plugin[@"name"];
+                            cell.textLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+                            NSArray *injected = plugin[@"injectedBundles"];
+                            cell.detailTextLabel.text = [NSString stringWithFormat:@"注入%ld个进程", (long)injected.count];
+                            cell.detailTextLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
+                            cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+                            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+                        }
+                        return cell;
+                    }
+                    currentRow++;
+                }
             }
         }
     }
@@ -4452,11 +4481,25 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             }
         }
         
-        // 点击插件列表
+        // 点击插件列表（需要跳过分类标题行）
         if (gInstalledPlugins.count == 0) return;
-        NSInteger pluginIndex = indexPath.row - 1 - gPluginConflictCount;
-        if (pluginIndex < 0 || pluginIndex >= (NSInteger)gInstalledPlugins.count) {
-            pluginIndex = indexPath.row - 1;
+        NSInteger listStartRow = 1 + gPluginConflictCount;
+        NSInteger relativeRow = indexPath.row - listStartRow;
+        NSInteger currentRow = 0;
+        NSInteger pluginIndex = -1;
+        for (NSInteger catIdx = 0; catIdx < (NSInteger)gPluginCategories.count; catIdx++) {
+            NSDictionary *catInfo = gPluginCategories[catIdx];
+            NSInteger catCount = [catInfo[@"count"] integerValue];
+            NSInteger catStart = [catInfo[@"startIndex"] integerValue];
+            currentRow++; // 跳过分类标题行
+            for (NSInteger j = 0; j < catCount; j++) {
+                if (relativeRow == currentRow) {
+                    pluginIndex = catStart + j;
+                    break;
+                }
+                currentRow++;
+            }
+            if (pluginIndex >= 0) break;
         }
         if (pluginIndex < 0 || pluginIndex >= (NSInteger)gInstalledPlugins.count) return;
         
@@ -4904,8 +4947,26 @@ static void scanInstalledPlugins(void) {
             gPluginTotalCount++;
         }
         [gInstalledPlugins sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-            return [a[@"category"] compare:b[@"category"]];
+            NSComparisonResult r = [a[@"category"] compare:b[@"category"]];
+            if (r == NSOrderedSame) r = [a[@"name"] compare:b[@"name"]];
+            return r;
         }];
+        // 构建分类列表
+        gPluginCategories = [NSMutableArray array];
+        NSString *lastCat = nil;
+        for (NSInteger i = 0; i < (NSInteger)gInstalledPlugins.count; i++) {
+            NSString *cat = gInstalledPlugins[i][@"category"] ?: @"其他";
+            if (![cat isEqualToString:lastCat]) {
+                [gPluginCategories addObject:@{@"name": cat, @"startIndex": @(i)}];
+                lastCat = cat;
+            }
+        }
+        // 统计每个分类的数量
+        for (NSInteger i = 0; i < (NSInteger)gPluginCategories.count; i++) {
+            NSInteger start = [gPluginCategories[i][@"startIndex"] integerValue];
+            NSInteger end = (i + 1 < (NSInteger)gPluginCategories.count) ? [gPluginCategories[i+1][@"startIndex"] integerValue] : gInstalledPlugins.count;
+            gPluginCategories[i] = @{@"name": gPluginCategories[i][@"name"], @"startIndex": @(start), @"count": @(end - start)};
+        }
         detectPluginConflicts();
         gPluginScanDone = YES;
         NSLog(@"[SBCPUFloating] scan done via self path, plugins: %ld", (long)gPluginTotalCount);
