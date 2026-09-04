@@ -4690,105 +4690,86 @@ static void scanInstalledPlugins(void) {
         }
     }
     
-    // 2. 读取 dpkg status 获取包信息（多路径尝试，兼容 roothide/rootful 各种越狱环境）
-    NSMutableArray *dpkgPaths = [NSMutableArray arrayWithArray:@[
-        @"/var/lib/dpkg/status",
-        @"/private/var/lib/dpkg/status",
-    ]];
-    // roothide: 通过环境变量获取 JBROOT 前缀
-    NSString *jbRoot = [NSString stringWithUTF8String:getenv("JBROOT") ?: ""];
-    if (jbRoot.length > 0) {
-        [dpkgPaths addObject:[jbRoot stringByAppendingPathComponent:@"var/lib/dpkg/status"]];
-        [dpkgPaths addObject:[jbRoot stringByAppendingPathComponent:@"lib/dpkg/status"]];
-    }
-    // 常见 roothide 前缀
-    [dpkgPaths addObjectsFromArray:@[
-        @"/var/jb/var/lib/dpkg/status",
-        @"/var/jb/lib/dpkg/status",
-        @"/private/var/jb/var/lib/dpkg/status",
-        @"/var/mobile/Library/dpkg/status",
-        @"/var/tmp/dpkg/status",
-    ]];
-    NSString *dpkgContent = nil;
-    NSString *usedPath = nil;
-    for (NSString *p in dpkgPaths) {
-        BOOL exists = [fm fileExistsAtPath:p];
-        NSLog(@"[SBCPUFloating] dpkg path %@ exists: %d", p, exists);
-        if (!exists) continue;
-        NSError *err = nil;
-        NSString *content = [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:&err];
-        NSLog(@"[SBCPUFloating] dpkg path %@ read length: %ld, err: %@", p, (long)content.length, err);
-        if (content && content.length > 100) {
-            dpkgContent = content;
-            usedPath = p;
-            break;
+    // 2. 用 dpkg -l 命令获取已安装包列表（最可靠，自动适配各种越狱环境）
+    NSMutableString *dpkgOutput = [NSMutableString string];
+    FILE *pipe = popen("dpkg -l 2>/dev/null", "r");
+    if (pipe) {
+        char buf[2048];
+        while (fgets(buf, sizeof(buf), pipe)) {
+            [dpkgOutput appendString:[NSString stringWithUTF8String:buf]];
         }
+        pclose(pipe);
     }
-    NSLog(@"[SBCPUFloating] dpkg status used path: %@, length: %ld", usedPath, (long)dpkgContent.length);
+    NSLog(@"[SBCPUFloating] dpkg -l output length: %ld", (long)dpkgOutput.length);
     
-    // 如果 dpkg status 读不到，fallback：直接从 DynamicLibraries 目录枚举插件
-    if (!dpkgContent) {
-        NSLog(@"[SBCPUFloating] dpkg status not found, using DynamicLibraries fallback");
-        NSArray *libPaths = @[
-            @"/Library/MobileSubstrate/DynamicLibraries",
-            @"/var/jb/Library/MobileSubstrate/DynamicLibraries",
-            @"/usr/lib/TweakInject",
-            @"/var/jb/usr/lib/TweakInject",
-            @"/Library/TweakInject",
-        ];
-        for (NSString *libPath in libPaths) {
-            NSError *err = nil;
-            NSArray *files = [fm contentsOfDirectoryAtPath:libPath error:&err];
-            NSLog(@"[SBCPUFloating] DynamicLibraries %@ count: %ld, err: %@", libPath, (long)files.count, err);
-            if (!files || files.count == 0) continue;
-            for (NSString *f in files) {
-                if (![f.pathExtension isEqualToString:@"dylib"]) continue;
-                NSString *pluginName = [f.stringByDeletingPathExtension copy];
-                NSDictionary *pluginInfo = @{
-                    @"name": pluginName,
-                    @"bundleID": pluginName,
-                    @"version": @"",
-                    @"desc": @"",
-                    @"injectedBundles": @[],
-                    @"category": categorizePlugin(pluginName, pluginName, @""),
-                };
-                [gInstalledPlugins addObject:pluginInfo];
-                gPluginTotalCount++;
-            }
-            if (gPluginTotalCount > 0) break;
-        }
-        // 按分类排序
-        [gInstalledPlugins sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-            return [a[@"category"] compare:b[@"category"]];
-        }];
-        detectPluginConflicts();
-        gPluginScanDone = YES;
-        NSLog(@"[SBCPUFloating] fallback scan done, plugins: %ld", (long)gPluginTotalCount);
-        return;
-    }
-    
-    // 按空行分割每个包
-    NSArray *packages = [dpkgContent componentsSeparatedByString:@"\n\n"];
-    NSLog(@"[SBCPUFloating] total packages parsed: %ld", (long)packages.count);
-    for (NSString *pkg in packages) {
-        NSString *package = @"";
-        NSString *version = @"";
-        NSString *desc = @"";
-        NSString *name = @"";
-        NSString *status = @"";
-        
-        NSArray *lines = [pkg componentsSeparatedByString:@"\n"];
+    // 解析 dpkg -l 输出：ii 开头的行是已安装包
+    NSMutableArray *packages = [NSMutableArray array];
+    if (dpkgOutput.length > 0) {
+        NSArray *lines = [dpkgOutput componentsSeparatedByString:@"\n"];
         for (NSString *line in lines) {
-            if ([line hasPrefix:@"Package: "]) package = [line substringFromIndex:9];
-            else if ([line hasPrefix:@"Version: "]) version = [line substringFromIndex:9];
-            else if ([line hasPrefix:@"Description: "]) desc = [line substringFromIndex:13];
-            else if ([line hasPrefix:@"Name: "]) name = [line substringFromIndex:6];
-            else if ([line hasPrefix:@"Status: "]) status = [line substringFromIndex:8];
+            if (![line hasPrefix:@"ii "]) continue;
+            // 格式: ii  name  version  arch  description
+            NSArray *parts = [line componentsSeparatedByString:@"  "];
+            NSMutableArray *cleanParts = [NSMutableArray array];
+            for (NSString *p in parts) {
+                NSString *trimmed = [p stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+                if (trimmed.length > 0) [cleanParts addObject:trimmed];
+            }
+            if (cleanParts.count >= 2) {
+                NSString *pkgName = cleanParts[1];
+                NSString *pkgVersion = cleanParts.count > 2 ? cleanParts[2] : @"";
+                NSString *pkgDesc = cleanParts.count > 4 ? [[cleanParts subarrayWithRange:NSMakeRange(4, cleanParts.count - 4)] componentsJoinedByString:@" "] : @"";
+                [packages addObject:@{@"package": pkgName, @"version": pkgVersion, @"desc": pkgDesc}];
+            }
         }
-        
-        // 只处理已安装的包（放宽判断，只要包含 install 即可）
+    }
+    NSLog(@"[SBCPUFloating] dpkg -l parsed packages: %ld", (long)packages.count);
+    
+    // 如果 dpkg -l 没结果，fallback 到文件路径
+    if (packages.count == 0) {
+        NSLog(@"[SBCPUFloating] dpkg -l failed, trying file paths");
+        NSArray *dpkgPaths = @[
+            @"/var/lib/dpkg/status",
+            @"/private/var/lib/dpkg/status",
+            @"/var/jb/var/lib/dpkg/status",
+            @"/var/jb/lib/dpkg/status",
+            @"/private/var/jb/var/lib/dpkg/status",
+        ];
+        for (NSString *p in dpkgPaths) {
+            BOOL exists = [fm fileExistsAtPath:p];
+            NSLog(@"[SBCPUFloating] fallback path %@ exists: %d", p, exists);
+            if (!exists) continue;
+            NSError *err = nil;
+            NSString *content = [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:&err];
+            if (content && content.length > 100) {
+                NSArray *filePkgs = [content componentsSeparatedByString:@"\n\n"];
+                for (NSString *pkg in filePkgs) {
+                    NSString *package = @"", *version = @"", *desc = @"", *name = @"", *status = @"";
+                    NSArray *pkgLines = [pkg componentsSeparatedByString:@"\n"];
+                    for (NSString *pl in pkgLines) {
+                        if ([pl hasPrefix:@"Package: "]) package = [pl substringFromIndex:9];
+                        else if ([pl hasPrefix:@"Version: "]) version = [pl substringFromIndex:9];
+                        else if ([pl hasPrefix:@"Description: "]) desc = [pl substringFromIndex:13];
+                        else if ([pl hasPrefix:@"Name: "]) name = [pl substringFromIndex:6];
+                        else if ([pl hasPrefix:@"Status: "]) status = [pl substringFromIndex:8];
+                    }
+                    if (package.length == 0) continue;
+                    if (status.length > 0 && ![status containsString:@"install"]) continue;
+                    [packages addObject:@{@"package": package, @"version": version, @"desc": desc.length > 0 ? desc : (name.length > 0 ? name : package)}];
+                }
+                break;
+            }
+        }
+    }
+    
+    // 遍历包列表（统一格式）
+    for (NSDictionary *pkgDict in packages) {
+        NSString *package = pkgDict[@"package"] ?: @"";
+        NSString *version = pkgDict[@"version"] ?: @"";
+        NSString *desc = pkgDict[@"desc"] ?: @"";
+        NSString *name = package;
+        // 只处理有效的包
         if (package.length == 0) continue;
-        if (status.length > 0 && ![status containsString:@"install"]) continue;
         // 过滤明显的系统包和基础工具（保留 lib 因为很多插件包名含 lib）
         if ([package hasPrefix:@"gsc."] || [package hasPrefix:@"cy+"] ||
             [package hasPrefix:@"apt"] || [package hasPrefix:@"dpkg"] ||
@@ -4799,8 +4780,6 @@ static void scanInstalledPlugins(void) {
             [package isEqualToString:@"tar"] || [package isEqualToString:@"gzip"] ||
             [package isEqualToString:@"findutils"] || [package hasPrefix:@"system-cmds"] ||
             [package hasPrefix:@"firmware"] || [package hasPrefix:@"base"]) continue;
-        
-        if (name.length == 0) name = package;
         
         // 匹配 plist 注入信息
         NSArray *injected = @[];
