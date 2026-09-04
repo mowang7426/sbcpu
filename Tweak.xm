@@ -4683,6 +4683,59 @@ static void scanInstalledPlugins(void) {
     
     NSFileManager *fm = [NSFileManager defaultManager];
     
+    // 🔥 最可靠的方法：用 dladdr 获取当前插件自己的 .dylib 路径
+    // 当前插件(SBCPUFloating)就在 DynamicLibraries 目录里，找到自己就找到了所有插件
+    NSMutableArray *selfFoundDylibs = [NSMutableArray array];
+    NSString *selfDylibPath = nil;
+    NSString *dynamicLibDir = nil;
+    @try {
+        Dl_info dlinfo;
+        if (dladdr((__bridge void *)[NSObject class], &dlinfo) && dlinfo.dli_fname) {
+            selfDylibPath = [NSString stringWithUTF8String:dlinfo.dli_fname];
+            NSLog(@"[SBCPUFloating] self dylib path: %@", selfDylibPath);
+            dynamicLibDir = [selfDylibPath stringByDeletingLastPathComponent];
+            NSLog(@"[SBCPUFloating] DynamicLibraries dir: %@", dynamicLibDir);
+            gScanError = [NSString stringWithFormat:@"自身路径:%@", dynamicLibDir];
+            NSError *dirErr = nil;
+            NSArray *dirFiles = [fm contentsOfDirectoryAtPath:dynamicLibDir error:&dirErr];
+            NSLog(@"[SBCPUFloating] dir files: %ld, err: %@", (long)dirFiles.count, dirErr);
+            if (dirFiles) {
+                for (NSString *f in dirFiles) {
+                    if ([f.pathExtension isEqualToString:@"dylib"]) {
+                        NSString *dn = f.stringByDeletingPathExtension;
+                        if (dn.length > 0 && ![selfFoundDylibs containsObject:dn]) {
+                            [selfFoundDylibs addObject:dn];
+                        }
+                    }
+                }
+            }
+        }
+    } @catch (NSException *e) {
+        NSLog(@"[SBCPUFloating] dladdr failed: %@", e);
+    }
+    gDylibCount = selfFoundDylibs.count;
+    NSLog(@"[SBCPUFloating] self-found dylibs: %ld", (long)selfFoundDylibs.count);
+    
+    // 如果通过自身路径找到了 dylib，直接用这些作为插件列表（最可靠，不需要猜路径）
+    if (selfFoundDylibs.count > 0) {
+        gScanMethod = @"自身路径探测";
+        for (NSString *dn in selfFoundDylibs) {
+            [gInstalledPlugins addObject:@{
+                @"name": dn, @"bundleID": dn, @"version": @"",
+                @"desc": @"", @"injectedBundles": @[],
+                @"category": categorizePlugin(dn, dn, @""),
+            }];
+            gPluginTotalCount++;
+        }
+        [gInstalledPlugins sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+            return [a[@"category"] compare:b[@"category"]];
+        }];
+        detectPluginConflicts();
+        gPluginScanDone = YES;
+        NSLog(@"[SBCPUFloating] scan done via self path, plugins: %ld", (long)gPluginTotalCount);
+        return;
+    }
+    
     // 1. 读取 DynamicLibraries 目录下的 plist（Substrate/Substitute 通用路径）
     NSArray *libPaths = @[
         @"/Library/MobileSubstrate/DynamicLibraries",
