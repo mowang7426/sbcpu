@@ -3947,7 +3947,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             [scanBtn addTarget:self action:@selector(scanPluginsTapped:) forControlEvents:UIControlEventTouchUpInside];
             [cell.contentView addSubview:scanBtn];
             // 状态信息
-            UILabel *statusLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 40, cell.contentView.bounds.size.width - 32, 20)];
+            UILabel *statusLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 38, cell.contentView.bounds.size.width - 32, 20)];
             if (!gPluginScanDone) {
                 statusLbl.text = @"点击右上角按钮开始扫描已安装插件";
                 statusLbl.textColor = [UIColor secondaryLabelColor];
@@ -3961,6 +3961,17 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             }
             statusLbl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
             [cell.contentView addSubview:statusLbl];
+            // 调试信息（第二行）
+            UILabel *debugLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 58, cell.contentView.bounds.size.width - 32, 18)];
+            if (gPluginScanDone) {
+                debugLbl.text = [NSString stringWithFormat:@"方式:%@ | dpkg输出:%ld | 解析:%ld | 最终:%ld",
+                                  gScanMethod, (long)gDpkgOutputLength, (long)gDpkgParsedCount, (long)gPluginTotalCount];
+            } else {
+                debugLbl.text = @"等待扫描...";
+            }
+            debugLbl.font = [UIFont systemFontOfSize:10 weight:UIFontWeightRegular];
+            debugLbl.textColor = [UIColor tertiaryLabelColor];
+            [cell.contentView addSubview:debugLbl];
         } else if (indexPath.row <= gPluginConflictCount) {
             // 冲突警告
             NSInteger conflictIdx = indexPath.row - 1;
@@ -4583,6 +4594,10 @@ static NSMutableArray *gPluginConflicts = nil;
 static BOOL gPluginScanDone = NO;
 static NSInteger gPluginTotalCount = 0;
 static NSInteger gPluginConflictCount = 0;
+static NSInteger gDpkgOutputLength = 0;
+static NSInteger gDpkgParsedCount = 0;
+static NSString *gScanMethod = @"";
+static NSString *gScanError = @"";
 
 // 分类数据库：BundleID → 分类
 static NSDictionary *pluginCategoryMap(void) {
@@ -4700,6 +4715,8 @@ static void scanInstalledPlugins(void) {
         }
         pclose(pipe);
     }
+    gDpkgOutputLength = dpkgOutput.length;
+    gScanMethod = (dpkgOutput.length > 0) ? @"dpkg命令" : @"未获取";
     NSLog(@"[SBCPUFloating] dpkg -l output length: %ld", (long)dpkgOutput.length);
     
     // 解析 dpkg -l 输出：ii 开头的行是已安装包
@@ -4723,10 +4740,12 @@ static void scanInstalledPlugins(void) {
             }
         }
     }
+    gDpkgParsedCount = packages.count;
     NSLog(@"[SBCPUFloating] dpkg -l parsed packages: %ld", (long)packages.count);
     
     // 如果 dpkg -l 没结果，fallback 到文件路径
     if (packages.count == 0) {
+        gScanMethod = @"文件路径(fallback)";
         NSLog(@"[SBCPUFloating] dpkg -l failed, trying file paths");
         NSArray *dpkgPaths = @[
             @"/var/lib/dpkg/status",
@@ -4970,7 +4989,7 @@ static void detectPluginConflicts(void) {
         return 82.0;
     }
     if (indexPath.section == 12) {
-        if (indexPath.row == 0) return 68.0;
+        if (indexPath.row == 0) return 84.0;
         if (indexPath.row <= gPluginConflictCount) return 72.0;
         return 56.0;
     }
