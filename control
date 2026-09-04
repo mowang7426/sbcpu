@@ -1,6 +1,6 @@
 Package: com.sbcpu.floating
 Name: SB CPU Floating
-Version: 3.3.3
+Version: 3.4
 Architecture: iphoneos-arm64
 Maintainer: MoWang
 Author: MoWang
