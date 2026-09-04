@@ -4423,6 +4423,41 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 
+    // 🔍 插件冲突检测：点击插件显示详情
+    if (indexPath.section == 12) {
+        if (indexPath.row == 0) return;
+        if (gInstalledPlugins.count == 0) return;
+        NSInteger pluginIndex = indexPath.row - 1 - gPluginConflictCount;
+        if (pluginIndex < 0 || pluginIndex >= (NSInteger)gInstalledPlugins.count) {
+            pluginIndex = indexPath.row - 1;
+        }
+        if (pluginIndex < 0 || pluginIndex >= (NSInteger)gInstalledPlugins.count) return;
+        
+        NSDictionary *plugin = gInstalledPlugins[pluginIndex];
+        NSString *name = plugin[@"name"] ?: @"未知";
+        NSString *category = plugin[@"category"] ?: @"其他";
+        NSArray *injected = plugin[@"injectedBundles"] ?: @[];
+        
+        NSString *message;
+        if (injected.count > 0) {
+            NSMutableString *bundleStr = [NSMutableString string];
+            for (NSInteger i = 0; i < MIN(injected.count, 10); i++) {
+                [bundleStr appendFormat:@"\n• %@", injected[i]];
+            }
+            if (injected.count > 10) {
+                [bundleStr appendFormat:@"\n... 等%ld个进程", (long)injected.count];
+            }
+            message = [NSString stringWithFormat:@"分类：%@\n注入进程：%ld 个%@", category, (long)injected.count, bundleStr];
+        } else {
+            message = [NSString stringWithFormat:@"分类：%@\n注入进程：无（全局注入或未配置Filter）", category];
+        }
+        
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:name message:message preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
     if (indexPath.section == 0) {
         if (indexPath.row == 1) {
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"无操作收起延迟" message:@"选择多长时间无操作后自动折叠" preferredStyle:UIAlertControllerStyleActionSheet];
