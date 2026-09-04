@@ -4423,9 +4423,36 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 
-    // 🔍 插件冲突检测：点击插件显示详情
+    // 🔍 插件冲突检测：点击冲突警告或插件显示详情
     if (indexPath.section == 12) {
         if (indexPath.row == 0) return;
+        
+        // 点击冲突警告（row 1 ~ gPluginConflictCount）
+        if (indexPath.row <= gPluginConflictCount && gPluginConflicts.count > 0) {
+            NSInteger conflictIndex = indexPath.row - 1;
+            if (conflictIndex >= 0 && conflictIndex < (NSInteger)gPluginConflicts.count) {
+                NSDictionary *conflict = gPluginConflicts[conflictIndex];
+                NSString *title = conflict[@"title"] ?: @"冲突";
+                NSString *desc = conflict[@"desc"] ?: @"";
+                NSInteger severity = [conflict[@"severity"] integerValue];
+                NSArray *plugins = conflict[@"plugins"] ?: @[];
+                NSString *severityStr = (severity == 0) ? @"🔴 高风险" : (severity == 1) ? @"🟡 中风险" : @"🟢 低风险";
+                
+                NSMutableString *pluginStr = [NSMutableString string];
+                for (NSString *p in plugins) {
+                    [pluginStr appendFormat:@"\n• %@", p];
+                }
+                
+                NSString *message = [NSString stringWithFormat:@"风险等级：%@\n\n冲突说明：%@\n\n涉及插件：%@\n\n建议：禁用其中一个插件，或确认两者功能不重叠后继续使用", severityStr, desc, pluginStr];
+                
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:alert animated:YES completion:nil];
+                return;
+            }
+        }
+        
+        // 点击插件列表
         if (gInstalledPlugins.count == 0) return;
         NSInteger pluginIndex = indexPath.row - 1 - gPluginConflictCount;
         if (pluginIndex < 0 || pluginIndex >= (NSInteger)gInstalledPlugins.count) {
@@ -4736,12 +4763,31 @@ static NSDictionary *categoryKeywords(void) {
 // 已知冲突对：[bundleID1, bundleID2, 标题, 描述, 严重程度(0高1中2低)]
 static NSArray *knownConflictPairs(void) {
     return @[
+        // 🔴 高风险（功能直接冲突，可能导致崩溃或功能失效）
         @[@"com.mowang.sbcpufloating", @"com.alexander.cputhermal",
           @"充电管理冲突", @"两个插件同时注入 powerd 并修改充电属性，可能导致充电策略互相覆盖", @0],
-        @[@"com.mowang.sbcpufloating", @"com.nscube.cpu",
-          @"系统监控冲突", @"两个插件同时高频读取 CPU/温度传感器，可能导致读数冲突", @1],
+        @[@"com.alexander.cputhermal", @"com.nscube.cpu",
+          @"温度监控冲突", @"两个插件同时读取温度传感器并修改温控属性，可能导致温度读数异常", @0],
         @[@"com.rpetrich.activator", @"com.a3tweaks.ctcenter",
-          @"手势冲突", @"Activator 和控制中心插件可能在底部手势区域冲突", @2],
+          @"手势冲突", @"Activator 和控制中心插件可能在底部手势区域冲突，导致手势失效", @0],
+        
+        // 🟡 中风险（功能重叠，可能导致性能问题或功能异常）
+        @[@"com.mowang.sbcpufloating", @"com.nscube.cpu",
+          @"系统监控冲突", @"两个插件同时高频读取 CPU/温度传感器，可能导致读数冲突和额外耗电", @1],
+        @[@"com.nscube.cpu", @"com.artikus.statusvol",
+          @"状态栏监控冲突", @"两个插件同时在状态栏显示监控信息，可能导致布局重叠", @1],
+        @[@"com.a3tweaks.ctcenter", @"com.opa334.ccmodules",
+          @"控制中心冲突", @"两个控制中心插件同时修改模块布局，可能导致模块显示异常", @1],
+        @[@"com.rpetrich.libgesture", @"com.a3tweaks.libgesture",
+          @"手势库冲突", @"两个手势库同时注入，可能导致手势识别异常", @1],
+        
+        // 🟢 低风险（功能轻微重叠，一般不影响使用）
+        @[@"com.mowang.sbcpufloating", @"com.opa334.appstore++",
+          @"功能重叠", @"两个插件都有充电相关功能，建议确认功能不重叠", @2],
+        @[@"com.artikus.statusvol", @"com.nscube.cpu",
+          @"状态栏重叠", @"两个插件都在状态栏显示信息，建议调整显示位置", @2],
+        @[@"com.opa334.ccmodules", @"com.a3tweaks.ctcenter",
+          @"控制中心重叠", @"两个控制中心插件功能部分重叠，建议保留一个", @2],
     ];
 }
 
