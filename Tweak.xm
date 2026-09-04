@@ -32,6 +32,20 @@
 
 #pragma mark - 1. 👑 幽灵代理类 (欺骗 Objective-C++ 编译器)
 
+// 插件冲突检测 - 全局变量（移到文件开头，所有方法可访问）
+static NSMutableArray *gInstalledPlugins = nil;
+static NSMutableArray *gPluginConflicts = nil;
+static BOOL gPluginScanDone = NO;
+static NSInteger gPluginTotalCount = 0;
+static NSInteger gPluginConflictCount = 0;
+static NSInteger gDpkgOutputLength = 0;
+static NSInteger gDpkgParsedCount = 0;
+static NSString *gScanMethod = @"";
+static NSString *gScanError = @"";
+static NSInteger gDylibCount = 0;
+static NSString *gDylibPath = @"";
+
+
 @interface NSObject (SBCPUDummySafeCalls)
 + (id)sharedInstance;
 + (id)defaultWorkspace;
@@ -3315,18 +3329,14 @@ return self;
     if (injected.count > 0) {
         NSMutableString *bundleStr = [NSMutableString string];
         for (NSInteger i = 0; i < MIN(injected.count, 10); i++) {
-            [bundleStr appendFormat:@"
-• %@", injected[i]];
+            [bundleStr appendFormat:@"\n• %@", injected[i]];
         }
         if (injected.count > 10) {
-            [bundleStr appendFormat:@"
-... 等%ld个进程", (long)injected.count];
+            [bundleStr appendFormat:@"\n... 等%ld个进程", (long)injected.count];
         }
-        message = [NSString stringWithFormat:@"分类：%@
-注入进程：%ld 个%@", category, (long)injected.count, bundleStr];
+        message = [NSString stringWithFormat:@"分类：%@\n注入进程：%ld 个%@", category, (long)injected.count, bundleStr];
     } else {
-        message = [NSString stringWithFormat:@"分类：%@
-注入进程：无（全局注入或未配置Filter）", category];
+        message = [NSString stringWithFormat:@"分类：%@\n注入进程：无（全局注入或未配置Filter）", category];
     }
     
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:name message:message preferredStyle:UIAlertControllerStyleAlert];
@@ -4641,19 +4651,6 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 }
 
 #pragma mark - 🔍 插件冲突检测核心逻辑
-
-// 插件信息（用 NSDictionary 存储：name/bundleID/version/desc/injectedBundles/category）
-static NSMutableArray *gInstalledPlugins = nil;
-static NSMutableArray *gPluginConflicts = nil;
-static BOOL gPluginScanDone = NO;
-static NSInteger gPluginTotalCount = 0;
-static NSInteger gPluginConflictCount = 0;
-static NSInteger gDpkgOutputLength = 0;
-static NSInteger gDpkgParsedCount = 0;
-static NSString *gScanMethod = @"";
-static NSString *gScanError = @"";
-static NSInteger gDylibCount = 0;
-static NSString *gDylibPath = @"";
 
 // 分类数据库：BundleID → 分类
 static NSDictionary *pluginCategoryMap(void) {
