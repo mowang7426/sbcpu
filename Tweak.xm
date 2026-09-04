@@ -4012,7 +4012,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
                 statusLbl.textColor = [UIColor secondaryLabelColor];
             } else if (gPluginConflictCount > 0) {
                 statusLbl.text = [NSString stringWithFormat:@"已扫描 %ld 个插件 / %ld 个分类，发现 %ld 个潜在冲突 ⚠️",
-                                  (long)gPluginTotalCount, (long)gPluginConflictCount];
+                                  (long)gPluginTotalCount, (long)gPluginCategories.count, (long)gPluginConflictCount];
                 statusLbl.textColor = [UIColor systemOrangeColor];
             } else {
                 statusLbl.text = [NSString stringWithFormat:@"已扫描 %ld 个插件，未发现冲突 ✅", (long)gPluginTotalCount];
