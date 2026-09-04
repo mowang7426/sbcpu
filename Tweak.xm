@@ -3984,117 +3984,176 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         cell.accessoryType = UITableViewCellAccessoryNone;
         
         if (indexPath.row == 0) {
-            // 状态卡片
-            cell.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
+            // 🎨 卡片式状态卡片
+            cell.backgroundColor = [UIColor clearColor];
+            // 卡片背景
+            UIView *card = [[UIView alloc] initWithFrame:CGRectMake(12, 8, cell.contentView.bounds.size.width - 24, 100)];
+            card.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
                 return t.userInterfaceStyle == UIUserInterfaceStyleDark ?
-                    [UIColor colorWithWhite:0.12 alpha:1.0] : [UIColor colorWithWhite:0.97 alpha:1.0];
+                    [UIColor colorWithRed:0.1 green:0.15 blue:0.25 alpha:1.0] :
+                    [UIColor colorWithRed:0.85 green:0.92 blue:1.0 alpha:1.0];
             }];
+            card.layer.cornerRadius = 16;
+            [cell.contentView addSubview:card];
+            // 左侧图标
+            UILabel *iconLbl = [[UILabel alloc] initWithFrame:CGRectMake(20, 18, 40, 40)];
+            iconLbl.text = @"📋";
+            iconLbl.font = [UIFont systemFontOfSize:28];
+            iconLbl.textAlignment = NSTextAlignmentCenter;
+            [card addSubview:iconLbl];
             // 标题
-            UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, 200, 22)];
-            titleLbl.text = @"🔍 插件冲突检测";
-            titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
+            UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(68, 16, card.bounds.size.width - 150, 24)];
+            if (gPluginScanDone) {
+                titleLbl.text = [NSString stringWithFormat:@"已扫描 %ld 个插件", (long)gPluginTotalCount];
+            } else {
+                titleLbl.text = @"插件冲突检测";
+            }
+            titleLbl.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
             titleLbl.textColor = [UIColor labelColor];
-            [cell.contentView addSubview:titleLbl];
+            [card addSubview:titleLbl];
+            // 描述
+            UILabel *descLbl = [[UILabel alloc] initWithFrame:CGRectMake(68, 42, card.bounds.size.width - 150, 20)];
+            if (!gPluginScanDone) {
+                descLbl.text = @"点击右上角按钮开始扫描";
+                descLbl.textColor = [UIColor secondaryLabelColor];
+            } else if (gPluginConflictCount > 0) {
+                descLbl.text = [NSString stringWithFormat:@"发现 %ld 个潜在冲突 ⚠️", (long)gPluginConflictCount];
+                descLbl.textColor = [UIColor systemOrangeColor];
+            } else {
+                descLbl.text = @"未发现冲突 ✅";
+                descLbl.textColor = [UIColor systemGreenColor];
+            }
+            descLbl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+            [card addSubview:descLbl];
             // 扫描按钮
             UIButton *scanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-            scanBtn.frame = CGRectMake(cell.contentView.bounds.size.width - 90, 10, 74, 30);
-            [scanBtn setTitle:gPluginScanDone ? @"重新扫描" : @"开始扫描" forState:UIControlStateNormal];
-            scanBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
-            scanBtn.backgroundColor = [UIColor systemBlueColor];
-            [scanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-            scanBtn.layer.cornerRadius = 8;
+            scanBtn.frame = CGRectMake(card.bounds.size.width - 76, 24, 60, 32);
+            [scanBtn setTitle:gPluginScanDone ? @"扫描" : @"开始" forState:UIControlStateNormal];
+            scanBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+            scanBtn.backgroundColor = [UIColor whiteColor];
+            [scanBtn setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
+            scanBtn.layer.cornerRadius = 16;
+            scanBtn.layer.borderWidth = 1;
+            scanBtn.layer.borderColor = [UIColor systemBlueColor].CGColor;
             [scanBtn addTarget:self action:@selector(scanPluginsTapped:) forControlEvents:UIControlEventTouchUpInside];
-            [cell.contentView addSubview:scanBtn];
-            // 状态信息
-            UILabel *statusLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 38, cell.contentView.bounds.size.width - 32, 20)];
-            if (!gPluginScanDone) {
-                statusLbl.text = @"点击右上角按钮开始扫描已安装插件";
-                statusLbl.textColor = [UIColor secondaryLabelColor];
-            } else if (gPluginConflictCount > 0) {
-                statusLbl.text = [NSString stringWithFormat:@"已扫描 %ld 个插件 / %ld 个分类，发现 %ld 个潜在冲突 ⚠️",
-                                  (long)gPluginTotalCount, (long)gPluginCategories.count, (long)gPluginConflictCount];
-                statusLbl.textColor = [UIColor systemOrangeColor];
-            } else {
-                statusLbl.text = [NSString stringWithFormat:@"已扫描 %ld 个插件，未发现冲突 ✅", (long)gPluginTotalCount];
-                statusLbl.textColor = [UIColor systemGreenColor];
-            }
-            statusLbl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-            [cell.contentView addSubview:statusLbl];
-            // 调试信息（第二行：基本统计）
-            UILabel *debugLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 58, cell.contentView.bounds.size.width - 32, 16)];
-            if (gPluginScanDone) {
-                debugLbl.text = [NSString stringWithFormat:@"方式:%@ | dpkg:%ld | 解析:%ld | dylib:%ld | 最终:%ld",
-                                  gScanMethod, (long)gDpkgOutputLength, (long)gDpkgParsedCount, (long)gDylibCount, (long)gPluginTotalCount];
-            } else {
-                debugLbl.text = @"等待扫描...";
-            }
-            debugLbl.font = [UIFont systemFontOfSize:10 weight:UIFontWeightRegular];
-            debugLbl.textColor = [UIColor tertiaryLabelColor];
-            [cell.contentView addSubview:debugLbl];
-            // 调试信息（第三行：路径探测详情）
-            UILabel *pathLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 74, cell.contentView.bounds.size.width - 32, 20)];
-            if (gPluginScanDone && gScanError.length > 0) {
-                pathLbl.text = [NSString stringWithFormat:@"探测:%@", gScanError];
-            } else {
-                pathLbl.text = @"";
-            }
-            pathLbl.font = [UIFont systemFontOfSize:9 weight:UIFontWeightRegular];
-            pathLbl.textColor = [UIColor tertiaryLabelColor];
-            pathLbl.numberOfLines = 2;
-            [cell.contentView addSubview:pathLbl];
+            [card addSubview:scanBtn];
+            // 进度条
+            UIView *progressBg = [[UIView alloc] initWithFrame:CGRectMake(20, 72, card.bounds.size.width - 40, 6)];
+            progressBg.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.3];
+            progressBg.layer.cornerRadius = 3;
+            [card addSubview:progressBg];
+            CGFloat progress = gPluginScanDone ? 1.0 : 0.0;
+            UIView *progressFg = [[UIView alloc] initWithFrame:CGRectMake(20, 72, (card.bounds.size.width - 40) * progress, 6)];
+            progressFg.backgroundColor = [UIColor systemBlueColor];
+            progressFg.layer.cornerRadius = 3;
+            [card addSubview:progressFg];
         } else if (indexPath.row <= gPluginConflictCount) {
-            // 冲突警告
+            // 🎨 卡片式冲突警告
+            cell.backgroundColor = [UIColor clearColor];
             NSInteger conflictIdx = indexPath.row - 1;
             if (conflictIdx < (NSInteger)gPluginConflicts.count) {
                 NSDictionary *conflict = gPluginConflicts[conflictIdx];
                 NSInteger severity = [conflict[@"severity"] integerValue];
-                UIColor *bgColor, *textColor;
+                UIColor *cardColor, *iconColor;
                 if (severity == 0) {
-                    bgColor = [UIColor colorWithRed:1.0 green:0.9 blue:0.9 alpha:1.0];
-                    textColor = [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:1.0];
+                    cardColor = [UIColor colorWithRed:0.95 green:0.25 blue:0.25 alpha:1.0];
+                    iconColor = [UIColor colorWithRed:1.0 green:0.9 blue:0.9 alpha:1.0];
                 } else if (severity == 1) {
-                    bgColor = [UIColor colorWithRed:1.0 green:0.95 blue:0.85 alpha:1.0];
-                    textColor = [UIColor colorWithRed:0.9 green:0.5 blue:0.1 alpha:1.0];
+                    cardColor = [UIColor colorWithRed:0.95 green:0.55 blue:0.15 alpha:1.0];
+                    iconColor = [UIColor colorWithRed:1.0 green:0.95 blue:0.85 alpha:1.0];
                 } else {
-                    bgColor = [UIColor colorWithRed:1.0 green:1.0 blue:0.85 alpha:1.0];
-                    textColor = [UIColor colorWithRed:0.7 green:0.6 blue:0.1 alpha:1.0];
+                    cardColor = [UIColor colorWithRed:0.95 green:0.8 blue:0.2 alpha:1.0];
+                    iconColor = [UIColor colorWithRed:1.0 green:1.0 blue:0.85 alpha:1.0];
                 }
-                cell.backgroundColor = bgColor;
+                // 卡片背景
+                UIView *card = [[UIView alloc] initWithFrame:CGRectMake(12, 6, cell.contentView.bounds.size.width - 24, 76)];
+                card.backgroundColor = cardColor;
+                card.layer.cornerRadius = 14;
+                [cell.contentView addSubview:card];
+                // 左侧图标背景
+                UIView *iconBg = [[UIView alloc] initWithFrame:CGRectMake(14, 14, 44, 44)];
+                iconBg.backgroundColor = iconColor;
+                iconBg.layer.cornerRadius = 22;
+                [card addSubview:iconBg];
+                // 图标
+                UILabel *iconLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, 14, 44, 44)];
+                iconLbl.text = @"⚠️";
+                iconLbl.font = [UIFont systemFontOfSize:22];
+                iconLbl.textAlignment = NSTextAlignmentCenter;
+                [card addSubview:iconLbl];
                 // 标题
-                UILabel *tLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, 8, cell.contentView.bounds.size.width - 28, 20)];
-                tLbl.text = [NSString stringWithFormat:@"⚠️ %@", conflict[@"title"]];
-                tLbl.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
-                tLbl.textColor = textColor;
-                [cell.contentView addSubview:tLbl];
+                UILabel *tLbl = [[UILabel alloc] initWithFrame:CGRectMake(68, 12, card.bounds.size.width - 140, 22)];
+                tLbl.text = conflict[@"title"];
+                tLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
+                tLbl.textColor = [UIColor whiteColor];
+                [card addSubview:tLbl];
                 // 描述
-                UILabel *dLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, 30, cell.contentView.bounds.size.width - 28, 40)];
+                UILabel *dLbl = [[UILabel alloc] initWithFrame:CGRectMake(68, 36, card.bounds.size.width - 140, 34)];
                 dLbl.text = conflict[@"desc"];
                 dLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
-                dLbl.textColor = [UIColor darkGrayColor];
+                dLbl.textColor = [UIColor colorWithWhite:1.0 alpha:0.9];
                 dLbl.numberOfLines = 2;
-                [cell.contentView addSubview:dLbl];
+                [card addSubview:dLbl];
+                // 详情按钮
+                UIButton *detailBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+                detailBtn.frame = CGRectMake(card.bounds.size.width - 68, 22, 52, 30);
+                [detailBtn setTitle:@"详情" forState:UIControlStateNormal];
+                detailBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+                detailBtn.backgroundColor = [UIColor whiteColor];
+                [detailBtn setTitleColor:cardColor forState:UIControlStateNormal];
+                detailBtn.layer.cornerRadius = 15;
+                [card addSubview:detailBtn];
             }
         } else {
-            // 📂 分类标题行 + 插件列表
+            // 🎨 卡片式分类标题 + 插件列表
+            cell.backgroundColor = [UIColor clearColor];
             NSInteger listStartRow = 1 + gPluginConflictCount;
             NSInteger relativeRow = indexPath.row - listStartRow;
             NSInteger currentRow = 0;
+            // 分类颜色数组
+            NSArray *catColors = @[
+                [UIColor systemBlueColor], [UIColor systemGreenColor], [UIColor systemOrangeColor],
+                [UIColor systemPurpleColor], [UIColor systemPinkColor], [UIColor systemTealColor],
+                [UIColor systemIndigoColor], [UIColor systemBrownColor], [UIColor systemRedColor],
+                [UIColor systemCyanColor], [UIColor systemMintColor], [UIColor systemYellowColor]
+            ];
             for (NSInteger catIdx = 0; catIdx < (NSInteger)gPluginCategories.count; catIdx++) {
                 NSDictionary *catInfo = gPluginCategories[catIdx];
                 NSInteger catCount = [catInfo[@"count"] integerValue];
                 NSInteger catStart = [catInfo[@"startIndex"] integerValue];
+                UIColor *catColor = catColors[catIdx % catColors.count];
                 // 分类标题行
                 if (relativeRow == currentRow) {
-                    cell.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
-                        return t.userInterfaceStyle == UIUserInterfaceStyleDark ? [UIColor colorWithWhite:0.15 alpha:1.0] : [UIColor colorWithWhite:0.93 alpha:1.0];
-                    }];
-                    cell.textLabel.hidden = NO;
-                    cell.detailTextLabel.hidden = YES;
-                    cell.textLabel.text = [NSString stringWithFormat:@"📂 %@（%ld个）", catInfo[@"name"], (long)catCount];
-                    cell.textLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
-                    cell.textLabel.textColor = [UIColor secondaryLabelColor];
-                    cell.accessoryType = UITableViewCellAccessoryNone;
                     cell.selectionStyle = UITableViewCellSelectionStyleNone;
+                    // 左侧彩色图标
+                    UIView *iconBg = [[UIView alloc] initWithFrame:CGRectMake(20, 8, 36, 36)];
+                    iconBg.backgroundColor = catColor;
+                    iconBg.layer.cornerRadius = 10;
+                    [cell.contentView addSubview:iconBg];
+                    UILabel *iconLbl = [[UILabel alloc] initWithFrame:CGRectMake(20, 8, 36, 36)];
+                    iconLbl.text = @"📁";
+                    iconLbl.font = [UIFont systemFontOfSize:18];
+                    iconLbl.textAlignment = NSTextAlignmentCenter;
+                    [cell.contentView addSubview:iconLbl];
+                    // 分类名称
+                    UILabel *nameLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 6, cell.contentView.bounds.size.width - 120, 22)];
+                    nameLbl.text = [NSString stringWithFormat:@"%@（%ld个）", catInfo[@"name"], (long)catCount];
+                    nameLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
+                    nameLbl.textColor = [UIColor labelColor];
+                    [cell.contentView addSubview:nameLbl];
+                    // 描述
+                    UILabel *descLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 28, cell.contentView.bounds.size.width - 120, 16)];
+                    descLbl.text = [NSString stringWithFormat:@"共 %ld 个插件", (long)catCount];
+                    descLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+                    descLbl.textColor = [UIColor secondaryLabelColor];
+                    [cell.contentView addSubview:descLbl];
+                    // 右侧箭头
+                    UILabel *arrowLbl = [[UILabel alloc] initWithFrame:CGRectMake(cell.contentView.bounds.size.width - 30, 14, 20, 24)];
+                    arrowLbl.text = @"›";
+                    arrowLbl.font = [UIFont systemFontOfSize:24 weight:UIFontWeightBold];
+                    arrowLbl.textColor = [UIColor tertiaryLabelColor];
+                    arrowLbl.textAlignment = NSTextAlignmentCenter;
+                    [cell.contentView addSubview:arrowLbl];
                     return cell;
                 }
                 currentRow++;
@@ -4104,16 +4163,36 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
                         NSInteger pluginIdx = catStart + j;
                         if (pluginIdx >= 0 && pluginIdx < (NSInteger)gInstalledPlugins.count) {
                             NSDictionary *plugin = gInstalledPlugins[pluginIdx];
-                            cell.backgroundColor = [UIColor clearColor];
-                            cell.textLabel.hidden = NO;
-                            cell.detailTextLabel.hidden = NO;
-                            cell.textLabel.text = plugin[@"name"];
-                            cell.textLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+                            // 左侧彩色小图标
+                            UIView *iconBg = [[UIView alloc] initWithFrame:CGRectMake(24, 14, 32, 32)];
+                            iconBg.backgroundColor = [catColor colorWithAlphaComponent:0.15];
+                            iconBg.layer.cornerRadius = 8;
+                            [cell.contentView addSubview:iconBg];
+                            UILabel *iconLbl = [[UILabel alloc] initWithFrame:CGRectMake(24, 14, 32, 32)];
+                            iconLbl.text = @"🔧";
+                            iconLbl.font = [UIFont systemFontOfSize:16];
+                            iconLbl.textAlignment = NSTextAlignmentCenter;
+                            [cell.contentView addSubview:iconLbl];
+                            // 插件名称
+                            UILabel *nameLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 10, cell.contentView.bounds.size.width - 120, 22)];
+                            nameLbl.text = plugin[@"name"];
+                            nameLbl.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+                            nameLbl.textColor = [UIColor labelColor];
+                            [cell.contentView addSubview:nameLbl];
+                            // 注入进程数
                             NSArray *injected = plugin[@"injectedBundles"];
-                            cell.detailTextLabel.text = [NSString stringWithFormat:@"注入%ld个进程", (long)injected.count];
-                            cell.detailTextLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
-                            cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
-                            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+                            UILabel *descLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 34, cell.contentView.bounds.size.width - 120, 16)];
+                            descLbl.text = [NSString stringWithFormat:@"注入 %ld 个进程", (long)injected.count];
+                            descLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+                            descLbl.textColor = [UIColor secondaryLabelColor];
+                            [cell.contentView addSubview:descLbl];
+                            // 右侧箭头
+                            UILabel *arrowLbl = [[UILabel alloc] initWithFrame:CGRectMake(cell.contentView.bounds.size.width - 30, 18, 20, 24)];
+                            arrowLbl.text = @"›";
+                            arrowLbl.font = [UIFont systemFontOfSize:24 weight:UIFontWeightBold];
+                            arrowLbl.textColor = [UIColor tertiaryLabelColor];
+                            arrowLbl.textAlignment = NSTextAlignmentCenter;
+                            [cell.contentView addSubview:arrowLbl];
                         }
                         return cell;
                     }
@@ -5400,8 +5479,22 @@ static void detectPluginConflicts(void) {
         return 82.0;
     }
     if (indexPath.section == 12) {
-        if (indexPath.row == 0) return 110.0;
-        if (indexPath.row <= gPluginConflictCount) return 72.0;
+        if (indexPath.row == 0) return 116.0;  // 状态卡片
+        if (indexPath.row <= gPluginConflictCount) return 88.0;  // 冲突警告卡片
+        // 判断是分类标题还是插件
+        NSInteger listStartRow = 1 + gPluginConflictCount;
+        NSInteger relativeRow = indexPath.row - listStartRow;
+        NSInteger currentRow = 0;
+        for (NSInteger catIdx = 0; catIdx < (NSInteger)gPluginCategories.count; catIdx++) {
+            NSDictionary *catInfo = gPluginCategories[catIdx];
+            NSInteger catCount = [catInfo[@"count"] integerValue];
+            if (relativeRow == currentRow) return 48.0;  // 分类标题
+            currentRow++;
+            for (NSInteger j = 0; j < catCount; j++) {
+                if (relativeRow == currentRow) return 64.0;  // 插件
+                currentRow++;
+            }
+        }
         return 56.0;
     }
     return UITableViewAutomaticDimension;
