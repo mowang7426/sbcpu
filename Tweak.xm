@@ -3343,7 +3343,12 @@ return self;
     [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
     // 用 keyWindow.rootViewController present，确保越狱设置页面中也能弹出
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
+        UIWindow *kw = nil;
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            if (w.isKeyWindow) { kw = w; break; }
+        }
+        if (!kw) kw = [[UIApplication sharedApplication].windows firstObject];
+        UIViewController *rootVC = kw.rootViewController;
         while (rootVC.presentedViewController) {
             rootVC = rootVC.presentedViewController;
         }
