@@ -3315,9 +3315,8 @@ return self;
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     if (indexPath.section != 12) return;
-    NSInteger pluginStartRow = 1 + gPluginConflictCount;
-    if (indexPath.row < pluginStartRow || !gPluginScanDone) return;
-    NSInteger pluginIndex = indexPath.row - pluginStartRow;
+    if (indexPath.row == 0 || !gPluginScanDone) return;
+    NSInteger pluginIndex = indexPath.row - 1 - gPluginConflictCount;
     if (pluginIndex < 0 || pluginIndex >= (NSInteger)gInstalledPlugins.count) return;
     
     NSDictionary *plugin = gInstalledPlugins[pluginIndex];
@@ -3978,12 +3977,11 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
     // 🔍 插件冲突检测
     if (indexPath.section == 12) {
-        // 状态卡片(row0)和冲突警告不可点击，插件列表可点击
-        NSInteger pluginStartRow = 1 + gPluginConflictCount;
-        if (indexPath.row >= pluginStartRow && gPluginScanDone) {
-            cell.selectionStyle = UITableViewCellSelectionStyleGray;
-        } else {
+        // 状态卡片(row 0)不可点击，其他全部可点击
+        if (indexPath.row == 0) {
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else {
+            cell.selectionStyle = UITableViewCellSelectionStyleGray;
         }
         cell.textLabel.hidden = YES;
         cell.detailTextLabel.hidden = YES;
