@@ -3341,7 +3341,14 @@ return self;
     
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:name message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
+    // 用 keyWindow.rootViewController present，确保越狱设置页面中也能弹出
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
+        while (rootVC.presentedViewController) {
+            rootVC = rootVC.presentedViewController;
+        }
+        [rootVC presentViewController:alert animated:YES completion:nil];
+    });
 }
 @end
 
