@@ -5329,7 +5329,7 @@ static void scanInstalledPlugins(void) {
 
 // 冲突检测
 static void detectPluginConflicts(void) {
-    // 4a. 已知冲突对
+    // ========== 4a. 已知冲突对检测 ==========
     NSArray *pairs = knownConflictPairs();
     for (NSArray *pair in pairs) {
         NSString *id1 = pair[0], *id2 = pair[1];
@@ -5350,32 +5350,133 @@ static void detectPluginConflicts(void) {
         }
     }
     
-    // 4b. 同分类多插件检测
-    NSMutableDictionary *catCount = [NSMutableDictionary dictionary];
-    for (NSDictionary *p in gInstalledPlugins) {
-        NSString *cat = p[@"category"];
-        catCount[cat] = @([catCount[cat] integerValue] + 1);
-    }
-    NSArray *highRiskCats = @[@"充电管理", @"系统监控", @"温度监控"];
-    for (NSString *cat in highRiskCats) {
-        NSInteger count = [catCount[cat] integerValue];
-        if (count >= 2) {
-            NSMutableArray *names = [NSMutableArray array];
-            for (NSDictionary *p in gInstalledPlugins) {
-                if ([p[@"category"] isEqualToString:cat]) [names addObject:p[@"name"]];
+    // ========== 4b. 注入进程重叠检测（增强） ==========
+    // 两个插件注入了相同的进程，且分类相同，可能冲突
+    NSInteger pluginCount = gInstalledPlugins.count;
+    for (NSInteger i = 0; i < pluginCount; i++) {
+        for (NSInteger j = i + 1; j < pluginCount; j++) {
+            NSDictionary *p1 = gInstalledPlugins[i];
+            NSDictionary *p2 = gInstalledPlugins[j];
+            NSString *cat1 = p1[@"category"], *cat2 = p2[@"category"];
+            // 只检测同分类插件
+            if (![cat1 isEqualToString:cat2]) continue;
+            NSArray *b1 = p1[@"injectedBundles"], *b2 = p2[@"injectedBundles"];
+            // 计算交集
+            NSMutableArray *overlap = [NSMutableArray array];
+            for (NSString *bundle in b1) {
+                for (NSString *bundle2 in b2) {
+                    if ([bundle isEqualToString:bundle2] && ![bundle isEqualToString:@"*（全局注入）"]) {
+                        [overlap addObject:bundle];
+                        break;
+                    }
+                }
             }
+            if (overlap.count >= 2) {
+                NSInteger severity = (overlap.count >= 3) ? 0 : 1;
+                NSString *title = [NSString stringWithFormat:@"%@注入重叠", cat1];
+                NSString *desc = [NSString stringWithFormat:@"%@ 和 %@ 同时注入 %ld 个相同进程（%@），可能存在功能冲突",
+                                  p1[@"name"], p2[@"name"], (long)overlap.count,
+                                  [overlap componentsJoinedByString:@"、"]];
+                [gPluginConflicts addObject:@{
+                    @"title": title, @"desc": desc, @"severity": @(severity),
+                    @"plugins": @[p1[@"name"], p2[@"name"]],
+                }];
+                gPluginConflictCount++;
+            }
+        }
+    }
+    
+    // ========== 4c. 功能关键词智能匹配（增强） ==========
+    // 基于插件名称和分类的关键词匹配，发现潜在冲突
+    NSArray *keywordGroups = @[
+        @{@"name": @"充电管理", @"keywords": @[@"charge", @"battery", @"power", @"充电", @"电池", @"快充"], @"severity": @0},
+        @{@"name": @"温度监控", @"keywords": @[@"thermal", @"temperature", @"temp", @"温度", @"温控", @"降温"], @"severity": @0},
+        @{@"name": @"系统监控", @"keywords": @[@"monitor", @"cpu", @"memory", @"ram", @"监控", @"性能"], @"severity": @1},
+        @{@"name": @"手势操作", @"keywords": @[@"gesture", @"activator", @"swipe", @"手势", @"触摸"], @"severity": @1},
+        @{@"name": @"控制中心", @"keywords": @[@"controlcenter", @"ccmodule", @"控制中心", @"cc"], @"severity": @1},
+        @{@"name": @"状态栏", @"keywords": @[@"statusbar", @"status bar", @"状态栏"], @"severity": @2},
+        @{@"name": @"主题美化", @"keywords": @[@"theme", @"winterboard", @"主题", @"美化"], @"severity": @2},
+    ];
+    for (NSDictionary *group in keywordGroups) {
+        NSString *groupName = group[@"name"];
+        NSArray *keywords = group[@"keywords"];
+        NSInteger groupSeverity = [group[@"severity"] integerValue];
+        NSMutableArray *matched = [NSMutableArray array];
+        for (NSDictionary *p in gInstalledPlugins) {
+            NSString *name = [p[@"name"] lowercaseString];
+            NSString *cat = [p[@"category"] lowercaseString];
+            for (NSString *kw in keywords) {
+                if ([name containsString:[kw lowercaseString]] || [cat containsString:[kw lowercaseString]]) {
+                    [matched addObject:p];
+                    break;
+                }
+            }
+        }
+        if (matched.count >= 2) {
+            NSMutableArray *names = [NSMutableArray array];
+            for (NSDictionary *p in matched) [names addObject:p[@"name"]];
+            NSString *title = [NSString stringWithFormat:@"%@功能重叠", groupName];
+            NSString *desc = [NSString stringWithFormat:@"检测到 %ld 个%@相关插件（%@），功能可能重叠，建议保留一个",
+                              (long)matched.count, groupName, [names componentsJoinedByString:@"、"]];
             [gPluginConflicts addObject:@{
-                @"title": [NSString stringWithFormat:@"%@类插件过多", cat],
-                @"desc": [NSString stringWithFormat:@"已安装 %ld 个%@插件（%@），可能存在功能冲突",
-                          (long)count, cat, [names componentsJoinedByString:@"、"]],
-                @"severity": @1,
+                @"title": title, @"desc": desc, @"severity": @(groupSeverity),
                 @"plugins": names,
             }];
             gPluginConflictCount++;
         }
     }
     
-    // 4c. SpringBoard 注入过多检测
+    // ========== 4d. 同进程注入过多检测（增强） ==========
+    // 统计每个进程被多少插件注入
+    NSMutableDictionary *processCount = [NSMutableDictionary dictionary];
+    for (NSDictionary *p in gInstalledPlugins) {
+        NSArray *bundles = p[@"injectedBundles"];
+        for (NSString *b in bundles) {
+            if ([b isEqualToString:@"*（全局注入）"]) continue;
+            processCount[b] = @([processCount[b] integerValue] + 1);
+        }
+    }
+    // 找出注入最多的进程
+    NSArray *sortedProcesses = [processCount keysSortedByValueUsingComparator:^NSComparisonResult(id a, id b) {
+        return [b compare:a];
+    }];
+    for (NSString *proc in sortedProcesses) {
+        NSInteger count = [processCount[proc] integerValue];
+        if (count >= 8) {
+            NSInteger severity = (count >= 15) ? 0 : (count >= 10 ? 1 : 2);
+            [gPluginConflicts addObject:@{
+                @"title": [NSString stringWithFormat:@"%@ 注入过多", proc],
+                @"desc": [NSString stringWithFormat:@"%ld 个插件注入 %@ 进程，可能影响该进程稳定性", (long)count, proc],
+                @"severity": @(severity),
+                @"plugins": @[],
+            }];
+            gPluginConflictCount++;
+        }
+    }
+    
+    // ========== 4e. 全局注入插件检测（增强） ==========
+    NSMutableArray *globalPlugins = [NSMutableArray array];
+    for (NSDictionary *p in gInstalledPlugins) {
+        NSArray *bundles = p[@"injectedBundles"];
+        for (NSString *b in bundles) {
+            if ([b isEqualToString:@"*（全局注入）"]) {
+                [globalPlugins addObject:p[@"name"]];
+                break;
+            }
+        }
+    }
+    if (globalPlugins.count >= 3) {
+        [gPluginConflicts addObject:@{
+            @"title": @"全局注入插件过多",
+            @"desc": [NSString stringWithFormat:@"%ld 个插件全局注入（%@），可能影响所有 App 性能",
+                      (long)globalPlugins.count, [globalPlugins componentsJoinedByString:@"、"]],
+            @"severity": @1,
+            @"plugins": globalPlugins,
+        }];
+        gPluginConflictCount++;
+    }
+    
+    // ========== 4f. SpringBoard 注入过多检测（保留） ==========
     NSInteger sbCount = 0;
     for (NSDictionary *p in gInstalledPlugins) {
         NSArray *bundles = p[@"injectedBundles"];
@@ -5395,6 +5496,19 @@ static void detectPluginConflicts(void) {
         }];
         gPluginConflictCount++;
     }
+    
+    // 去重：相同标题的冲突只保留一个
+    NSMutableArray *uniqueConflicts = [NSMutableArray array];
+    NSMutableSet *seenTitles = [NSMutableSet set];
+    for (NSDictionary *c in gPluginConflicts) {
+        NSString *title = c[@"title"];
+        if (![seenTitles containsObject:title]) {
+            [seenTitles addObject:title];
+            [uniqueConflicts addObject:c];
+        }
+    }
+    gPluginConflicts = uniqueConflicts;
+    gPluginConflictCount = gPluginConflicts.count;
     
     // 按严重程度排序
     [gPluginConflicts sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
