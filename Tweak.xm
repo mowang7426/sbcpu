@@ -3296,6 +3296,43 @@ return self;
     NSInteger mins = (NSInteger)((uptime - days * 86400 - hours * 3600) / 60);
     _labelsDict[@"设备运行"].text = [NSString stringWithFormat:@"%ld天 %ld小时 %ld分", (long)days, (long)hours, (long)mins];
 }
+
+// 🔍 插件冲突检测：点击插件显示详情
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section != 12) return;
+    NSInteger pluginStartRow = 1 + gPluginConflictCount;
+    if (indexPath.row < pluginStartRow || !gPluginScanDone) return;
+    NSInteger pluginIndex = indexPath.row - pluginStartRow;
+    if (pluginIndex < 0 || pluginIndex >= (NSInteger)gInstalledPlugins.count) return;
+    
+    NSDictionary *plugin = gInstalledPlugins[pluginIndex];
+    NSString *name = plugin[@"name"] ?: @"未知";
+    NSString *category = plugin[@"category"] ?: @"其他";
+    NSArray *injected = plugin[@"injectedBundles"] ?: @[];
+    
+    NSString *message;
+    if (injected.count > 0) {
+        NSMutableString *bundleStr = [NSMutableString string];
+        for (NSInteger i = 0; i < MIN(injected.count, 10); i++) {
+            [bundleStr appendFormat:@"
+• %@", injected[i]];
+        }
+        if (injected.count > 10) {
+            [bundleStr appendFormat:@"
+... 等%ld个进程", (long)injected.count];
+        }
+        message = [NSString stringWithFormat:@"分类：%@
+注入进程：%ld 个%@", category, (long)injected.count, bundleStr];
+    } else {
+        message = [NSString stringWithFormat:@"分类：%@
+注入进程：无（全局注入或未配置Filter）", category];
+    }
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:name message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
 @end
 
 @implementation SBCPUPassthroughView
@@ -3919,7 +3956,13 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
     // 🔍 插件冲突检测
     if (indexPath.section == 12) {
-        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        // 状态卡片(row0)和冲突警告不可点击，插件列表可点击
+        NSInteger pluginStartRow = 1 + gPluginConflictCount;
+        if (indexPath.row >= pluginStartRow && gPluginScanDone) {
+            cell.selectionStyle = UITableViewCellSelectionStyleGray;
+        } else {
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        }
         cell.textLabel.hidden = YES;
         cell.detailTextLabel.hidden = YES;
         cell.accessoryType = UITableViewCellAccessoryNone;
