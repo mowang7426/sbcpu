@@ -4175,21 +4175,30 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
                             iconLbl.font = [UIFont systemFontOfSize:16];
                             iconLbl.textAlignment = NSTextAlignmentCenter;
                             [cell.contentView addSubview:iconLbl];
-                            // 插件名称
-                            UILabel *nameLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 10, cell.contentView.bounds.size.width - 120, 22)];
-                            nameLbl.text = plugin[@"name"];
-                            nameLbl.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+                            // 插件名称 + 版本号
+                            NSString *ver = plugin[@"version"];
+                            UILabel *nameLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 8, cell.contentView.bounds.size.width - 120, 20)];
+                            nameLbl.text = [NSString stringWithFormat:@"%@  v%@", plugin[@"name"], ver];
+                            nameLbl.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
                             nameLbl.textColor = [UIColor labelColor];
                             [cell.contentView addSubview:nameLbl];
-                            // 注入进程数
-                            NSArray *injected = plugin[@"injectedBundles"];
-                            UILabel *descLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 34, cell.contentView.bounds.size.width - 120, 16)];
-                            descLbl.text = [NSString stringWithFormat:@"注入 %ld 个进程", (long)injected.count];
-                            descLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+                            // 描述（截断）
+                            NSString *pluginDesc = plugin[@"desc"];
+                            if (pluginDesc.length > 30) pluginDesc = [pluginDesc substringToIndex:30];
+                            UILabel *descLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 28, cell.contentView.bounds.size.width - 120, 16)];
+                            descLbl.text = pluginDesc;
+                            descLbl.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
                             descLbl.textColor = [UIColor secondaryLabelColor];
                             [cell.contentView addSubview:descLbl];
+                            // 注入进程数
+                            NSArray *injected = plugin[@"injectedBundles"];
+                            UILabel *injectLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 44, cell.contentView.bounds.size.width - 120, 14)];
+                            injectLbl.text = [NSString stringWithFormat:@"注入 %ld 个进程 · %@", (long)injected.count, plugin[@"category"]];
+                            injectLbl.font = [UIFont systemFontOfSize:10 weight:UIFontWeightRegular];
+                            injectLbl.textColor = [UIColor tertiaryLabelColor];
+                            [cell.contentView addSubview:injectLbl];
                             // 右侧箭头
-                            UILabel *arrowLbl = [[UILabel alloc] initWithFrame:CGRectMake(cell.contentView.bounds.size.width - 30, 18, 20, 24)];
+                            UILabel *arrowLbl = [[UILabel alloc] initWithFrame:CGRectMake(cell.contentView.bounds.size.width - 30, 20, 20, 24)];
                             arrowLbl.text = @"›";
                             arrowLbl.font = [UIFont systemFontOfSize:24 weight:UIFontWeightBold];
                             arrowLbl.textColor = [UIColor tertiaryLabelColor];
@@ -4586,26 +4595,117 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         
         NSDictionary *plugin = gInstalledPlugins[pluginIndex];
         NSString *name = plugin[@"name"] ?: @"未知";
+        NSString *version = plugin[@"version"] ?: @"未知";
+        NSString *desc = plugin[@"desc"] ?: @"暂无描述";
         NSString *category = plugin[@"category"] ?: @"其他";
+        NSString *bundleID = plugin[@"bundleID"] ?: @"未知";
         NSArray *injected = plugin[@"injectedBundles"] ?: @[];
         
-        NSString *message;
+        // 🎨 创建插件详情视图控制器
+        UIViewController *detailVC = [[UIViewController alloc] init];
+        detailVC.view.backgroundColor = [UIColor systemBackgroundColor];
+        detailVC.title = @"插件详情";
+        
+        // 导航栏关闭按钮
+        UIBarButtonItem *closeBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:detailVC action:@selector(dismissViewControllerAnimated:completion:)];
+        detailVC.navigationItem.rightBarButtonItem = closeBtn;
+        
+        // 滚动视图
+        UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:detailVC.view.bounds];
+        scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [detailVC.view addSubview:scrollView];
+        
+        CGFloat y = 20;
+        CGFloat w = detailVC.view.bounds.size.width - 40;
+        
+        // 插件名称（大标题）
+        UILabel *nameLbl = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 32)];
+        nameLbl.text = name;
+        nameLbl.font = [UIFont systemFontOfSize:24 weight:UIFontWeightBold];
+        nameLbl.textColor = [UIColor labelColor];
+        [scrollView addSubview:nameLbl];
+        y += 40;
+        
+        // 版本号 + 分类
+        UILabel *verLbl = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 20)];
+        verLbl.text = [NSString stringWithFormat:@"版本：v%@  ·  分类：%@", version, category];
+        verLbl.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+        verLbl.textColor = [UIColor secondaryLabelColor];
+        [scrollView addSubview:verLbl];
+        y += 28;
+        
+        // Bundle ID
+        UILabel *bidLbl = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 18)];
+        bidLbl.text = [NSString stringWithFormat:@"Bundle ID：%@", bundleID];
+        bidLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+        bidLbl.textColor = [UIColor tertiaryLabelColor];
+        [scrollView addSubview:bidLbl];
+        y += 24;
+        
+        // 分隔线
+        UIView *sep1 = [[UIView alloc] initWithFrame:CGRectMake(20, y, w, 1)];
+        sep1.backgroundColor = [UIColor separatorColor];
+        [scrollView addSubview:sep1];
+        y += 16;
+        
+        // 描述标题
+        UILabel *descTitle = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 20)];
+        descTitle.text = @"插件描述";
+        descTitle.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+        descTitle.textColor = [UIColor labelColor];
+        [scrollView addSubview:descTitle];
+        y += 26;
+        
+        // 描述内容
+        UILabel *descLbl = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 0)];
+        descLbl.text = desc;
+        descLbl.font = [UIFont systemFontOfSize:14 weight:UIFontWeightRegular];
+        descLbl.textColor = [UIColor secondaryLabelColor];
+        descLbl.numberOfLines = 0;
+        [descLbl sizeToFit];
+        descLbl.frame = CGRectMake(20, y, w, descLbl.frame.size.height);
+        [scrollView addSubview:descLbl];
+        y += descLbl.frame.size.height + 20;
+        
+        // 分隔线
+        UIView *sep2 = [[UIView alloc] initWithFrame:CGRectMake(20, y, w, 1)];
+        sep2.backgroundColor = [UIColor separatorColor];
+        [scrollView addSubview:sep2];
+        y += 16;
+        
+        // 注入进程标题
+        UILabel *injectTitle = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 20)];
+        injectTitle.text = [NSString stringWithFormat:@"注入进程（%ld 个）", (long)injected.count];
+        injectTitle.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+        injectTitle.textColor = [UIColor labelColor];
+        [scrollView addSubview:injectTitle];
+        y += 26;
+        
+        // 注入进程列表
         if (injected.count > 0) {
-            NSMutableString *bundleStr = [NSMutableString string];
-            for (NSInteger i = 0; i < MIN(injected.count, 10); i++) {
-                [bundleStr appendFormat:@"\n• %@", injected[i]];
+            for (NSString *bundle in injected) {
+                UILabel *bundleLbl = [[UILabel alloc] initWithFrame:CGRectMake(30, y, w - 10, 18)];
+                bundleLbl.text = [NSString stringWithFormat:@"• %@", bundle];
+                bundleLbl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
+                bundleLbl.textColor = [UIColor secondaryLabelColor];
+                [scrollView addSubview:bundleLbl];
+                y += 22;
             }
-            if (injected.count > 10) {
-                [bundleStr appendFormat:@"\n... 等%ld个进程", (long)injected.count];
-            }
-            message = [NSString stringWithFormat:@"分类：%@\n注入进程：%ld 个%@", category, (long)injected.count, bundleStr];
         } else {
-            message = [NSString stringWithFormat:@"分类：%@\n注入进程：无（全局注入或未配置Filter）", category];
+            UILabel *noInject = [[UILabel alloc] initWithFrame:CGRectMake(30, y, w - 10, 18)];
+            noInject.text = @"无（全局注入或未配置 Filter）";
+            noInject.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
+            noInject.textColor = [UIColor tertiaryLabelColor];
+            [scrollView addSubview:noInject];
+            y += 22;
         }
         
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:name message:message preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
+        scrollView.contentSize = CGSizeMake(detailVC.view.bounds.size.width, y + 20);
+        
+        // 用导航控制器包裹，显示导航栏
+        UINavigationController *navVC = [[UINavigationController alloc] initWithRootViewController:detailVC];
+        navVC.modalPresentationStyle = UIModalPresentationFormSheet;
+        [self presentViewController:navVC animated:YES completion:nil];
         return;
     }
 
@@ -5064,7 +5164,7 @@ static void scanInstalledPlugins(void) {
         @"/var/jb/Library/TweakInject",
     ];
     
-    NSMutableDictionary *plistMap = [NSMutableDictionary dictionary]; // dylib名 → 注入bundle列表
+    NSMutableDictionary *plistMap = [NSMutableDictionary dictionary]; // dylib名 → {bundles, version, desc}
     NSMutableArray *dylibNames = [NSMutableArray array]; // 所有.dylib文件名（fallback用）
     for (NSString *libPath in libPaths) {
         NSError *err = nil;
@@ -5092,8 +5192,11 @@ static void scanInstalledPlugins(void) {
             } else {
                 [bundles addObject:@"*（全局注入）"];
             }
+            // 读取版本号和描述
+            NSString *version = plist[@"CFBundleShortVersionString"] ?: plist[@"CFBundleVersion"] ?: @"未知";
+            NSString *desc = plist[@"CFBundleDescription"] ?: plist[@"NSHumanReadableCopyright"] ?: @"";
             NSString *dylibName = [f.stringByDeletingPathExtension lowercaseString];
-            plistMap[dylibName] = bundles;
+            plistMap[dylibName] = @{@"bundles": bundles, @"version": version, @"desc": desc};
         }
     }
     
@@ -5292,23 +5395,32 @@ static void scanInstalledPlugins(void) {
             [package isEqualToString:@"findutils"] || [package hasPrefix:@"system-cmds"] ||
             [package hasPrefix:@"firmware"] || [package hasPrefix:@"base"]) continue;
         
-        // 匹配 plist 注入信息
+        // 匹配 plist 注入信息（同时读取版本号和描述）
         NSArray *injected = @[];
+        NSString *plistVersion = nil;
+        NSString *plistDesc = nil;
         NSString *pkgLower = package.lowercaseString;
         for (NSString *key in plistMap) {
             if ([pkgLower containsString:key] || [key containsString:pkgLower]) {
-                injected = plistMap[key];
+                NSDictionary *plistInfo = plistMap[key];
+                injected = plistInfo[@"bundles"] ?: @[];
+                plistVersion = plistInfo[@"version"];
+                plistDesc = plistInfo[@"desc"];
                 break;
             }
         }
         
-        NSString *category = categorizePlugin(package, name, desc);
+        // 优先使用 dpkg 的版本号和描述，没有则用 plist 的
+        NSString *finalVersion = version.length > 0 ? version : (plistVersion.length > 0 ? plistVersion : @"未知");
+        NSString *finalDesc = desc.length > 0 ? desc : (plistDesc.length > 0 ? plistDesc : @"暂无描述");
+        
+        NSString *category = categorizePlugin(package, name, finalDesc);
         
         NSDictionary *pluginInfo = @{
             @"name": name,
             @"bundleID": package,
-            @"version": version ?: @"",
-            @"desc": desc ?: @"",
+            @"version": finalVersion,
+            @"desc": finalDesc,
             @"injectedBundles": injected,
             @"category": category,
         };
@@ -5613,7 +5725,7 @@ static void detectPluginConflicts(void) {
             if (relativeRow == currentRow) return 48.0;  // 分类标题
             currentRow++;
             for (NSInteger j = 0; j < catCount; j++) {
-                if (relativeRow == currentRow) return 64.0;  // 插件
+                if (relativeRow == currentRow) return 76.0;  // 插件（显示版本+描述）
                 currentRow++;
             }
         }
