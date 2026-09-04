@@ -4691,7 +4691,7 @@ static void scanInstalledPlugins(void) {
     @try {
         Dl_info dlinfo;
         // 用当前插件自己的函数地址，确保返回的是 SBCPUFloating 的路径，不是系统库
-        if (dladdr((__bridge void *)scanInstalledPlugins, &dlinfo) && dlinfo.dli_fname) {
+        if (dladdr((void *)scanInstalledPlugins, &dlinfo) && dlinfo.dli_fname) {
             selfDylibPath = [NSString stringWithUTF8String:dlinfo.dli_fname];
             NSLog(@"[SBCPUFloating] self dylib path: %@", selfDylibPath);
             dynamicLibDir = [selfDylibPath stringByDeletingLastPathComponent];
