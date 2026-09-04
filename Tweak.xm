@@ -4800,6 +4800,58 @@ static void scanInstalledPlugins(void) {
         }
     }
     
+    // 终极 fallback：用 find 命令搜索整个 /var 目录下的 .dylib 文件（不猜路径）
+    if (packages.count == 0) {
+        NSLog(@"[SBCPUFloating] all methods failed, using find command");
+        gScanMethod = @"find命令搜索";
+        FILE *findPipe = popen("find /var -name '*.dylib' 2>/dev/null | grep -iE 'tweak|substrate|inject|DynamicLibraries|SBCPU|roothide|jb' | head -100", "r");
+        if (findPipe) {
+            char findBuf[1024];
+            NSMutableArray *foundDylibs = [NSMutableArray array];
+            while (fgets(findBuf, sizeof(findBuf), findPipe)) {
+                NSString *fullPath = [NSString stringWithUTF8String:findBuf];
+                fullPath = [fullPath stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                NSString *fileName = fullPath.lastPathComponent.stringByDeletingPathExtension;
+                if (fileName.length > 0 && ![foundDylibs containsObject:fileName]) {
+                    [foundDylibs addObject:fileName];
+                }
+            }
+            pclose(findPipe);
+            NSLog(@"[SBCPUFloating] find command found %ld dylibs", (long)foundDylibs.count);
+            gDylibCount = foundDylibs.count;
+            for (NSString *dn in foundDylibs) {
+                [packages addObject:@{@"package": dn, @"version": @"", @"desc": @""}];
+            }
+        }
+        // 如果 find 也没结果，再试更广泛的搜索
+        if (packages.count == 0) {
+            FILE *findPipe2 = popen("find /var -name '*.dylib' 2>/dev/null | head -200", "r");
+            if (findPipe2) {
+                char findBuf2[1024];
+                NSMutableArray *allDylibs = [NSMutableArray array];
+                while (fgets(findBuf2, sizeof(findBuf2), findPipe2)) {
+                    NSString *fullPath = [NSString stringWithUTF8String:findBuf2];
+                    fullPath = [fullPath stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                    // 过滤系统库，只保留可能是插件的
+                    if ([fullPath containsString:@"/Library/"] || [fullPath containsString:@"/MobileSubstrate/"] ||
+                        [fullPath containsString:@"/TweakInject/"] || [fullPath containsString:@"/roothide/"] ||
+                        [fullPath containsString:@"/jb/"]) {
+                        NSString *fileName = fullPath.lastPathComponent.stringByDeletingPathExtension;
+                        if (fileName.length > 0 && ![allDylibs containsObject:fileName]) {
+                            [allDylibs addObject:fileName];
+                        }
+                    }
+                }
+                pclose(findPipe2);
+                NSLog(@"[SBCPUFloating] broad find found %ld dylibs", (long)allDylibs.count);
+                gDylibCount = allDylibs.count;
+                for (NSString *dn in allDylibs) {
+                    [packages addObject:@{@"package": dn, @"version": @"", @"desc": @""}];
+                }
+            }
+        }
+    }
+    
     // 遍历包列表（统一格式）
     for (NSDictionary *pkgDict in packages) {
         NSString *package = pkgDict[@"package"] ?: @"";
