@@ -4634,15 +4634,23 @@ static NSDictionary *pluginCategoryMap(void) {
 // 分类关键词（名称/描述包含关键词则归类）
 static NSDictionary *categoryKeywords(void) {
     return @{
-        @"充电管理": @[@"charge", @"battery", @"充电", @"电池", @"power", @"快充", @"cputhermal"],
-        @"系统监控": @[@"cpu", @"fps", @"monitor", @"监控", @"status", @"system", @"thermal", @"温度"],
-        @"手势增强": @[@"gesture", @"activator", @"手势", @"swipe", @"touch"],
-        @"主题美化": @[@"theme", @"winterboard", @"snowboard", @"主题", @"美化", @"icon"],
-        @"控制中心": @[@"control", @"cc", @"控制中心", @"module"],
-        @"通知中心": @[@"notification", @"nc", @"通知"],
-        @"锁屏": @[@"lockscreen", @"锁屏", @"lock"],
-        @"文件管理": @[@"file", @"filza", @"文件"],
-        @"应用修改": @[@"tweak", @"hack", @"修改", @"破解", @"plus", @"pro"],
+        @"充电管理": @[@"charge", @"battery", @"充电", @"电池", @"power", @"快充", @"cputhermal", @"powerd", @"fixrepair"],
+        @"系统监控": @[@"cpu", @"fps", @"monitor", @"监控", @"status", @"system", @"thermal", @"温度", @"memory", @"0hello"],
+        @"手势增强": @[@"gesture", @"activator", @"手势", @"swipe", @"touch", @"squidgesture", @"leftpan"],
+        @"主题美化": @[@"theme", @"winterboard", @"snowboard", @"主题", @"美化", @"icon", @"wallpaper", @"themecore", @"kongzhimeihua", @"spectrum"],
+        @"控制中心": @[@"control", @"cc", @"控制中心", @"module", @"ccsupport", @"ccborder", @"ccmusic", @"customcc"],
+        @"通知中心": @[@"notification", @"nc", @"通知", @"preferenceloader"],
+        @"锁屏": @[@"lockscreen", @"锁屏", @"lock", @"nopass"],
+        @"截屏录屏": @[@"screenshot", @"record", @"snap", @"截屏", @"录屏", @"snapvision", @"recordanywhere"],
+        @"键盘": @[@"keyboard", @"键盘", @"floatingviewkeyboard", @"trollopenkeyboard"],
+        @"相机": @[@"camera", @"相机", @"floatingviewcamera", @"trollopencamera", @"pulloverxcamera"],
+        @"剪贴板": @[@"paste", @"copy", @"clipboard", @"剪贴板", @"copyvault", @"doubaopaste", @"hellodisablepaste"],
+        @"网络代理": @[@"vpn", @"proxy", @"network", @"代理", @"single", @"sandyproxy"],
+        @"浮窗": @[@"floating", @"float", @"浮窗", @"pullover", @"floatingview"],
+        @"越狱工具": @[@"troll", @"jailbreak", @"越狱", @"jb", @"trollopen", @"choicy", @"aperture"],
+        @"桌面": @[@"springboard", @"sb", @"桌面", @"home", @"cranesb", @"sblist", @"folderpro"],
+        @"音乐音量": @[@"music", @"volume", @"音乐", @"音量", @"waveform", @"nowaveform"],
+        @"应用修改": @[@"tweak", @"hack", @"修改", @"破解", @"plus", @"pro", @"app", @"doubao", @"snapper3", @"appdata", @"apptool"],
     };
 }
 
@@ -4686,6 +4694,7 @@ static void scanInstalledPlugins(void) {
     // 🔥 最可靠的方法：用 dladdr 获取当前插件自己的 .dylib 路径
     // 当前插件(SBCPUFloating)就在 DynamicLibraries 目录里，找到自己就找到了所有插件
     NSMutableArray *selfFoundDylibs = [NSMutableArray array];
+    NSMutableSet *selfAddedNames = [NSMutableSet set];
     NSString *selfDylibPath = nil;
     NSString *dynamicLibDir = nil;
     @try {
@@ -4701,13 +4710,50 @@ static void scanInstalledPlugins(void) {
             NSArray *dirFiles = [fm contentsOfDirectoryAtPath:dynamicLibDir error:&dirErr];
             NSLog(@"[SBCPUFloating] dir files: %ld, err: %@", (long)dirFiles.count, dirErr);
             if (dirFiles) {
+                // 先收集所有 plist 文件（用于获取注入进程）
+                NSMutableDictionary *plistMap = [NSMutableDictionary dictionary];
+                for (NSString *f in dirFiles) {
+                    if ([f.pathExtension isEqualToString:@"plist"]) {
+                        NSString *pn = f.stringByDeletingPathExtension;
+                        plistMap[pn] = [dynamicLibDir stringByAppendingPathComponent:f];
+                    }
+                }
                 for (NSString *f in dirFiles) {
                     if ([f.pathExtension isEqualToString:@"dylib"]) {
                         NSString *dn = f.stringByDeletingPathExtension;
                         // 过滤以lib开头的系统库（如libSystem、libobjc等），只保留真正的越狱插件
                         if ([dn hasPrefix:@"lib"]) continue;
-                        if (dn.length > 0 && ![selfFoundDylibs containsObject:dn]) {
-                            [selfFoundDylibs addObject:dn];
+                        if (dn.length > 0 && ![selfAddedNames containsObject:dn]) {
+                            [selfAddedNames addObject:dn];
+                            // 读取同名 plist 获取注入进程
+                            NSMutableArray *injectedBundles = [NSMutableArray array];
+                            NSString *plistPath = plistMap[dn];
+                            if (plistPath) {
+                                @try {
+                                    NSDictionary *plistDict = [NSDictionary dictionaryWithContentsOfFile:plistPath];
+                                    if (plistDict) {
+                                        NSDictionary *filter = plistDict[@"Filter"];
+                                        if (filter) {
+                                            NSArray *bundles = filter[@"Bundles"];
+                                            if (bundles) {
+                                                for (NSString *b in bundles) {
+                                                    if (b.length > 0) [injectedBundles addObject:b];
+                                                }
+                                            }
+                                            NSArray *executables = filter[@"Executables"];
+                                            if (executables) {
+                                                for (NSString *e in executables) {
+                                                    if (e.length > 0) [injectedBundles addObject:e];
+                                                }
+                                            }
+                                        }
+                                    }
+                                } @catch (NSException *e) {}
+                            }
+                            [selfFoundDylibs addObject:@{
+                                @"name": dn,
+                                @"injectedBundles": [injectedBundles copy],
+                            }];
                         }
                     }
                 }
@@ -4722,10 +4768,12 @@ static void scanInstalledPlugins(void) {
     // 如果通过自身路径找到了 dylib，直接用这些作为插件列表（最可靠，不需要猜路径）
     if (selfFoundDylibs.count > 0) {
         gScanMethod = @"自身路径探测";
-        for (NSString *dn in selfFoundDylibs) {
+        for (NSDictionary *pluginInfo in selfFoundDylibs) {
+            NSString *dn = pluginInfo[@"name"];
+            NSArray *injected = pluginInfo[@"injectedBundles"];
             [gInstalledPlugins addObject:@{
                 @"name": dn, @"bundleID": dn, @"version": @"",
-                @"desc": @"", @"injectedBundles": @[],
+                @"desc": @"", @"injectedBundles": injected ? injected : @[],
                 @"category": categorizePlugin(dn, dn, @""),
             }];
             gPluginTotalCount++;
