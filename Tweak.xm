@@ -4690,7 +4690,8 @@ static void scanInstalledPlugins(void) {
     NSString *dynamicLibDir = nil;
     @try {
         Dl_info dlinfo;
-        if (dladdr((__bridge void *)[NSObject class], &dlinfo) && dlinfo.dli_fname) {
+        // 用当前插件自己的函数地址，确保返回的是 SBCPUFloating 的路径，不是系统库
+        if (dladdr((__bridge void *)scanInstalledPlugins, &dlinfo) && dlinfo.dli_fname) {
             selfDylibPath = [NSString stringWithUTF8String:dlinfo.dli_fname];
             NSLog(@"[SBCPUFloating] self dylib path: %@", selfDylibPath);
             dynamicLibDir = [selfDylibPath stringByDeletingLastPathComponent];
@@ -4703,6 +4704,8 @@ static void scanInstalledPlugins(void) {
                 for (NSString *f in dirFiles) {
                     if ([f.pathExtension isEqualToString:@"dylib"]) {
                         NSString *dn = f.stringByDeletingPathExtension;
+                        // 过滤以lib开头的系统库（如libSystem、libobjc等），只保留真正的越狱插件
+                        if ([dn hasPrefix:@"lib"]) continue;
                         if (dn.length > 0 && ![selfFoundDylibs containsObject:dn]) {
                             [selfFoundDylibs addObject:dn];
                         }
