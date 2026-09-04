@@ -3683,7 +3683,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"SBCPUFloating V3.1.11";
+    self.title = @"SBCPUFloating V3.4";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeSettings)];
 }
 
