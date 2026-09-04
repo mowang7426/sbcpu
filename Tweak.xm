@@ -3964,8 +3964,9 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             // 调试信息（第二行）
             UILabel *debugLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 58, cell.contentView.bounds.size.width - 32, 18)];
             if (gPluginScanDone) {
-                debugLbl.text = [NSString stringWithFormat:@"方式:%@ | dpkg:%ld | 解析:%ld | dylib:%ld | 最终:%ld",
-                                  gScanMethod, (long)gDpkgOutputLength, (long)gDpkgParsedCount, (long)gDylibCount, (long)gPluginTotalCount];
+                NSString *pathInfo = gScanError.length > 0 ? [NSString stringWithFormat:@" | 路径:%@", gScanError] : @"";
+                debugLbl.text = [NSString stringWithFormat:@"方式:%@ | dpkg:%ld | 解析:%ld | dylib:%ld | 最终:%ld%@",
+                                  gScanMethod, (long)gDpkgOutputLength, (long)gDpkgParsedCount, (long)gDylibCount, (long)gPluginTotalCount, pathInfo];
             } else {
                 debugLbl.text = @"等待扫描...";
             }
@@ -4800,55 +4801,79 @@ static void scanInstalledPlugins(void) {
         }
     }
     
-    // 终极 fallback：用 find 命令搜索整个 /var 目录下的 .dylib 文件（不猜路径）
+    // 终极 fallback：纯 NSFileManager 递归枚举，自动探测 roothide 根路径（不依赖 shell 命令）
     if (packages.count == 0) {
-        NSLog(@"[SBCPUFloating] all methods failed, using find command");
-        gScanMethod = @"find命令搜索";
-        FILE *findPipe = popen("find /var -name '*.dylib' 2>/dev/null | grep -iE 'tweak|substrate|inject|DynamicLibraries|SBCPU|roothide|jb' | head -100", "r");
-        if (findPipe) {
-            char findBuf[1024];
-            NSMutableArray *foundDylibs = [NSMutableArray array];
-            while (fgets(findBuf, sizeof(findBuf), findPipe)) {
-                NSString *fullPath = [NSString stringWithUTF8String:findBuf];
-                fullPath = [fullPath stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-                NSString *fileName = fullPath.lastPathComponent.stringByDeletingPathExtension;
-                if (fileName.length > 0 && ![foundDylibs containsObject:fileName]) {
-                    [foundDylibs addObject:fileName];
+        NSLog(@"[SBCPUFloating] all methods failed, using NSFileManager recursive scan");
+        gScanMethod = @"NSFileManager枚举";
+        NSMutableArray *foundDylibs = [NSMutableArray array];
+        NSMutableString *foundPathInfo = [NSMutableString string];
+        
+        // 1. 先枚举 /var 目录下的子目录，找可能的 roothide 根
+        NSError *varErr = nil;
+        NSArray *varSubdirs = [fm contentsOfDirectoryAtPath:@"/var" error:&varErr];
+        NSLog(@"[SBCPUFloating] /var subdirs count: %ld, err: %@", (long)varSubdirs.count, varErr);
+        [foundPathInfo appendFormat:@"/var:%ld ", (long)varSubdirs.count];
+        
+        // 可能的 roothide 根路径候选
+        NSArray *rootCandidates = @[@"/var/jb", @"/var/roothide", @"/var/tmp/jb", @"/private/var/jb", @"/var/lib"];
+        for (NSString *rootPath in rootCandidates) {
+            BOOL exists = [fm fileExistsAtPath:rootPath];
+            NSLog(@"[SBCPUFloating] root candidate %@ exists: %d", rootPath, exists);
+            if (!exists) continue;
+            [foundPathInfo appendFormat:@"%@:Y ", rootPath.lastPathComponent];
+            // 递归枚举这个根路径下的所有文件
+            NSError *subErr = nil;
+            NSArray *subpaths = [fm subpathsOfDirectoryAtPath:rootPath error:&subErr];
+            NSLog(@"[SBCPUFloating] %@ subpaths count: %ld, err: %@", rootPath, (long)subpaths.count, subErr);
+            if (!subpaths) continue;
+            for (NSString *subpath in subpaths) {
+                if (![subpath.pathExtension isEqualToString:@"dylib"]) continue;
+                // 只保留可能是插件的（在 Library 目录下，且不是系统库）
+                if ([subpath containsString:@"MobileSubstrate"] ||
+                    [subpath containsString:@"TweakInject"] ||
+                    [subpath containsString:@"/Library/"] ||
+                    [subpath containsString:@"DynamicLibraries"]) {
+                    NSString *fileName = subpath.lastPathComponent.stringByDeletingPathExtension;
+                    if (fileName.length > 0 && ![foundDylibs containsObject:fileName]) {
+                        [foundDylibs addObject:fileName];
+                    }
                 }
             }
-            pclose(findPipe);
-            NSLog(@"[SBCPUFloating] find command found %ld dylibs", (long)foundDylibs.count);
-            gDylibCount = foundDylibs.count;
-            for (NSString *dn in foundDylibs) {
-                [packages addObject:@{@"package": dn, @"version": @"", @"desc": @""}];
-            }
+            if (foundDylibs.count > 0) break;
         }
-        // 如果 find 也没结果，再试更广泛的搜索
-        if (packages.count == 0) {
-            FILE *findPipe2 = popen("find /var -name '*.dylib' 2>/dev/null | head -200", "r");
-            if (findPipe2) {
-                char findBuf2[1024];
-                NSMutableArray *allDylibs = [NSMutableArray array];
-                while (fgets(findBuf2, sizeof(findBuf2), findPipe2)) {
-                    NSString *fullPath = [NSString stringWithUTF8String:findBuf2];
-                    fullPath = [fullPath stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-                    // 过滤系统库，只保留可能是插件的
-                    if ([fullPath containsString:@"/Library/"] || [fullPath containsString:@"/MobileSubstrate/"] ||
-                        [fullPath containsString:@"/TweakInject/"] || [fullPath containsString:@"/roothide/"] ||
-                        [fullPath containsString:@"/jb/"]) {
-                        NSString *fileName = fullPath.lastPathComponent.stringByDeletingPathExtension;
-                        if (fileName.length > 0 && ![allDylibs containsObject:fileName]) {
-                            [allDylibs addObject:fileName];
+        
+        // 2. 如果候选路径都没找到，直接枚举标准路径
+        if (foundDylibs.count == 0) {
+            NSArray *stdPaths = @[
+                @"/Library/MobileSubstrate/DynamicLibraries",
+                @"/usr/lib/TweakInject",
+                @"/Library/TweakInject",
+            ];
+            for (NSString *stdPath in stdPaths) {
+                BOOL exists = [fm fileExistsAtPath:stdPath];
+                NSLog(@"[SBCPUFloating] std path %@ exists: %d", stdPath, exists);
+                if (!exists) continue;
+                [foundPathInfo appendFormat:@"%@:Y ", stdPath.lastPathComponent];
+                NSError *stdErr = nil;
+                NSArray *stdFiles = [fm contentsOfDirectoryAtPath:stdPath error:&stdErr];
+                if (!stdFiles) continue;
+                for (NSString *f in stdFiles) {
+                    if ([f.pathExtension isEqualToString:@"dylib"]) {
+                        NSString *fileName = f.stringByDeletingPathExtension;
+                        if (fileName.length > 0 && ![foundDylibs containsObject:fileName]) {
+                            [foundDylibs addObject:fileName];
                         }
                     }
                 }
-                pclose(findPipe2);
-                NSLog(@"[SBCPUFloating] broad find found %ld dylibs", (long)allDylibs.count);
-                gDylibCount = allDylibs.count;
-                for (NSString *dn in allDylibs) {
-                    [packages addObject:@{@"package": dn, @"version": @"", @"desc": @""}];
-                }
+                if (foundDylibs.count > 0) break;
             }
+        }
+        
+        NSLog(@"[SBCPUFloating] NSFileManager found %ld dylibs, pathInfo: %@", (long)foundDylibs.count, foundPathInfo);
+        gDylibCount = foundDylibs.count;
+        gScanError = [foundPathInfo copy];
+        for (NSString *dn in foundDylibs) {
+            [packages addObject:@{@"package": dn, @"version": @"", @"desc": @""}];
         }
     }
     
@@ -5060,7 +5085,7 @@ static void detectPluginConflicts(void) {
         return 82.0;
     }
     if (indexPath.section == 12) {
-        if (indexPath.row == 0) return 84.0;
+        if (indexPath.row == 0) return 100.0;
         if (indexPath.row <= gPluginConflictCount) return 72.0;
         return 56.0;
     }
