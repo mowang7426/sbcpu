@@ -4175,10 +4175,12 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
                             iconLbl.font = [UIFont systemFontOfSize:16];
                             iconLbl.textAlignment = NSTextAlignmentCenter;
                             [cell.contentView addSubview:iconLbl];
-                            // 插件名称 + 版本号
+                            // 插件名称 + 版本号 + 耗电等级
                             NSString *ver = plugin[@"version"];
+                            NSInteger powerLevel = estimatePowerConsumption(plugin);
+                            NSString *powerIcon = (powerLevel == 2) ? @"🔴" : (powerLevel == 1) ? @"🟡" : @"🟢";
                             UILabel *nameLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 8, cell.contentView.bounds.size.width - 120, 20)];
-                            nameLbl.text = [NSString stringWithFormat:@"%@  v%@", plugin[@"name"], ver];
+                            nameLbl.text = [NSString stringWithFormat:@"%@  v%@  %@", plugin[@"name"], ver, powerIcon];
                             nameLbl.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
                             nameLbl.textColor = [UIColor labelColor];
                             [cell.contentView addSubview:nameLbl];
@@ -4702,6 +4704,30 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             [scrollView addSubview:noInject];
             y += 22;
         }
+        
+        // 耗电评估
+        UIView *sep3 = [[UIView alloc] initWithFrame:CGRectMake(20, y, w, 1)];
+        sep3.backgroundColor = [UIColor separatorColor];
+        [scrollView addSubview:sep3];
+        y += 16;
+        
+        UILabel *powerTitle = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 20)];
+        powerTitle.text = @"耗电评估";
+        powerTitle.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+        powerTitle.textColor = [UIColor labelColor];
+        [scrollView addSubview:powerTitle];
+        y += 26;
+        
+        NSString *powerDesc = powerConsumptionDesc(plugin);
+        UILabel *powerLbl = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 0)];
+        powerLbl.text = powerDesc;
+        powerLbl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
+        powerLbl.textColor = [UIColor secondaryLabelColor];
+        powerLbl.numberOfLines = 0;
+        [powerLbl sizeToFit];
+        powerLbl.frame = CGRectMake(20, y, w, powerLbl.frame.size.height);
+        [scrollView addSubview:powerLbl];
+        y += powerLbl.frame.size.height + 20;
         
         scrollView.contentSize = CGSizeMake(detailVC.view.bounds.size.width, y + 20);
         
@@ -5445,6 +5471,69 @@ static void scanInstalledPlugins(void) {
 }
 
 // 冲突检测
+// ========== 插件耗电等级评估 ==========
+// 返回：0=低耗电，1=中耗电，2=高耗电
+static NSInteger estimatePowerConsumption(NSDictionary *plugin) {
+    NSInteger score = 0;
+    NSArray *injected = plugin[@"injectedBundles"] ?: @[];
+    NSString *category = plugin[@"category"] ?: @"";
+    
+    // 全局注入：最耗电
+    for (NSString *b in injected) {
+        if ([b isEqualToString:@"*（全局注入）"]) { score += 2; break; }
+    }
+    
+    // 注入 SpringBoard：常驻系统进程
+    for (NSString *b in injected) {
+        if ([b.lowercaseString containsString:@"springboard"]) { score += 1; break; }
+    }
+    
+    // 注入进程数量
+    if (injected.count >= 5) score += 2;
+    else if (injected.count >= 3) score += 1;
+    
+    // 分类评估
+    if ([category isEqualToString:@"系统监控"] || [category isEqualToString:@"温度监控"]) {
+        score += 2; // 通常高频轮询传感器
+    } else if ([category isEqualToString:@"充电管理"] || [category isEqualToString:@"手势操作"]) {
+        score += 1;
+    }
+    
+    // 转换为等级
+    if (score >= 3) return 2; // 高耗电
+    if (score >= 1) return 1; // 中耗电
+    return 0; // 低耗电
+}
+
+// 获取耗电等级描述
+static NSString *powerConsumptionDesc(NSDictionary *plugin) {
+    NSInteger level = estimatePowerConsumption(plugin);
+    NSArray *injected = plugin[@"injectedBundles"] ?: @[];
+    NSString *category = plugin[@"category"] ?: @"";
+    NSMutableString *desc = [NSMutableString string];
+    
+    if (level == 2) [desc appendString:@"🔴 高耗电"];
+    else if (level == 1) [desc appendString:@"🟡 中耗电"];
+    else [desc appendString:@"🟢 低耗电"];
+    
+    [desc appendString:@"\n评估依据："];
+    BOOL hasGlobal = NO, hasSB = NO;
+    for (NSString *b in injected) {
+        if ([b isEqualToString:@"*（全局注入）"]) hasGlobal = YES;
+        if ([b.lowercaseString containsString:@"springboard"]) hasSB = YES;
+    }
+    if (hasGlobal) [desc appendString:@"\n• 全局注入所有 App"];
+    if (hasSB) [desc appendString:@"\n• 注入 SpringBoard 常驻进程"];
+    [desc appendFormat:@"\n• 注入 %ld 个进程", (long)injected.count];
+    if ([category isEqualToString:@"系统监控"] || [category isEqualToString:@"温度监控"]) {
+        [desc appendString:@"\n• 监控类插件通常高频轮询传感器"];
+    } else if ([category isEqualToString:@"充电管理"]) {
+        [desc appendString:@"\n• 充电管理类插件持续监听充电状态"];
+    }
+    
+    return desc;
+}
+
 static void detectPluginConflicts(void) {
     // ========== 4a. 已知冲突对检测 ==========
     NSArray *pairs = knownConflictPairs();
