@@ -556,6 +556,7 @@ static void SavePreferencesAndNotify(void) {
     setFloatPref(CFSTR("smartChargeMode"), (float)smartChargeMode);
     setBoolPref(CFSTR("chargeBoostEnable"), chargeBoostEnable);
     setBoolPref(CFSTR("forceFastChargeEnable"), forceFastChargeEnable);
+    setBoolPref(CFSTR("batteryHealthOptimize"), batteryHealthOptimize);
     setBoolPref(CFSTR("notificationEnable"), notificationEnable);
     setBoolPref(CFSTR("wechatEnable"), wechatEnable);
     setBoolPref(CFSTR("qqEnable"), qqEnable);
