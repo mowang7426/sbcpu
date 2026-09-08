@@ -283,6 +283,7 @@ static BOOL force120HzEnable = NO;
 
 
 static BOOL chargeBoostEnable = NO;
+static BOOL batteryHealthOptimize = NO; // 🩺 电池健康优化：移除非正品电池提醒
 static BOOL forceFastChargeEnable = NO; // 保留原有强制满血快充开关
 static BOOL fastChargeStartupAnimating = NO;
 static NSInteger fastChargeStartupGeneration = 0;
@@ -502,6 +503,7 @@ static void LoadPreferences(void) {
     
     chargeBoostEnable = getBoolPref(CFSTR("chargeBoostEnable"), NO);
     forceFastChargeEnable = getBoolPref(CFSTR("forceFastChargeEnable"), NO);
+    batteryHealthOptimize = getBoolPref(CFSTR("batteryHealthOptimize"), NO);
     
     notificationEnable = getBoolPref(CFSTR("notificationEnable"), YES);
     wechatEnable = getBoolPref(CFSTR("wechatEnable"), YES);
@@ -3762,7 +3764,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
     if (section == 4) return 3;
     if (section == 5) return 1;
     if (section == 6) return 10;
-    if (section == 7) return 2; 
+    if (section == 7) return 3; 
     if (section == 8) return 7;
     if (section == 9) return 5; // 🔋 智能停充
     if (section == 10) return 5; // 📖 功能说明行数
@@ -4490,6 +4492,13 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             UISwitch *sw = [UISwitch new];
             sw.on = forceFastChargeEnable;
             [sw addTarget:self action:@selector(changeForceFastCharge:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
+        } else if (indexPath.row == 2) {
+            cell.textLabel.text = @"🩺 电池健康优化";
+            cell.detailTextLabel.text = @"移除非正品电池提醒（健康值/角标/未知部件）";
+            UISwitch *sw = [UISwitch new];
+            sw.on = batteryHealthOptimize;
+            [sw addTarget:self action:@selector(changeBatteryHealthOptimize:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         }
     } else if (indexPath.section == 8) {
@@ -5748,6 +5757,11 @@ static void detectPluginConflicts(void) {
     }
 }
 
+- (void)changeBatteryHealthOptimize:(UISwitch *)sw {
+    batteryHealthOptimize = sw.isOn;
+    SavePreferencesAndNotify();
+}
+
 - (void)changeForceFastCharge:(UISwitch *)sw {
     if (sw.isOn) {
         sw.on = NO;
@@ -5901,10 +5915,71 @@ static void registerV160Observers(void) {
 - (void)addNotificationRequest:(id)arg1 { %orig; [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1]; }
 %end
 
+#pragma mark - 9.5 电池健康优化（整合 NoPreferencesTips：移除非正品电池提醒）
+
+%group BatteryHealthGroup
+
+// ===== 电池正品校验：让更换的非官方电池被识别为正品 =====
+%hook PLBatteryUIBackendModel
+- (BOOL)isVaildCAA:(id)arg1 {
+    if (batteryHealthOptimize) return YES;
+    return %orig;
+}
+- (id)genuineBatteryStatus {
+    if (batteryHealthOptimize) return @"GENUINE";
+    return %orig;
+}
+- (id)getBatteryHealthServiceState {
+    if (batteryHealthOptimize) return @(0);
+    return %orig;
+}
+- (id)getManagementState {
+    if (batteryHealthOptimize) return @(0);
+    return %orig;
+}
+%end
+
+// ===== 设置页电池健康控制器：确保健康值正常显示 =====
+%hook BatteryHealthUIController
+- (id)setUpBatteryHealthSpecifiers {
+    if (batteryHealthOptimize) {
+        id result = %orig;
+        return result;
+    }
+    return %orig;
+}
+%end
+
+// ===== 关于本机：移除"未知部件"提醒 =====
+%hook PSGAboutDataSource
+- (id)getCurrentSystemHealthInfoSpecifiers {
+    if (batteryHealthOptimize) return @[];
+    return %orig;
+}
+- (id)nonGenuineComponentSpecifierForComponent:(id)arg1 {
+    if (batteryHealthOptimize) return nil;
+    return %orig;
+}
+%end
+
+// ===== 桌面"设置"图标角标：清除非正品提醒红点 =====
+%hook BSUIBadgeController
+- (void)updateBadgeValue:(id)value forBundleID:(NSString *)bundleID {
+    if (batteryHealthOptimize && [bundleID isEqualToString:@"com.apple.Preferences"]) {
+        %orig(nil, bundleID);
+    } else {
+        %orig;
+    }
+}
+%end
+
+%end // BatteryHealthGroup
+
 #pragma mark - 10. 构造函数入口
 
 %ctor {
     %init;
+    %init(BatteryHealthGroup);
     NSString *processName = [NSProcessInfo processInfo].processName;
     if ([processName isEqualToString:@"SpringBoard"]) {
         LoadPreferences();
