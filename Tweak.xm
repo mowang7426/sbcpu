@@ -20,6 +20,10 @@
 #import <notify.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>
+#import <substrate.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
 #import "SBCPUThermalPaths.h"
 #import "SBCPUThermalPressure.h"
 
@@ -283,7 +287,7 @@ static BOOL force120HzEnable = NO;
 
 
 static BOOL chargeBoostEnable = NO;
-static BOOL batteryHealthOptimize = NO; // 🩺 电池健康优化：移除非正品电池提醒
+static BOOL suppressPartRepairEnabled = NO; // 🛡️ 屏蔽部件与维修记录（移植自 CPUthermal）
 static BOOL forceFastChargeEnable = NO; // 保留原有强制满血快充开关
 static BOOL fastChargeStartupAnimating = NO;
 static NSInteger fastChargeStartupGeneration = 0;
@@ -503,7 +507,7 @@ static void LoadPreferences(void) {
     
     chargeBoostEnable = getBoolPref(CFSTR("chargeBoostEnable"), NO);
     forceFastChargeEnable = getBoolPref(CFSTR("forceFastChargeEnable"), NO);
-    batteryHealthOptimize = getBoolPref(CFSTR("batteryHealthOptimize"), NO);
+    suppressPartRepairEnabled = getBoolPref(CFSTR("suppressPartRepair"), NO);
     
     notificationEnable = getBoolPref(CFSTR("notificationEnable"), YES);
     wechatEnable = getBoolPref(CFSTR("wechatEnable"), YES);
@@ -556,7 +560,7 @@ static void SavePreferencesAndNotify(void) {
     setFloatPref(CFSTR("smartChargeMode"), (float)smartChargeMode);
     setBoolPref(CFSTR("chargeBoostEnable"), chargeBoostEnable);
     setBoolPref(CFSTR("forceFastChargeEnable"), forceFastChargeEnable);
-    setBoolPref(CFSTR("batteryHealthOptimize"), batteryHealthOptimize);
+    setBoolPref(CFSTR("suppressPartRepair"), suppressPartRepairEnabled);
     setBoolPref(CFSTR("notificationEnable"), notificationEnable);
     setBoolPref(CFSTR("wechatEnable"), wechatEnable);
     setBoolPref(CFSTR("qqEnable"), qqEnable);
@@ -4495,11 +4499,11 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             [sw addTarget:self action:@selector(changeForceFastCharge:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 2) {
-            cell.textLabel.text = @"🩺 电池健康优化";
-            cell.detailTextLabel.text = @"移除非正品电池提醒（健康值/角标/未知部件）";
+            cell.textLabel.text = @"🛡️ 屏蔽部件与维修记录";
+            cell.detailTextLabel.text = @"隐藏部件与服务历史（电池/屏幕/相机），保留电池健康页";
             UISwitch *sw = [UISwitch new];
-            sw.on = batteryHealthOptimize;
-            [sw addTarget:self action:@selector(changeBatteryHealthOptimize:) forControlEvents:UIControlEventValueChanged];
+            sw.on = suppressPartRepairEnabled;
+            [sw addTarget:self action:@selector(changeSuppressPartRepair:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         }
     } else if (indexPath.section == 8) {
@@ -5758,8 +5762,8 @@ static void detectPluginConflicts(void) {
     }
 }
 
-- (void)changeBatteryHealthOptimize:(UISwitch *)sw {
-    batteryHealthOptimize = sw.isOn;
+- (void)changeSuppressPartRepair:(UISwitch *)sw {
+    suppressPartRepairEnabled = sw.isOn;
     SavePreferencesAndNotify();
 }
 
@@ -5916,71 +5920,490 @@ static void registerV160Observers(void) {
 - (void)addNotificationRequest:(id)arg1 { %orig; [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1]; }
 %end
 
-#pragma mark - 9.5 电池健康优化（整合 NoPreferencesTips：移除非正品电池提醒）
 
-%group BatteryHealthGroup
 
-// ===== 电池正品校验：让更换的非官方电池被识别为正品 =====
-%hook PLBatteryUIBackendModel
-- (BOOL)isVaildCAA:(id)arg1 {
-    if (batteryHealthOptimize) return YES;
-    return %orig;
-}
-- (id)genuineBatteryStatus {
-    if (batteryHealthOptimize) return @"GENUINE";
-    return %orig;
-}
-- (id)getBatteryHealthServiceState {
-    if (batteryHealthOptimize) return @(0);
-    return %orig;
-}
-- (id)getManagementState {
-    if (batteryHealthOptimize) return @(0);
-    return %orig;
-}
-%end
+#pragma mark - 9.5 屏蔽部件与维修记录（移植自 CPUthermal PrefHook）
 
-// ===== 设置页电池健康控制器：确保健康值正常显示 =====
-%hook BatteryHealthUIController
-- (id)setUpBatteryHealthSpecifiers {
-    if (batteryHealthOptimize) {
-        id result = %orig;
-        return result;
+// ========== 字符串与对象工具 ==========
+static BOOL cStringContainsInsensitive(const char *value, const char *token) {
+    if (!value || !token || !token[0]) return NO;
+    size_t tokenLength = strlen(token);
+    for (const char *cursor = value; *cursor; cursor++) {
+        size_t index = 0;
+        while (index < tokenLength && cursor[index] &&
+               tolower((unsigned char)cursor[index]) == tolower((unsigned char)token[index])) index++;
+        if (index == tokenLength) return YES;
     }
-    return %orig;
+    return NO;
+}
+
+static BOOL cStringEndsWithInsensitive(const char *value, const char *suffix) {
+    if (!value || !suffix) return NO;
+    size_t valueLength = strlen(value);
+    size_t suffixLength = strlen(suffix);
+    if (suffixLength > valueLength) return NO;
+    return strncasecmp(value + valueLength - suffixLength, suffix, suffixLength) == 0;
+}
+
+static id callObjectNoArgument(id object, const char *selectorName) {
+    if (!object || !selectorName) return nil;
+    SEL selector = sel_registerName(selectorName);
+    if (![object respondsToSelector:selector]) return nil;
+    IMP implementation = [object methodForSelector:selector];
+    return implementation ? ((id (*)(id, SEL))implementation)(object, selector) : nil;
+}
+
+static id callObjectWithObject(id object, const char *selectorName, id argument) {
+    if (!object || !selectorName) return nil;
+    SEL selector = sel_registerName(selectorName);
+    if (![object respondsToSelector:selector]) return nil;
+    IMP implementation = [object methodForSelector:selector];
+    return implementation ? ((id (*)(id, SEL, id))implementation)(object, selector, argument) : nil;
+}
+
+static NSString *inspectionStringForValue(id value) {
+    if (!value) return nil;
+    if ([value isKindOfClass:[NSString class]]) return (NSString *)value;
+    if ([value isKindOfClass:[NSURL class]]) return [(NSURL *)value absoluteString];
+    Class metaClass = object_getClass(value);
+    if (metaClass && class_isMetaClass(metaClass)) return NSStringFromClass((Class)value);
+    return nil;
+}
+
+static BOOL stringContainsBatteryWarningToken(NSString *value) {
+    if (![value isKindOfClass:[NSString class]] || [value length] == 0) return NO;
+    static const char *tokens[] = {
+        "importantbatterymessage", "important_battery", "important battery message",
+        "batteryservicesuggestion", "battery_service", "battery service",
+        "servicerecommended", "service_recommended", "service recommended",
+        "nongenuinebattery", "nongenuine_battery", "non-genuine battery",
+        "batteryhealthunknown", "battery_health_unknown", "battery health unknown",
+        "battery not trusted", "untrusted battery", "recalibrat",
+        "plfollowupheadercell", "plfollowupsecondaryheadercell",
+        "significantly degraded", "unable to verify",
+        "unable to determine battery health",
+        "unable to determine if your iphone battery is a genuine apple part",
+        "genuine apple battery", "battery authenticity",
+        "无法确定iphone电池是否为正品apple部件",
+        "无法确定 iphone 电池是否为正品 apple 部件",
+        "非正品apple部件", "非正品 Apple 部件",
+        "重要电池信息", "电池健康状况显著下降",
+        "无法验证", "无法确定电池健康状况", "重新校准", "建议维修",
+    };
+    NSString *lowercaseValue = [value lowercaseString];
+    for (NSUInteger index = 0; index < sizeof(tokens) / sizeof(tokens[0]); index++) {
+        if ([lowercaseValue rangeOfString:[NSString stringWithUTF8String:tokens[index]]].location != NSNotFound) return YES;
+    }
+    return NO;
+}
+
+static BOOL valueContainsBatteryWarning(id value) {
+    NSString *inspectionString = inspectionStringForValue(value);
+    if (stringContainsBatteryWarningToken(inspectionString)) return YES;
+    if ([value isKindOfClass:[NSDictionary class]]) {
+        for (id key in (NSDictionary *)value) {
+            if (valueContainsBatteryWarning(key) || valueContainsBatteryWarning([(NSDictionary *)value objectForKey:key])) return YES;
+        }
+    }
+    return NO;
+}
+
+static BOOL specifierContainsBatteryWarning(id specifier);
+
+static id filteredBatteryHealthSpecifiers(id result) {
+    if (![result isKindOfClass:[NSArray class]]) return result;
+    NSArray *specifiers = (NSArray *)result;
+    NSMutableArray *filtered = [NSMutableArray arrayWithCapacity:[specifiers count]];
+    BOOL removedWarning = NO;
+    for (id specifier in specifiers) {
+        if (suppressPartRepairEnabled && specifierContainsBatteryWarning(specifier)) {
+            removedWarning = YES;
+            continue;
+        }
+        [filtered addObject:specifier];
+    }
+    if (removedWarning) return filtered;
+    return result;
+}
+
+// ========== PSSpecifier 属性 hook（隐藏属性强制 YES） ==========
+static BOOL gInspectingSpecifier = NO;
+static IMP gOrigSpecifierPropertyForKey = NULL;
+static IMP gOrigSpecifierSetPropertyForKey = NULL;
+
+static BOOL specifierContainsBatteryWarning(id specifier) {
+    if (!specifier) return NO;
+    if (stringContainsBatteryWarningToken(NSStringFromClass([specifier class]))) return YES;
+    id identifier = callObjectNoArgument(specifier, "identifier");
+    id name = callObjectNoArgument(specifier, "name");
+    if (valueContainsBatteryWarning(identifier) || valueContainsBatteryWarning(name)) return YES;
+    static const char *propertyKeys[] = {
+        "id", "identifier", "name", "label", "title", "text",
+        "detailText", "footerText", "headerText",
+        "cellClass", "headerCellClass", "footerCellClass",
+        "url", "URL", "link",
+    };
+    for (NSUInteger index = 0; index < sizeof(propertyKeys) / sizeof(propertyKeys[0]); index++) {
+        id value = callObjectWithObject(specifier, "propertyForKey:", [NSString stringWithUTF8String:propertyKeys[index]]);
+        if (valueContainsBatteryWarning(value)) return YES;
+    }
+    return NO;
+}
+
+static id specifierPropertyHook(id self, SEL selector, id key) {
+    id result = gOrigSpecifierPropertyForKey ? ((id (*)(id, SEL, id))gOrigSpecifierPropertyForKey)(self, selector, key) : nil;
+    if (suppressPartRepairEnabled && !gInspectingSpecifier && [key isKindOfClass:[NSString class]] &&
+        ([(NSString *)key caseInsensitiveCompare:@"hidden"] == NSOrderedSame ||
+         [(NSString *)key caseInsensitiveCompare:@"isHidden"] == NSOrderedSame)) {
+        gInspectingSpecifier = YES;
+        BOOL warning = specifierContainsBatteryWarning(self);
+        gInspectingSpecifier = NO;
+        if (warning) return [NSNumber numberWithBool:YES];
+    }
+    return result;
+}
+
+static void specifierSetPropertyHook(id self, SEL selector, id value, id key) {
+    if (gOrigSpecifierSetPropertyForKey) ((void (*)(id, SEL, id, id))gOrigSpecifierSetPropertyForKey)(self, selector, value, key);
+}
+
+static void installSpecifierHooks(void) {
+    Class cls = objc_getClass("PSSpecifier");
+    if (!cls) return;
+    SEL getSelector = sel_registerName("propertyForKey:");
+    SEL setSelector = sel_registerName("setProperty:forKey:");
+    if (!gOrigSpecifierPropertyForKey && class_getInstanceMethod(cls, getSelector)) {
+        MSHookMessageEx(cls, getSelector, (IMP)specifierPropertyHook, (IMP *)&gOrigSpecifierPropertyForKey);
+    }
+    if (!gOrigSpecifierSetPropertyForKey && class_getInstanceMethod(cls, setSelector)) {
+        MSHookMessageEx(cls, setSelector, (IMP)specifierSetPropertyHook, (IMP *)&gOrigSpecifierSetPropertyForKey);
+    }
+}
+
+// ========== 动态扫描 hook 引擎（遍历所有类，自动适配 iOS 版本） ==========
+typedef NS_ENUM(NSUInteger, SuppressHookKind) {
+    SuppressHookKindSuppressObject,
+    SuppressHookKindEmptyArray,
+    SuppressHookKindFilterSpecifiers,
+};
+
+typedef struct {
+    Class targetClass;
+    SEL selector;
+    IMP original;
+    SuppressHookKind kind;
+} SuppressHookRecord;
+
+static SuppressHookRecord gSuppressHooks[24];
+static NSUInteger gSuppressHookCount = 0;
+
+static id invokeSuppressHook(NSUInteger index, id self, SEL selector) {
+    if (index >= gSuppressHookCount) return nil;
+    SuppressHookRecord *record = &gSuppressHooks[index];
+    IMP original = record->original;
+    if (record->kind == SuppressHookKindFilterSpecifiers) {
+        id result = original ? ((id (*)(id, SEL))original)(self, selector) : nil;
+        return suppressPartRepairEnabled ? filteredBatteryHealthSpecifiers(result) : result;
+    }
+    if (suppressPartRepairEnabled) {
+        if (record->kind == SuppressHookKindEmptyArray) return [NSArray array];
+        return nil;
+    }
+    return original ? ((id (*)(id, SEL))original)(self, selector) : nil;
+}
+
+#define DEFINE_SUPPRESS_HOOK(index) \
+    static id suppressHook##index(id self, SEL selector) { \
+        return invokeSuppressHook(index, self, selector); \
+    }
+
+DEFINE_SUPPRESS_HOOK(0)
+DEFINE_SUPPRESS_HOOK(1)
+DEFINE_SUPPRESS_HOOK(2)
+DEFINE_SUPPRESS_HOOK(3)
+DEFINE_SUPPRESS_HOOK(4)
+DEFINE_SUPPRESS_HOOK(5)
+DEFINE_SUPPRESS_HOOK(6)
+DEFINE_SUPPRESS_HOOK(7)
+DEFINE_SUPPRESS_HOOK(8)
+DEFINE_SUPPRESS_HOOK(9)
+DEFINE_SUPPRESS_HOOK(10)
+DEFINE_SUPPRESS_HOOK(11)
+DEFINE_SUPPRESS_HOOK(12)
+DEFINE_SUPPRESS_HOOK(13)
+DEFINE_SUPPRESS_HOOK(14)
+DEFINE_SUPPRESS_HOOK(15)
+DEFINE_SUPPRESS_HOOK(16)
+DEFINE_SUPPRESS_HOOK(17)
+DEFINE_SUPPRESS_HOOK(18)
+DEFINE_SUPPRESS_HOOK(19)
+DEFINE_SUPPRESS_HOOK(20)
+DEFINE_SUPPRESS_HOOK(21)
+DEFINE_SUPPRESS_HOOK(22)
+DEFINE_SUPPRESS_HOOK(23)
+
+static IMP gSuppressImplementations[] = {
+    (IMP)suppressHook0, (IMP)suppressHook1, (IMP)suppressHook2, (IMP)suppressHook3,
+    (IMP)suppressHook4, (IMP)suppressHook5, (IMP)suppressHook6, (IMP)suppressHook7,
+    (IMP)suppressHook8, (IMP)suppressHook9, (IMP)suppressHook10, (IMP)suppressHook11,
+    (IMP)suppressHook12, (IMP)suppressHook13, (IMP)suppressHook14, (IMP)suppressHook15,
+    (IMP)suppressHook16, (IMP)suppressHook17, (IMP)suppressHook18, (IMP)suppressHook19,
+    (IMP)suppressHook20, (IMP)suppressHook21, (IMP)suppressHook22, (IMP)suppressHook23,
+};
+
+static BOOL suppressHookAlreadyInstalled(Class targetClass, SEL selector) {
+    for (NSUInteger index = 0; index < gSuppressHookCount; index++) {
+        if (gSuppressHooks[index].targetClass == targetClass && gSuppressHooks[index].selector == selector) return YES;
+    }
+    return NO;
+}
+
+static Method copyOwnInstanceMethod(Class targetClass, SEL selector) {
+    unsigned int methodCount = 0;
+    Method *methods = class_copyMethodList(targetClass, &methodCount);
+    Method result = NULL;
+    for (unsigned int index = 0; index < methodCount; index++) {
+        if (method_getName(methods[index]) == selector) { result = methods[index]; break; }
+    }
+    free(methods);
+    return result;
+}
+
+static BOOL methodReturnsObjectWithoutArguments(Method method) {
+    if (!method || method_getNumberOfArguments(method) != 2) return NO;
+    const char *typeEncoding = method_getTypeEncoding(method);
+    if (!typeEncoding) return NO;
+    while (*typeEncoding && strchr("rnNoORV", *typeEncoding)) typeEncoding++;
+    return *typeEncoding == '@';
+}
+
+static BOOL installSuppressHook(Class targetClass, SEL selector, SuppressHookKind kind) {
+    if (!targetClass || !selector || suppressHookAlreadyInstalled(targetClass, selector)) return NO;
+    Method method = copyOwnInstanceMethod(targetClass, selector);
+    if (!methodReturnsObjectWithoutArguments(method)) return NO;
+    if (gSuppressHookCount >= sizeof(gSuppressHooks) / sizeof(gSuppressHooks[0])) return NO;
+    NSUInteger index = gSuppressHookCount++;
+    gSuppressHooks[index].targetClass = targetClass;
+    gSuppressHooks[index].selector = selector;
+    gSuppressHooks[index].kind = kind;
+    gSuppressHooks[index].original = NULL;
+    MSHookMessageEx(targetClass, selector, gSuppressImplementations[index], &gSuppressHooks[index].original);
+    return YES;
+}
+
+static BOOL isBatteryHealthControllerClass(Class targetClass) {
+    const char *className = class_getName(targetClass);
+    if (!className) return NO;
+    if (cStringContainsInsensitive(className, "batteryhealth")) return YES;
+    return cStringContainsInsensitive(className, "battery") &&
+           cStringContainsInsensitive(className, "health") &&
+           cStringContainsInsensitive(className, "controller");
+}
+
+static BOOL isWarningSpecifierFactorySelector(const char *selectorName) {
+    if (!selectorName || strchr(selectorName, ':') || !cStringEndsWithInsensitive(selectorName, "specifiers")) return NO;
+    if (strcasecmp(selectorName, "headerSpecifiers") == 0) return YES;
+    return cStringContainsInsensitive(selectorName, "importantbattery") ||
+           cStringContainsInsensitive(selectorName, "batteryservice") ||
+           cStringContainsInsensitive(selectorName, "servicerecommend") ||
+           cStringContainsInsensitive(selectorName, "nongenuine") ||
+           cStringContainsInsensitive(selectorName, "recalibration") ||
+           cStringContainsInsensitive(selectorName, "unknownheader") ||
+           cStringContainsInsensitive(selectorName, "datacollectionnotice");
+}
+
+static BOOL isBatteryServiceSuggestionSelector(const char *selectorName) {
+    if (!selectorName || strchr(selectorName, ':')) return NO;
+    return strcasecmp(selectorName, "getBatteryServiceSuggestion") == 0 ||
+           cStringContainsInsensitive(selectorName, "batteryservicesuggestion") ||
+           cStringContainsInsensitive(selectorName, "servicebatterysuggestion");
+}
+
+static void installHooksForClass(Class targetClass) {
+    const char *className = class_getName(targetClass);
+    if (!className) return;
+    BOOL batteryController = cStringContainsInsensitive(className, "battery");
+    BOOL aboutController = cStringContainsInsensitive(className, "about") ||
+                           cStringContainsInsensitive(className, "general") ||
+                           cStringContainsInsensitive(className, "parts") ||
+                           cStringContainsInsensitive(className, "warranty") ||
+                           cStringContainsInsensitive(className, "deviceinfo");
+    if (!batteryController && !aboutController) return;
+    BOOL batteryHealthController = isBatteryHealthControllerClass(targetClass);
+    if (batteryController || aboutController) {
+        installSuppressHook(targetClass, sel_registerName("specifiers"), SuppressHookKindFilterSpecifiers);
+    }
+    unsigned int methodCount = 0;
+    Method *methods = class_copyMethodList(targetClass, &methodCount);
+    for (unsigned int index = 0; index < methodCount; index++) {
+        Method method = methods[index];
+        SEL selector = method_getName(method);
+        const char *selectorName = sel_getName(selector);
+        if (batteryHealthController && isWarningSpecifierFactorySelector(selectorName)) {
+            installSuppressHook(targetClass, selector, SuppressHookKindEmptyArray);
+        } else if (selectorName && !strchr(selectorName, ':') && cStringEndsWithInsensitive(selectorName, "specifiers")) {
+            installSuppressHook(targetClass, selector, SuppressHookKindFilterSpecifiers);
+        } else if (isBatteryServiceSuggestionSelector(selectorName)) {
+            installSuppressHook(targetClass, selector, SuppressHookKindSuppressObject);
+        }
+    }
+    free(methods);
+}
+
+static void installBatteryHooks(void) {
+    @autoreleasepool {
+        int classCount = objc_getClassList(NULL, 0);
+        if (classCount <= 0) return;
+        Class *classes = (Class *)calloc((size_t)classCount, sizeof(Class));
+        if (!classes) return;
+        int loadedClassCount = objc_getClassList(classes, classCount);
+        int scanCount = loadedClassCount < classCount ? loadedClassCount : classCount;
+        for (int index = 0; index < scanCount; index++) installHooksForClass(classes[index]);
+        free(classes);
+    }
+}
+
+// ========== 参考类 hook（BatteryUIResourceClass / SystemHealthUI / FollowUp / SBIcon） ==========
+static long long (*origGenuineBatteryStatus)(id, SEL) = NULL;
+static long long (*origBatteryHealthServiceState)(id, SEL) = NULL;
+static id (*origBatteryServiceSuggestion)(id, SEL, id) = NULL;
+static id (*origCurrentSystemHealthInfoSpecifiers)(id, SEL) = NULL;
+static void (*origFollowUpAddItem)(id, SEL, id) = NULL;
+static BOOL (*origAllowsBadgingForIcon)(id, SEL, id) = NULL;
+
+static long long hookedGenuineBatteryStatus(id self, SEL selector) {
+    return suppressPartRepairEnabled ? 0 : (origGenuineBatteryStatus ? origGenuineBatteryStatus(self, selector) : 0);
+}
+
+static long long hookedBatteryHealthServiceState(id self, SEL selector) {
+    return suppressPartRepairEnabled ? 0 : (origBatteryHealthServiceState ? origBatteryHealthServiceState(self, selector) : 0);
+}
+
+static id hookedBatteryServiceSuggestion(id self, SEL selector, id argument) {
+    return suppressPartRepairEnabled ? nil : (origBatteryServiceSuggestion ? origBatteryServiceSuggestion(self, selector, argument) : nil);
+}
+
+static id hookedCurrentSystemHealthInfoSpecifiers(id self, SEL selector) {
+    return suppressPartRepairEnabled ? nil : (origCurrentSystemHealthInfoSpecifiers ? origCurrentSystemHealthInfoSpecifiers(self, selector) : nil);
+}
+
+static BOOL objectLooksLikeBatteryRepair(id object) {
+    if (!object) return NO;
+    if (valueContainsBatteryWarning(object)) return YES;
+    static const char *selectors[] = {"applicationBundleID", "clientIdentifier", "containerPath", "title", "subtitle", "localizedTitle"};
+    for (NSUInteger i = 0; i < sizeof(selectors)/sizeof(selectors[0]); i++) {
+        id value = callObjectNoArgument(object, selectors[i]);
+        NSString *text = inspectionStringForValue(value);
+        if (stringContainsBatteryWarningToken(text)) return YES;
+        if ([text isKindOfClass:[NSString class]] &&
+            ([text rangeOfString:@"battery" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+             [text containsString:@"电池"])) return YES;
+    }
+    return NO;
+}
+
+static void hookedFollowUpAddItem(id self, SEL selector, id item) {
+    if (suppressPartRepairEnabled && objectLooksLikeBatteryRepair(item)) return;
+    if (origFollowUpAddItem) origFollowUpAddItem(self, selector, item);
+}
+
+static BOOL hookedAllowsBadgingForIcon(id self, SEL selector, id icon) {
+    if (suppressPartRepairEnabled) {
+        id bundleID = callObjectNoArgument(icon, "applicationBundleID");
+        if ([bundleID isKindOfClass:[NSString class]] &&
+            [(NSString *)bundleID isEqualToString:@"com.apple.Preferences"]) return NO;
+    }
+    return origAllowsBadgingForIcon ? origAllowsBadgingForIcon(self, selector, icon) : YES;
+}
+
+static void installReferenceRepairHooks(void) {
+    Class resource = objc_getClass("BatteryUIResourceClass");
+    Class resourceMeta = resource ? object_getClass(resource) : Nil;
+    if (resourceMeta) {
+        SEL genuine = sel_registerName("genuineBatteryStatus");
+        SEL state = sel_registerName("getBatteryHealthServiceState");
+        SEL suggestion = sel_registerName("getBatteryServiceSuggestion:");
+        if (!origGenuineBatteryStatus && class_getInstanceMethod(resourceMeta, genuine)) MSHookMessageEx(resourceMeta, genuine, (IMP)hookedGenuineBatteryStatus, (IMP *)&origGenuineBatteryStatus);
+        if (!origBatteryHealthServiceState && class_getInstanceMethod(resourceMeta, state)) MSHookMessageEx(resourceMeta, state, (IMP)hookedBatteryHealthServiceState, (IMP *)&origBatteryHealthServiceState);
+        if (!origBatteryServiceSuggestion && class_getInstanceMethod(resourceMeta, suggestion)) MSHookMessageEx(resourceMeta, suggestion, (IMP)hookedBatteryServiceSuggestion, (IMP *)&origBatteryServiceSuggestion);
+    }
+    Class systemHealth = objc_getClass("SystemHealthUI");
+    SEL healthSpecifiers = sel_registerName("getCurrentSystemHealthInfoSpecifiers");
+    if (!origCurrentSystemHealthInfoSpecifiers && systemHealth && class_getInstanceMethod(systemHealth, healthSpecifiers))
+        MSHookMessageEx(systemHealth, healthSpecifiers, (IMP)hookedCurrentSystemHealthInfoSpecifiers, (IMP *)&origCurrentSystemHealthInfoSpecifiers);
+    Class followUp = objc_getClass("FLGroupViewModelImpl");
+    SEL addItem = sel_registerName("addItem:");
+    if (!origFollowUpAddItem && followUp && class_getInstanceMethod(followUp, addItem))
+        MSHookMessageEx(followUp, addItem, (IMP)hookedFollowUpAddItem, (IMP *)&origFollowUpAddItem);
+    Class iconController = objc_getClass("SBIconController");
+    SEL allowsBadge = sel_registerName("allowsBadgingForIcon:");
+    if (!origAllowsBadgingForIcon && iconController && class_getInstanceMethod(iconController, allowsBadge))
+        MSHookMessageEx(iconController, allowsBadge, (IMP)hookedAllowsBadgingForIcon, (IMP *)&origAllowsBadgingForIcon);
+}
+
+// ========== 通知：设置变更 + bundle 加载 ==========
+static void onPartRepairSettingsChanged(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
+    LoadPreferences();
+    installSpecifierHooks();
+    installBatteryHooks();
+    installReferenceRepairHooks();
+}
+
+static void onPartRepairBundleDidLoad(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    (void)center; (void)observer; (void)name; (void)userInfo;
+    NSBundle *bundle = (__bridge NSBundle *)object;
+    NSString *bundleIdentifier = [bundle bundleIdentifier];
+    installReferenceRepairHooks();
+    if (![bundleIdentifier isKindOfClass:[NSString class]]) return;
+    if ([bundleIdentifier rangeOfString:@"battery" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+        [bundleIdentifier rangeOfString:@"powerui" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+        [bundleIdentifier rangeOfString:@"preferences" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+        installBatteryHooks();
+    }
+}
+
+// ========== 设置页列表过滤（Logos hook） ==========
+%hook PSListController
+- (NSArray *)specifiers {
+    NSArray *result = %orig;
+    return suppressPartRepairEnabled ? filteredBatteryHealthSpecifiers(result) : result;
+}
+- (void)setSpecifiers:(NSArray *)specifiers {
+    NSArray *patched = suppressPartRepairEnabled ? filteredBatteryHealthSpecifiers(specifiers) : specifiers;
+    %orig(patched);
 }
 %end
 
-// ===== 关于本机：移除"未知部件"提醒 =====
-%hook PSGAboutDataSource
-- (id)getCurrentSystemHealthInfoSpecifiers {
-    if (batteryHealthOptimize) return @[];
-    return %orig;
-}
-- (id)nonGenuineComponentSpecifierForComponent:(id)arg1 {
-    if (batteryHealthOptimize) return nil;
-    return %orig;
-}
-%end
-
-// ===== 桌面"设置"图标角标：清除非正品提醒红点 =====
-%hook BSUIBadgeController
-- (void)updateBadgeValue:(id)value forBundleID:(NSString *)bundleID {
-    if (batteryHealthOptimize && [bundleID isEqualToString:@"com.apple.Preferences"]) {
-        %orig(nil, bundleID);
-    } else {
-        %orig;
+%hook PSTableCell
+- (void)layoutSubviews {
+    %orig;
+    id specifier = nil;
+    if ([self respondsToSelector:@selector(specifier)]) specifier = [self specifier];
+    if (suppressPartRepairEnabled && specifierContainsBatteryWarning(specifier)) {
+        self.tag = 0x5342;
+        self.hidden = YES;
+        self.contentView.hidden = YES;
+        return;
+    }
+    if (self.tag == 0x5342) {
+        self.tag = 0;
+        self.hidden = NO;
+        self.contentView.hidden = NO;
     }
 }
 %end
-
-%end // BatteryHealthGroup
 
 #pragma mark - 10. 构造函数入口
 
 %ctor {
     %init;
-    %init(BatteryHealthGroup);
+    // 🛡️ 屏蔽部件与维修记录：注册通知 + 初始化 hooks（两个进程都执行）
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onPartRepairSettingsChanged, kPrefChangedNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+    CFNotificationCenterAddObserver(CFNotificationCenterGetLocalCenter(), NULL, onPartRepairBundleDidLoad, (__bridge CFStringRef)NSBundleDidLoadNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+    installSpecifierHooks();
+    installBatteryHooks();
+    installReferenceRepairHooks();
     NSString *processName = [NSProcessInfo processInfo].processName;
     if ([processName isEqualToString:@"SpringBoard"]) {
         LoadPreferences();
