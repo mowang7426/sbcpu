@@ -6414,7 +6414,8 @@ static void onPartRepairBundleDidLoad(CFNotificationCenterRef center, void *obse
 
 %ctor {
     %init;
-    // 🛡️ 屏蔽部件与维修记录：注册通知 + 初始化 hooks（两个进程都执行）
+    // 🛡️ 屏蔽部件与维修记录：先加载偏好（确保 Preferences/BatteryUsageUI 进程首次启动开关状态正确），再注册通知 + 初始化 hooks
+    LoadPreferences();
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onPartRepairSettingsChanged, kPrefChangedNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     CFNotificationCenterAddObserver(CFNotificationCenterGetLocalCenter(), NULL, onPartRepairBundleDidLoad, (__bridge CFStringRef)NSBundleDidLoadNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     installSpecifierHooks();
