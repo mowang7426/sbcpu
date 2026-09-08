@@ -5924,6 +5924,22 @@ static void registerV160Observers(void) {
 
 #pragma mark - 9.5 屏蔽部件与维修记录（移植自 CPUthermal PrefHook）
 
+// 完整接口声明（%hook 需要，@class 前向声明不够）
+@interface PSSpecifier : NSObject
+- (id)propertyForKey:(id)key;
+- (void)setProperty:(id)value forKey:(id)key;
+@end
+
+@interface PSListController : UIViewController
+- (NSArray *)specifiers;
+- (void)setSpecifiers:(NSArray *)specifiers;
+@end
+
+@interface PSTableCell : UITableViewCell
+- (id)specifier;
+@end
+
+
 // ========== 字符串与对象工具 ==========
 static BOOL cStringContainsInsensitive(const char *value, const char *token) {
     if (!value || !token || !token[0]) return NO;
