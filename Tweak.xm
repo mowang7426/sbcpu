@@ -3403,6 +3403,14 @@ return self;
 @end
 
 @implementation SBCPUValuePickerController
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    self.view.backgroundColor = [UIColor colorWithWhite:0.07 alpha:1.0];
+    self.tableView.backgroundColor = [UIColor colorWithWhite:0.07 alpha:1.0];
+    self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.12];
+}
+
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { 
     (void)tableView;
     (void)section;
@@ -3437,6 +3445,14 @@ return self;
 @end
 
 @implementation SBCPUTimePickerController
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    self.view.backgroundColor = [UIColor colorWithWhite:0.07 alpha:1.0];
+    self.tableView.backgroundColor = [UIColor colorWithWhite:0.07 alpha:1.0];
+    self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.12];
+}
+
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { 
     (void)tableView;
     (void)section;
@@ -3685,12 +3701,154 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 // ==============================================
 // 100% 完整保留的设置中心
 // ==============================================
+
+// ========== A+C 深色液态玻璃设置中心：主题 helper ==========
+static UIColor *sbcpuThemeColor(NSInteger section) {
+    NSArray *cols = @[
+        [UIColor colorWithRed:0.55 green:0.35 blue:1.0 alpha:1.0],   // 紫
+        [UIColor colorWithRed:0.30 green:0.55 blue:1.0 alpha:1.0],   // 蓝
+        [UIColor colorWithRed:0.20 green:0.75 blue:1.0 alpha:1.0],   // 天蓝
+        [UIColor colorWithRed:0.30 green:0.80 blue:0.70 alpha:1.0],  // 青
+    ];
+    return cols[((section % 4) + 4) % 4];
+}
+
+static UIImage *sbcpuIconForTitle(NSString *title, NSInteger section) {
+    if (![title isKindOfClass:[NSString class]] || title.length == 0) return nil;
+    NSString *sym = nil;
+    NSDictionary *rules = @{
+        @"cpu.fill": @[@"cpu", @"频率", @"核心", @"占用"],
+        @"gauge.fill": @[@"fps", @"帧率", @"gauge", @"网速", @"网络"],
+        @"thermometer.sun.fill": @[@"温度", @"温控", @"过热", @"高温", @"发热"],
+        @"bolt.fill": @[@"充电", @"快充", @"电流", @"电压", @"功率", @"涓流"],
+        @"battery.100percent": @[@"电池", @"电量", @"停充", @"满血"],
+        @"shield.lefthalf.filled": @[@"屏蔽", @"部件", @"维修", @"健康"],
+        @"checkmark.shield.fill": @[@"插件", @"冲突", @"检测", @"扫描", @"耗电"],
+        @"droplet.fill": @[@"液态玻璃", @"液态"],
+        @"eye.fill": @[@"显示", @"悬浮窗", @"浮窗", @"透明"],
+        @"arrow.up.and.down": @[@"折叠", @"展开", @"伸缩", @"横屏"],
+        @"slider.horizontal.3": @[@"透明度", @"缩放", @"大小", @"圆角", @"字号", @"字体", @"位置"],
+        @"keyboard.fill": @[@"键盘", @"输入"],
+        @"dock.rectangle": @[@"dock", @"停靠"],
+        @"hand.tap.fill": @[@"单击", @"双击", @"长按", @"拖动", @"手势"],
+        @"mappin.and.ellipse": @[@"记忆", @"记住"],
+        @"bell.fill": @[@"通知", @"提醒"],
+        @"memorychip.fill": @[@"内存"],
+        @"gearshape.fill": @[@"设置", @"模式", @"运行", @"状态", @"保护", @"恢复", @"警告", @"启动", @"功耗", @"性能"],
+    };
+    NSString *low = [title lowercaseString];
+    for (NSString *s in rules) {
+        for (NSString *kw in rules[s]) {
+            if ([low rangeOfString:kw options:NSCaseInsensitiveSearch].location != NSNotFound) { sym = s; break; }
+        }
+        if (sym) break;
+    }
+    if (!sym) sym = @"circle.fill";
+    CGFloat size = 30.0;
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(size, size)];
+    UIImage *img = [renderer imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        UIColor *base = sbcpuThemeColor(section);
+        UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, size, size) cornerRadius:8.0];
+        CGContextSaveGState(ctx.CGContext);
+        [path addClip];
+        CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+        UIColor *light = [base colorWithAlphaComponent:0.55];
+        NSArray *colors = @[(id)base.CGColor, (id)light.CGColor];
+        CGGradientRef grad = CGGradientCreateWithColors(cs, (CFArrayRef)colors, NULL);
+        CGContextDrawLinearGradient(ctx.CGContext, grad, CGPointMake(0, 0), CGPointMake(size, size), 0);
+        CGGradientRelease(grad);
+        CGColorSpaceRelease(cs);
+        CGContextRestoreGState(ctx.CGContext);
+        UIImage *symImg = [UIImage systemImageNamed:sym];
+        if (symImg) {
+            symImg = [symImg imageWithTintColor:[UIColor whiteColor] renderingMode:UIImageRenderingModeAlwaysTemplate];
+            [symImg drawInRect:CGRectMake(6, 6, 18, 18)];
+        }
+    }];
+    return img;
+}
+
+static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
+    if (!cell || !indexPath) return;
+    // 深色玻璃卡片背景（section 12 自绘卡片 / section 9 自绘行除外）
+    BOOL isCustomCard = (indexPath.section == 12) ||
+                        (indexPath.section == 9 && indexPath.row == 1) ||
+                        (indexPath.section == 9 && indexPath.row == 2);
+    if (!isCustomCard) {
+        cell.backgroundColor = [UIColor colorWithWhite:0.13 alpha:0.68];
+    }
+    // 手势说明行文字（原 darkGrayColor 深色下不可读）
+    if (indexPath.section == 10) {
+        cell.textLabel.textColor = [UIColor colorWithWhite:0.88 alpha:1.0];
+    }
+    // 灰色系 detailText 统一提亮
+    if (cell.detailTextLabel && cell.detailTextLabel.textColor == [UIColor grayColor]) {
+        cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.72 alpha:1.0];
+    }
+    // 开关紫蓝
+    if ([cell.accessoryView isKindOfClass:[UISwitch class]]) {
+        ((UISwitch *)cell.accessoryView).onTintColor = [UIColor colorWithRed:0.49 green:0.30 blue:1.0 alpha:1.0];
+    }
+    // 图标（仅当 cell 没有 imageView 图标时生成）
+    if (!cell.imageView.image) {
+        UIImage *icon = sbcpuIconForTitle(cell.textLabel.text, indexPath.section);
+        if (icon) {
+            cell.imageView.image = icon;
+            cell.imageView.contentMode = UIViewContentModeScaleAspectFit;
+        }
+    }
+}
+
 @implementation SBCPUSettingsController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"SBCPUFloating V3.4";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeSettings)];
+
+    // === A+C 深色液态玻璃主题 ===
+    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    self.view.backgroundColor = [UIColor colorWithWhite:0.04 alpha:0.6];
+    self.tableView.backgroundColor = [UIColor clearColor];
+    self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.12];
+
+    // 液态玻璃 backdrop（复用浮窗同款私有 API，透出桌面模糊）
+    @try {
+        Class backdropCls = NSClassFromString(@"CABackdropLayer");
+        if (backdropCls) {
+            CALayer *bd = [backdropCls layer];
+            bd.frame = self.view.bounds;
+            bd.masksToBounds = YES;
+            [bd setValue:@NO forKey:@"layerUsesCoreImageFilters"];
+            [bd setValue:@YES forKey:@"windowServerAware"];
+            [bd setValue:@"com.mowang.sbcpufloating.settings.glass" forKey:@"groupName"];
+            [bd setValue:@"com.mowang.sbcpufloating" forKey:@"groupNamespace"];
+            [bd setValue:@YES forKey:@"ignoresScreenClip"];
+            [bd setValue:@1.0 forKey:@"scale"];
+            [self.view.layer insertSublayer:bd atIndex:0];
+
+            // 深色压暗层（放在 backdrop 之上、tableView 之下）
+            UIView *dim = [[UIView alloc] initWithFrame:self.view.bounds];
+            dim.backgroundColor = [UIColor colorWithWhite:0.04 alpha:0.55];
+            dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            dim.userInteractionEnabled = NO;
+            [self.view insertSubview:dim belowSubview:self.tableView];
+        }
+    } @catch (NSException *e) {}
+
+    // 导航栏深色玻璃
+    if (@available(iOS 13.0, *)) {
+        UINavigationBarAppearance *app = [UINavigationBarAppearance new];
+        [app configureWithTransparentBackground];
+        app.backgroundColor = [UIColor colorWithWhite:0.06 alpha:0.72];
+        app.backgroundEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark];
+        app.titleTextAttributes = @{NSForegroundColorAttributeName: [UIColor whiteColor],
+                                    NSFontAttributeName: [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold]};
+        self.navigationController.navigationBar.standardAppearance = app;
+        self.navigationController.navigationBar.scrollEdgeAppearance = app;
+        self.navigationController.navigationBar.compactAppearance = app;
+    }
+    self.navigationItem.rightBarButtonItem.tintColor = [UIColor colorWithRed:0.60 green:0.45 blue:1.0 alpha:1.0];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -4163,6 +4321,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
                     arrowLbl.textColor = [UIColor tertiaryLabelColor];
                     arrowLbl.textAlignment = NSTextAlignmentCenter;
                     [cell.contentView addSubview:arrowLbl];
+    applySettingsTheme(cell, indexPath);
                     return cell;
                 }
                 currentRow++;
@@ -4214,6 +4373,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
                             arrowLbl.textAlignment = NSTextAlignmentCenter;
                             [cell.contentView addSubview:arrowLbl];
                         }
+    applySettingsTheme(cell, indexPath);
                         return cell;
                     }
                     currentRow++;
@@ -4232,6 +4392,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         else if (indexPath.row == 2) cell.textLabel.text = @"👆 长按悬浮窗：全屏展示设备深层物理状态";
         else if (indexPath.row == 3) cell.textLabel.text = @"🤚 拖动悬浮窗：自由挪动位置并带物理回弹";
         else if (indexPath.row == 4) cell.textLabel.text = @"🔋 充电增强：实时功率监测与高电量充电目标";
+    applySettingsTheme(cell, indexPath);
         return cell;
     }
 
@@ -4267,6 +4428,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
         ];
         cell.textLabel.text = titles[indexPath.row];
         cell.detailTextLabel.text = descs[indexPath.row];
+    applySettingsTheme(cell, indexPath);
         return cell;
     }
 
@@ -4552,6 +4714,7 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
             cell.accessoryView = sw;
         }
     }
+    applySettingsTheme(cell, indexPath);
     return cell;
 }
 
