@@ -3213,6 +3213,11 @@ return self;
         } else if (cpu >= 80.0 || temp >= 42.0) statusColor = [UIColor systemRedColor];
         else if (temp >= 38.0) statusColor = [UIColor systemOrangeColor];
         _statusDot.backgroundColor = statusColor;
+        // 兜底：折叠态下横屏四段胶囊强制隐藏状态圆点（防任何路径遗漏/时序问题）
+        if (self.isCollapsed) {
+            BOOL isLandscapeNow = ([UIScreen mainScreen].bounds.size.width > [UIScreen mainScreen].bounds.size.height);
+            _statusDot.hidden = isLandscapeNow;
+        }
     }
     // 更新时间显示（HH:mm:ss）
     NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
