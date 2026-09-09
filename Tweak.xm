@@ -264,6 +264,8 @@ static CGFloat floatingCornerRadius = 20.0f; // 液态玻璃圆润大圆角（�
 static BOOL settingsShowing = NO;
 static BOOL detailShowing = NO;
 static BOOL previousChargingState = NO;
+static CGFloat gSettingsCloseTx = 0.0f; // 方案C收起动画偏移（与展开对称）
+static CGFloat gSettingsCloseTy = 0.0f;
 
 static BOOL autoCollapseEnable = YES;
 static NSInteger autoCollapseDelay = 4;
@@ -1108,21 +1110,20 @@ static void openSettings(void) {
         CGFloat cy = landscape ? 15.0f : 84.0f;
         nav.view.frame = CGRectMake(cx, cy, cw, ch);
 
-        // 锚点 = 浮窗中心（window 坐标）
+        // 展开起点 = 浮窗中心（容器坐标）
         CGPoint fp = CGPointMake(W / 2.0f, 213.0f);
         if (floatingView && floatingView.superview) {
             fp = [floatingView.superview convertPoint:CGPointMake(CGRectGetMidX(floatingView.frame),
                                                                   CGRectGetMidY(floatingView.frame))
-                                               toView:nil];
+                                               toView:container.view];
         }
-        CGFloat apx = (fp.x - cx) / cw;
-        CGFloat apy = (fp.y - cy) / ch;
-        apx = MAX(0.05f, MIN(0.95f, apx));
-        apy = MAX(0.05f, MIN(0.95f, apy));
-        CGPoint oldCenter = nav.view.center;
-        nav.view.layer.anchorPoint = CGPointMake(apx, apy);
-        nav.view.center = oldCenter;
-        nav.view.transform = CGAffineTransformMakeScale(0.12f, 0.12f);
+        CGPoint C0 = CGPointMake(cx + cw / 2.0f, cy + ch / 2.0f);
+        // translate+scale 组合：视觉中心从浮窗处平滑移到卡片中心，无跳变
+        CGFloat tx = fp.x - C0.x;
+        CGFloat ty = fp.y - C0.y;
+        gSettingsCloseTx = tx;
+        gSettingsCloseTy = ty;
+        nav.view.transform = CGAffineTransformTranslate(CGAffineTransformMakeScale(0.12f, 0.12f), tx, ty);
         nav.view.alpha = 0.0f;
 
         // 正确的容器 VC 配对，防止 nav.view 被布局拉伸/错位
@@ -1140,12 +1141,7 @@ static void openSettings(void) {
                             options:UIViewAnimationOptionCurveEaseOut animations:^{
             nav.view.transform = CGAffineTransformIdentity;
             nav.view.alpha = 1.0f;
-        } completion:^(BOOL finished) {
-            // 锚点复位到卡片中心（保持当前视觉位置），避免 frame 偏移
-            CGPoint c = nav.view.center;
-            nav.view.layer.anchorPoint = CGPointMake(0.5f, 0.5f);
-            nav.view.center = c;
-        }];
+        } completion:nil];
     }];
 }
 
@@ -3992,6 +3988,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     self.view.backgroundColor = [UIColor colorWithWhite:0.16 alpha:glassDimOpacity];
     self.tableView.backgroundColor = [UIColor clearColor];
     self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.18];
+    self.tableView.showsVerticalScrollIndicator = NO;
 
     // 液态玻璃 backdrop（复用浮窗同款私有 API，透出桌面模糊）
     @try {
@@ -4103,9 +4100,9 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     settingsShowing = NO;
     UIView *card = [self.view.window viewWithTag:8841];
     if (card && card.window) {
-        // 方案C：反向锚点收起动画
+        // 方案C：反向动画（缩回浮窗处，与展开对称无跳变）
         [UIView animateWithDuration:0.22 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
-            card.transform = CGAffineTransformMakeScale(0.12f, 0.12f);
+            card.transform = CGAffineTransformTranslate(CGAffineTransformMakeScale(0.12f, 0.12f), gSettingsCloseTx, gSettingsCloseTy);
             card.alpha = 0.0f;
         } completion:^(BOOL finished) {
             if (cpuWindow) [cpuWindow setNeedsLayout];
