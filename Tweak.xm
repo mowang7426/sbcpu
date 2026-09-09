@@ -237,7 +237,7 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @end
 @interface SBCPUTimePickerController : UITableViewController
 @end
-@interface SBCPUSettingsController : UITableViewController
+@interface SBCPUSettingsController : UITableViewController <UIGestureRecognizerDelegate>
 - (void)saveConfigs;
 @property (nonatomic, strong) CALayer *glassBackdrop;  // 设置中心 backdrop 模糊层（可调磨砂强度）
 @property (nonatomic, strong) UIView *glassDimView;    // 设置中心白雾压暗层（可调透明度）
@@ -1086,9 +1086,59 @@ static void openSettings(void) {
     settingsShowing = YES;
     SBCPUSettingsController *vc = [[SBCPUSettingsController alloc] initWithStyle:UITableViewStyleInsetGrouped];
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
-    nav.modalPresentationStyle = UIModalPresentationFullScreen;
 
-    [root presentViewController:nav animated:YES completion:nil];
+    // 方案C：浮窗原地展开卡片（非全屏，锚点=浮窗中心，弹性展开）
+    UIViewController *container = [UIViewController new];
+    container.view.backgroundColor = [UIColor clearColor];
+    container.view.tag = 8840; // 容器标记
+    container.modalPresentationStyle = UIModalPresentationOverFullScreen;
+
+    nav.view.tag = 8841;                       // 卡片标记
+    nav.view.layer.cornerRadius = 26.0f;
+    nav.view.layer.masksToBounds = YES;
+    nav.view.backgroundColor = [UIColor clearColor];
+
+    [root presentViewController:container animated:NO completion:^{
+        CGFloat W = container.view.bounds.size.width;
+        CGFloat H = container.view.bounds.size.height;
+        BOOL landscape = (W > H);
+        CGFloat cw = landscape ? (W * 0.90f) : (W * 0.80f);
+        CGFloat ch = landscape ? (H - 30.0f) : (H - 84.0f - 74.0f);
+        CGFloat cx = (W - cw) / 2.0f;
+        CGFloat cy = landscape ? 15.0f : 84.0f;
+        nav.view.frame = CGRectMake(cx, cy, cw, ch);
+
+        // 锚点 = 浮窗中心（window 坐标）
+        CGPoint fp = CGPointMake(W / 2.0f, 213.0f);
+        if (floatingView && floatingView.superview) {
+            fp = [floatingView.superview convertPoint:CGPointMake(CGRectGetMidX(floatingView.frame),
+                                                                  CGRectGetMidY(floatingView.frame))
+                                               toView:nil];
+        }
+        CGFloat apx = (fp.x - cx) / cw;
+        CGFloat apy = (fp.y - cy) / ch;
+        apx = MAX(0.05f, MIN(0.95f, apx));
+        apy = MAX(0.05f, MIN(0.95f, apy));
+        CGPoint oldCenter = nav.view.center;
+        nav.view.layer.anchorPoint = CGPointMake(apx, apy);
+        nav.view.center = oldCenter;
+        nav.view.transform = CGAffineTransformMakeScale(0.12f, 0.12f);
+        nav.view.alpha = 0.0f;
+
+        [container.view addSubview:nav.view];
+        [nav didMoveToParentViewController:container];
+
+        // 点击卡片外部关闭（手势交由设置 VC 处理，delegate 过滤卡片内点击）
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:vc action:@selector(closeSettings)];
+        tap.delegate = vc;
+        [container.view addGestureRecognizer:tap];
+
+        [UIView animateWithDuration:0.52 delay:0.0 usingSpringWithDamping:0.80 initialSpringVelocity:0.55
+                            options:UIViewAnimationOptionCurveEaseOut animations:^{
+            nav.view.transform = CGAffineTransformIdentity;
+            nav.view.alpha = 1.0f;
+        } completion:nil];
+    }];
 }
 
 static void checkHighCPU(double cpu) {
@@ -3941,6 +3991,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
         if (backdropCls) {
             CALayer *bd = [backdropCls layer];
             bd.frame = self.view.bounds;
+            bd.autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable;
             bd.masksToBounds = YES;
             [bd setValue:@NO forKey:@"layerUsesCoreImageFilters"];
             [bd setValue:@YES forKey:@"windowServerAware"];
@@ -4036,10 +4087,32 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 
 - (void)closeSettings {
     settingsShowing = NO;
-    [self dismissViewControllerAnimated:YES completion:^{
+    UIView *card = [self.view.window viewWithTag:8841];
+    if (card && card.window) {
+        // 方案C：反向锚点收起动画
+        [UIView animateWithDuration:0.22 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+            card.transform = CGAffineTransformMakeScale(0.12f, 0.12f);
+            card.alpha = 0.0f;
+        } completion:^(BOOL finished) {
+            if (cpuWindow) [cpuWindow setNeedsLayout];
+            if (floatingView) [floatingView resetInactivityTimer];
+            [self dismissViewControllerAnimated:NO completion:nil];
+        }];
+    } else {
         if (cpuWindow) [cpuWindow setNeedsLayout];
         if (floatingView) [floatingView resetInactivityTimer];
-    }];
+        [self dismissViewControllerAnimated:NO completion:nil];
+    }
+}
+
+// 方案C：点击卡片外区域才触发关闭，卡片内点击不拦截
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
+    UIView *card = [self.view.window viewWithTag:8841];
+    if (card) {
+        CGPoint p = [touch locationInView:card.superview];
+        return !CGRectContainsPoint(card.frame, p);
+    }
+    return NO;
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { 
