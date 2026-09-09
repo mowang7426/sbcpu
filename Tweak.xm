@@ -4798,6 +4798,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             cell.accessoryView = sw;
         }
     } else if (indexPath.section == 8) {
+        CGFloat cw = cell.contentView.bounds.size.width; // 滑块行布局需要
         if (indexPath.row == 0) {
             cell.textLabel.text = @"记忆悬浮窗位置";
             UISwitch *sw = [UISwitch new];
