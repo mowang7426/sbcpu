@@ -1099,6 +1099,9 @@ static void openSettings(void) {
     nav.view.layer.cornerRadius = 26.0f;
     nav.view.layer.masksToBounds = YES;
     nav.view.backgroundColor = [UIColor clearColor];
+    // 方案A 极简液态玻璃：细描边高光
+    nav.view.layer.borderWidth = 1.0f;
+    nav.view.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.30].CGColor;
 
     [root presentViewController:container animated:NO completion:^{
         CGFloat W = container.view.bounds.size.width;
@@ -3881,15 +3884,18 @@ static NSString *sbcputhermalCurrentStatusDetail(void) {
 // 100% 完整保留的设置中心
 // ==============================================
 
-// ========== A+C 深色液态玻璃设置中心：主题 helper ==========
+// ========== 方案A 极简液态玻璃设置中心：主题 helper ==========
 static UIColor *sbcpuThemeColor(NSInteger section) {
+    // 6 色柔和顺序渐变（紫/蓝/青/绿/粉/橙）
     NSArray *cols = @[
-        [UIColor colorWithRed:0.55 green:0.35 blue:1.0 alpha:1.0],   // 紫
-        [UIColor colorWithRed:0.30 green:0.55 blue:1.0 alpha:1.0],   // 蓝
-        [UIColor colorWithRed:0.20 green:0.75 blue:1.0 alpha:1.0],   // 天蓝
-        [UIColor colorWithRed:0.30 green:0.80 blue:0.70 alpha:1.0],  // 青
+        [UIColor colorWithRed:0.65 green:0.55 blue:1.0 alpha:1.0],   // 柔紫
+        [UIColor colorWithRed:0.45 green:0.62 blue:1.0 alpha:1.0],   // 柔蓝
+        [UIColor colorWithRed:0.40 green:0.80 blue:0.90 alpha:1.0],  // 水青
+        [UIColor colorWithRed:0.40 green:0.80 blue:0.65 alpha:1.0],  // 薄荷绿
+        [UIColor colorWithRed:0.95 green:0.62 blue:0.80 alpha:1.0],  // 樱花粉
+        [UIColor colorWithRed:0.98 green:0.72 blue:0.40 alpha:1.0],  // 蜜橙
     ];
-    return cols[((section % 4) + 4) % 4];
+    return cols[((section % 6) + 6) % 6];
 }
 
 static UIImage *sbcpuIconForTitle(NSString *title, NSInteger section) {
@@ -3949,22 +3955,36 @@ static UIImage *sbcpuIconForTitle(NSString *title, NSInteger section) {
 
 static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (!cell || !indexPath) return;
-    // 卡片磨砂半透明（可调），section 12 为自绘实底卡片保持透明
-    BOOL isCustomCard = (indexPath.section == 12);
-    if (!isCustomCard) {
-        cell.backgroundColor = [UIColor colorWithWhite:0.16 alpha:glassCardOpacity];
+    // 方案A 极简液态玻璃：cell 底色由"卡片不透明度"滑块控制（0=全透，1=近实底）
+    cell.backgroundColor = [UIColor colorWithWhite:1.0 alpha:(0.25f * glassCardOpacity)];
+    cell.layer.cornerRadius = 0.0f;
+    cell.layer.borderWidth = 0.0f;
+    cell.layer.borderColor = nil;
+
+    // 高亮行（充电增强等关键功能）：白渐变玻璃卡 + 细边框 + 大圆角
+    NSString *txt = cell.textLabel.text ?: @"";
+    if ([txt rangeOfString:@"充电增强"].location != NSNotFound ||
+        [txt rangeOfString:@"智能停充"].location != NSNotFound) {
+        cell.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.14];
+        cell.layer.cornerRadius = 16.0f;
+        cell.layer.borderWidth = 1.0f;
+        cell.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.22].CGColor;
     }
+
+    // 主文字：亮白，保证高透玻璃下可读
+    cell.textLabel.textColor = [UIColor colorWithWhite:0.94 alpha:1.0];
+
     // 手势说明行文字（原 darkGrayColor 深色下不可读）
     if (indexPath.section == 10) {
         cell.textLabel.textColor = [UIColor colorWithWhite:0.88 alpha:1.0];
     }
-    // 灰色系 detailText 统一提亮
-    if (cell.detailTextLabel && cell.detailTextLabel.textColor == [UIColor grayColor]) {
-        cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.72 alpha:1.0];
+    // 副文字统一柔白 0.60
+    if (cell.detailTextLabel) {
+        cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.62 alpha:1.0];
     }
-    // 开关紫蓝
+    // 开关柔紫
     if ([cell.accessoryView isKindOfClass:[UISwitch class]]) {
-        ((UISwitch *)cell.accessoryView).onTintColor = [UIColor colorWithRed:0.49 green:0.30 blue:1.0 alpha:1.0];
+        ((UISwitch *)cell.accessoryView).onTintColor = [UIColor colorWithRed:0.60 green:0.45 blue:1.0 alpha:1.0];
     }
     // 图标（仅当 cell 没有 imageView 图标时生成）
     if (!cell.imageView.image) {
@@ -3987,7 +4007,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     self.view.backgroundColor = [UIColor colorWithWhite:0.16 alpha:glassDimOpacity];
     self.tableView.backgroundColor = [UIColor clearColor];
-    self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.18];
+    self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.10];
     self.tableView.showsVerticalScrollIndicator = NO;
 
     // 液态玻璃 backdrop（复用浮窗同款私有 API，透出桌面模糊）
