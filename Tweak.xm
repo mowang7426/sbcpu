@@ -240,7 +240,8 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @interface SBCPUSettingsController : UITableViewController <UIGestureRecognizerDelegate>
 - (void)saveConfigs;
 @property (nonatomic, strong) CALayer *glassBackdrop;  // 设置中心 backdrop 模糊层（可调磨砂强度）
-@property (nonatomic, strong) UIView *glassDimView;    // 设置中心白雾压暗层（可调透明度）
+@property (nonatomic, strong) CAGradientLayer *glassGradient; // 设置中心蓝紫渐变玻璃底（图二风格）
+@property (nonatomic, strong) UIView *glassDimView;    // 兼容保留
 @end
 @interface SBCPUDetailViewController : UIViewController
 @property (nonatomic, strong) UIVisualEffectView *blurEffectView;
@@ -315,7 +316,7 @@ static BOOL showBatteryTemperature = YES;
 static BOOL showBatteryCurrent = YES;
 static BOOL liquidGlassEnabled = YES; // 液态玻璃效果开关
 // V4.8 液态玻璃自定义：背景白雾透明度 / 磨砂强度(blurRadius) / 卡片不透明度
-static float glassDimOpacity = 0.42f;
+static float glassDimOpacity = 0.90f;
 static float glassBlurRadius = 50.0f;
 static float glassCardOpacity = 0.80f;
 // 智能停充
@@ -516,7 +517,8 @@ static void LoadPreferences(void) {
     smartChargeUpperLimit = (NSInteger)getFloatPref(CFSTR("smartChargeUpperLimit"), 80.0f);
     smartChargeLowerLimit = (NSInteger)getFloatPref(CFSTR("smartChargeLowerLimit"), 70.0f);
     smartChargeMode = (NSInteger)getFloatPref(CFSTR("smartChargeMode"), 0.0f);
-    glassDimOpacity = getFloatPref(CFSTR("glassDimOpacity"), 0.42f);
+    glassDimOpacity = getFloatPref(CFSTR("glassDimOpacity"), 0.90f);
+    if (glassDimOpacity < 0.40f) glassDimOpacity = 0.90f; // 旧版语义（白雾透明度）迁移为玻璃不透明度
     glassBlurRadius = getFloatPref(CFSTR("glassBlurRadius"), 50.0f);
     glassCardOpacity = getFloatPref(CFSTR("glassCardOpacity"), 0.80f);
     
@@ -3955,20 +3957,20 @@ static UIImage *sbcpuIconForTitle(NSString *title, NSInteger section) {
 
 static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (!cell || !indexPath) return;
-    // 方案A 极简液态玻璃：cell 底色由"卡片不透明度"滑块控制（0=全透，1=近实底）
-    cell.backgroundColor = [UIColor colorWithWhite:1.0 alpha:(0.32f * glassCardOpacity)];
+    // 图二蓝紫渐变玻璃：cell 底色微白高光（"卡片不透明度"滑块控制 0~0.12）
+    cell.backgroundColor = [UIColor colorWithWhite:1.0 alpha:(0.12f * glassCardOpacity)];
     cell.layer.cornerRadius = 0.0f;
     cell.layer.borderWidth = 0.0f;
     cell.layer.borderColor = nil;
 
-    // 高亮行（充电增强等关键功能）：白渐变玻璃卡 + 细边框 + 大圆角
+    // 高亮行（充电增强等关键功能）：亮紫渐变玻璃卡 + 细边框 + 大圆角
     NSString *txt = cell.textLabel.text ?: @"";
     if ([txt rangeOfString:@"充电增强"].location != NSNotFound ||
         [txt rangeOfString:@"智能停充"].location != NSNotFound) {
-        cell.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.14];
+        cell.backgroundColor = [UIColor colorWithRed:0.38 green:0.24 blue:0.72 alpha:0.85];
         cell.layer.cornerRadius = 16.0f;
         cell.layer.borderWidth = 1.0f;
-        cell.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.22].CGColor;
+        cell.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.25].CGColor;
     }
 
     // 主文字：亮白，保证高透玻璃下可读
@@ -4003,11 +4005,11 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     self.title = @"SBCPUFloating V3.4";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeSettings)];
 
-    // === 方案A 极简液态玻璃主题（白雾玻璃，对齐 demo 效果）===
+    // === 方案A 极简液态玻璃主题（图二：蓝紫渐变磨砂玻璃）===
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    self.view.backgroundColor = [UIColor colorWithWhite:0.24 alpha:glassDimOpacity];
+    self.view.backgroundColor = [UIColor clearColor];
     self.tableView.backgroundColor = [UIColor clearColor];
-    self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.10];
+    self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.12];
     self.tableView.showsVerticalScrollIndicator = NO;
 
     // 液态玻璃 backdrop（复用浮窗同款私有 API，透出桌面模糊）
@@ -4029,22 +4031,29 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             } @catch (NSException *e) {}
             [self.view.layer insertSublayer:bd atIndex:0];
             self.glassBackdrop = bd;
-
-            // 白雾压暗层（放在 backdrop 之上、tableView 之下）：白雾加厚对齐 demo
-            UIView *dim = [[UIView alloc] initWithFrame:self.view.bounds];
-            dim.backgroundColor = [UIColor colorWithWhite:0.32 alpha:MIN(0.55f, glassDimOpacity + 0.10f)];
-            dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-            dim.userInteractionEnabled = NO;
-            [self.view insertSubview:dim belowSubview:self.tableView];
-            self.glassDimView = dim;
         }
     } @catch (NSException *e) {}
+
+    // 蓝紫渐变玻璃底（图二风格）：独立于 backdrop，始终存在，保证文字可读
+    CAGradientLayer *grad = [CAGradientLayer layer];
+    grad.frame = self.view.bounds;
+    grad.colors = @[
+        (id)[[UIColor colorWithRed:0.10 green:0.11 blue:0.28 alpha:1.0] CGColor],
+        (id)[[UIColor colorWithRed:0.16 green:0.14 blue:0.40 alpha:1.0] CGColor],
+        (id)[[UIColor colorWithRed:0.26 green:0.16 blue:0.48 alpha:1.0] CGColor],
+    ];
+    grad.locations = @[@0.0f, @0.55f, @1.0f];
+    grad.startPoint = CGPointMake(0.0f, 0.0f);
+    grad.endPoint = CGPointMake(1.0f, 1.0f);
+    grad.opacity = glassDimOpacity;
+    [self.view.layer insertSublayer:grad atIndex:0];
+    self.glassGradient = grad;
 
     // 导航栏深色玻璃
     if (@available(iOS 13.0, *)) {
         UINavigationBarAppearance *app = [UINavigationBarAppearance new];
         [app configureWithTransparentBackground];
-        app.backgroundColor = [UIColor colorWithWhite:0.30 alpha:MIN(0.60f, glassDimOpacity + 0.14f)];
+        app.backgroundColor = [UIColor colorWithRed:0.14 green:0.12 blue:0.34 alpha:MIN(0.92f, glassDimOpacity + 0.02f)];
         app.backgroundEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark];
         app.titleTextAttributes = @{NSForegroundColorAttributeName: [UIColor whiteColor],
                                     NSFontAttributeName: [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold]};
@@ -4057,9 +4066,9 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-    // backdrop / 压暗层跟随卡片最终尺寸（viewDidLoad 时 bounds 尚未定型）
+    // backdrop / 渐变层跟随卡片最终尺寸（viewDidLoad 时 bounds 尚未定型）
     if (self.glassBackdrop) self.glassBackdrop.frame = self.view.bounds;
-    if (self.glassDimView) self.glassDimView.frame = self.view.bounds;
+    if (self.glassGradient) self.glassGradient.frame = self.view.bounds;
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -4947,8 +4956,8 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             [sw addTarget:self action:@selector(changeLiquidGlass:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 7) {
-            // 玻璃透明度滑块
-            cell.textLabel.text = @"背景透明度";
+            // 玻璃不透明度滑块
+            cell.textLabel.text = @"玻璃不透明度";
             cell.textLabel.hidden = NO;
             cell.detailTextLabel.hidden = YES;
             UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw - 90, 8, 75, 28)];
@@ -4959,8 +4968,8 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             valLbl.tag = 950;
             [cell.contentView addSubview:valLbl];
             UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(16, 40, cw - 32, 30)];
-            slider.minimumValue = 10;
-            slider.maximumValue = 70;
+            slider.minimumValue = 40;
+            slider.maximumValue = 100;
             slider.value = glassDimOpacity * 100.0f;
             slider.continuous = NO;
             slider.minimumTrackTintColor = [UIColor systemBlueColor];
@@ -6312,9 +6321,9 @@ static void detectPluginConflicts(void) {
     [self.tableView reloadData];
 }
 - (void)applyGlassTheme {
-    self.view.backgroundColor = [UIColor colorWithWhite:0.24 alpha:glassDimOpacity];
-    if (self.glassDimView) {
-        self.glassDimView.backgroundColor = [UIColor colorWithWhite:0.32 alpha:MIN(0.55f, glassDimOpacity + 0.10f)];
+    self.view.backgroundColor = [UIColor clearColor];
+    if (self.glassGradient) {
+        self.glassGradient.opacity = glassDimOpacity;
     }
     if (self.glassBackdrop) {
         @try {
@@ -6324,7 +6333,7 @@ static void detectPluginConflicts(void) {
     if (@available(iOS 13.0, *)) {
         UINavigationBarAppearance *app = self.navigationController.navigationBar.standardAppearance;
         if (app) {
-            app.backgroundColor = [UIColor colorWithWhite:0.30 alpha:MIN(0.60f, glassDimOpacity + 0.14f)];
+            app.backgroundColor = [UIColor colorWithRed:0.14 green:0.12 blue:0.34 alpha:MIN(0.92f, glassDimOpacity + 0.02f)];
             self.navigationController.navigationBar.standardAppearance = app;
             self.navigationController.navigationBar.scrollEdgeAppearance = app;
             self.navigationController.navigationBar.compactAppearance = app;
