@@ -3883,12 +3883,10 @@ static UIImage *sbcpuIconForTitle(NSString *title, NSInteger section) {
 
 static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (!cell || !indexPath) return;
-    // 深色玻璃卡片背景（section 12 自绘卡片 / section 9 自绘行除外）
-    BOOL isCustomCard = (indexPath.section == 12) ||
-                        (indexPath.section == 9 && indexPath.row == 1) ||
-                        (indexPath.section == 9 && indexPath.row == 2);
+    // 方案B：卡片近实底深色（section 12 为自绘实底卡片，保持透明让内部卡呈现）
+    BOOL isCustomCard = (indexPath.section == 12);
     if (!isCustomCard) {
-        cell.backgroundColor = [UIColor colorWithWhite:0.20 alpha:0.55];
+        cell.backgroundColor = [UIColor colorWithWhite:0.11 alpha:0.97];
     }
     // 手势说明行文字（原 darkGrayColor 深色下不可读）
     if (indexPath.section == 10) {
