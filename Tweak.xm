@@ -4360,10 +4360,16 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
         if (cw < 100) cw = self.tableView.bounds.size.width - 32;
 
         if (indexPath.row == 0) {
-            // 开关（说明文字自绘 UILabel，两行完整显示，不受系统 cell 布局限制）
-            cell.textLabel.text = @"智能停充";
+            // 开关（主标题+说明全部自绘固定位置，避免系统 textLabel 垂直居中与说明重叠）
+            cell.textLabel.hidden = YES;
             cell.detailTextLabel.hidden = YES;
-            UILabel *descLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 34, cw - 125, 38)];
+            UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 10, 180, 24)];
+            titleLbl.text = @"智能停充";
+            titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+            titleLbl.textColor = UIColor.blackColor;
+            titleLbl.tag = 981;
+            [cell.contentView addSubview:titleLbl];
+            UILabel *descLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 38, cw - 125, 38)];
             descLbl.text = @"充到上限自动停充，降到下限自动恢复";
             descLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
             descLbl.textColor = [UIColor colorWithWhite:0.15 alpha:1.0];
@@ -4375,11 +4381,15 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             [sw addTarget:self action:@selector(changeSmartChargeEnable:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 1) {
-            // 预设模式：三个卡片按钮
-            cell.textLabel.text = @"预设模式";
-            cell.detailTextLabel.text = nil;
-            cell.textLabel.hidden = NO;
+            // 预设模式：三个卡片按钮（标题自绘固定位置，避免系统 textLabel 与按钮重叠）
+            cell.textLabel.hidden = YES;
             cell.detailTextLabel.hidden = YES;
+            UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 10, 180, 24)];
+            titleLbl.text = @"预设模式";
+            titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+            titleLbl.textColor = UIColor.blackColor;
+            titleLbl.tag = 982;
+            [cell.contentView addSubview:titleLbl];
             NSArray *titles = @[@"🛡 日常", @"✈ 出行", @"💚 保养"];
             NSArray *subs = @[@"80%", @"100%", @"60%"];
             CGFloat btnW = (cw - 48) / 3.0;
