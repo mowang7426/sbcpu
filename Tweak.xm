@@ -4047,62 +4047,168 @@ static UIImage *sbcpuIconForTitle(NSString *title, NSInteger section) {
 
 static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (!cell || !indexPath) return;
-    // 图二蓝紫渐变玻璃：cell 底色微白高光（"卡片不透明度"滑块控制 0~0.12）
-    cell.backgroundColor = [UIColor colorWithWhite:1.0 alpha:(0.12f * glassCardOpacity)];
-    cell.layer.cornerRadius = 0.0f;
-    cell.layer.borderWidth = 0.0f;
-    cell.layer.borderColor = nil;
 
-    // 高亮行（充电增强等关键功能）：亮紫渐变玻璃卡 + 细边框 + 大圆角
+    // ============================================================
+    // SBCPUFloating V3.4 — 方案 A / iOS 26 Liquid Glass
+    // 设计原则：透明、柔和、层次清晰，不改变任何原有功能。
+    // ============================================================
+    cell.backgroundColor = UIColor.clearColor;
+    cell.contentView.backgroundColor = UIColor.clearColor;
+    cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+
+    // 每一行独立使用“玻璃片”，由首/中/尾行决定圆角。
+    UIView *glass = [cell.contentView viewWithTag:9899];
+    if (!glass) {
+        glass = [[UIView alloc] initWithFrame:CGRectZero];
+        glass.tag = 9899;
+        glass.userInteractionEnabled = NO;
+        [cell.contentView insertSubview:glass atIndex:0];
+
+        // 柔和的玻璃描边
+        glass.layer.borderWidth = 0.7;
+        glass.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.14].CGColor;
+
+        // 内部高光
+        UIView *highlight = [[UIView alloc] initWithFrame:CGRectZero];
+        highlight.tag = 9900;
+        highlight.userInteractionEnabled = NO;
+        highlight.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.035];
+        highlight.layer.cornerRadius = 18.0;
+        [glass addSubview:highlight];
+    }
+
+    BOOL first = (indexPath.row == 0);
+    NSInteger rows = 0;
+    switch (indexPath.section) {
+        case 0: rows = 6; break;
+        case 1: rows = 3; break;
+        case 2: rows = 5; break;
+        case 3: rows = 7; break;
+        case 4: rows = 3; break;
+        case 5: rows = 1; break;
+        case 6: rows = 10; break;
+        case 7: rows = 3; break;
+        case 8: rows = 10; break;
+        case 9: rows = 5; break;
+        case 12:
+            rows = gPluginScanDone ? (1 + gPluginConflictCount + gPluginCategories.count + gPluginTotalCount) : 1;
+            break;
+        default: rows = 1; break;
+    }
+    BOOL last = (indexPath.row == MAX(0, rows - 1));
+
+    CGFloat radius = 18.0;
+    glass.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.075];
+    glass.layer.cornerRadius = (first || last) ? radius : 0.0;
+    glass.layer.masksToBounds = YES;
+    glass.frame = CGRectInset(cell.bounds, 0.0, 0.5);
+
+    UIView *highlight = [glass viewWithTag:9900];
+    highlight.frame = glass.bounds;
+    highlight.layer.cornerRadius = glass.layer.cornerRadius;
+
+    // 关键功能使用更明亮的紫色玻璃，但仍保持半透明。
     NSString *txt = cell.textLabel.text ?: @"";
     if ([txt rangeOfString:@"充电增强"].location != NSNotFound ||
-        [txt rangeOfString:@"智能停充"].location != NSNotFound) {
-        cell.backgroundColor = [UIColor colorWithRed:0.38 green:0.24 blue:0.72 alpha:0.85];
-        cell.layer.cornerRadius = 16.0f;
-        cell.layer.borderWidth = 1.0f;
-        cell.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.25].CGColor;
+        [txt rangeOfString:@"智能停充"].location != NSNotFound ||
+        [txt rangeOfString:@"强制满血快充"].location != NSNotFound) {
+        glass.backgroundColor = [UIColor colorWithRed:0.48 green:0.32 blue:0.90 alpha:0.20];
+        glass.layer.borderColor = [UIColor colorWithRed:0.78 green:0.68 blue:1.0 alpha:0.28].CGColor;
     }
 
-    // 主文字：亮白，保证高透玻璃下可读
-    cell.textLabel.textColor = [UIColor colorWithWhite:0.94 alpha:1.0];
+    // 主标题：iOS 风格白色，副标题降低层级。
+    cell.textLabel.textColor = [UIColor colorWithWhite:0.98 alpha:0.98];
+    cell.textLabel.font = [UIFont systemFontOfSize:16.0 weight:UIFontWeightSemibold];
+    cell.textLabel.numberOfLines = 2;
 
-    // 手势说明行文字（原 darkGrayColor 深色下不可读）
-    if (indexPath.section == 10) {
-        cell.textLabel.textColor = [UIColor colorWithWhite:0.88 alpha:1.0];
-    }
-    // 副文字统一柔白 0.60
     if (cell.detailTextLabel) {
-        cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.62 alpha:1.0];
+        cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.86 alpha:0.64];
+        cell.detailTextLabel.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightRegular];
+        cell.detailTextLabel.numberOfLines = 2;
     }
-    // 开关柔紫
+
+    // 开关：更接近 Liquid Glass 的柔和紫色。
     if ([cell.accessoryView isKindOfClass:[UISwitch class]]) {
-        ((UISwitch *)cell.accessoryView).onTintColor = [UIColor colorWithRed:0.60 green:0.45 blue:1.0 alpha:1.0];
+        UISwitch *sw = (UISwitch *)cell.accessoryView;
+        sw.onTintColor = [UIColor colorWithRed:0.56 green:0.38 blue:0.98 alpha:1.0];
+        sw.tintColor = [UIColor colorWithWhite:1.0 alpha:0.18];
+        sw.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.06];
+        sw.layer.cornerRadius = sw.bounds.size.height / 2.0;
     }
-    // 图标（仅当 cell 没有 imageView 图标时生成）
+
+    // 滑块统一为紫蓝玻璃强调色。
+    for (UIView *sub in cell.contentView.subviews) {
+        if ([sub isKindOfClass:[UISlider class]]) {
+            UISlider *slider = (UISlider *)sub;
+            slider.minimumTrackTintColor = [UIColor colorWithRed:0.58 green:0.40 blue:1.0 alpha:1.0];
+            slider.maximumTrackTintColor = [UIColor colorWithWhite:1.0 alpha:0.16];
+            if (@available(iOS 15.0, *)) {
+                slider.thumbTintColor = [UIColor colorWithWhite:0.98 alpha:1.0];
+            }
+        }
+    }
+
+    // SF Symbols 图标统一做成柔和的玻璃紫。
     if (!cell.imageView.image) {
         UIImage *icon = sbcpuIconForTitle(cell.textLabel.text, indexPath.section);
         if (icon) {
-            cell.imageView.image = icon;
-            cell.imageView.contentMode = UIViewContentModeScaleAspectFit;
+            cell.imageView.image = [icon imageWithTintColor:[UIColor colorWithRed:0.78 green:0.69 blue:1.0 alpha:1.0]
+                                             renderingMode:UIImageRenderingModeAlwaysOriginal];
         }
     }
+
+    // 选中态不要出现系统刺眼蓝色。
+    UIView *selected = [[UIView alloc] initWithFrame:CGRectZero];
+    selected.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.08];
+    selected.layer.cornerRadius = (first || last) ? radius : 0.0;
+    cell.selectedBackgroundView = selected;
+
+    // 保证我们自定义的玻璃层在布局后始终覆盖正确尺寸。
+    glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 }
 
 @implementation SBCPUSettingsController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"SBCPUFloating V3.4";
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeSettings)];
 
-    // === 方案A 极简液态玻璃主题（图二：蓝紫渐变磨砂玻璃）===
+    self.title = @"SBCPUFloating";
+    self.navigationItem.rightBarButtonItem =
+        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
+                                                     target:self
+                                                     action:@selector(closeSettings)];
+
+    // ============================================================
+    // 方案 A：iOS 26 Liquid Glass 设置中心
+    // 仅修改设置页面视觉层，不改动任何业务逻辑。
+    // ============================================================
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    self.view.backgroundColor = [UIColor clearColor];
-    self.tableView.backgroundColor = [UIColor clearColor];
-    self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.12];
+    self.view.backgroundColor = UIColor.clearColor;
+    self.tableView.backgroundColor = UIColor.clearColor;
+    self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     self.tableView.showsVerticalScrollIndicator = NO;
+    self.tableView.clipsToBounds = NO;
 
-    // 液态玻璃 backdrop（复用浮窗同款私有 API，透出桌面模糊）
+    // 更舒服的上下留白，避免第一组/最后一组贴边。
+    self.tableView.contentInset = UIEdgeInsetsMake(8.0, 0.0, 24.0, 0.0);
+    self.tableView.scrollIndicatorInsets = UIEdgeInsetsMake(8.0, 0.0, 24.0, 0.0);
+
+    // 背景：深蓝 → 紫蓝的柔和液态渐变。
+    CAGradientLayer *grad = [CAGradientLayer layer];
+    grad.frame = self.view.bounds;
+    grad.colors = @[
+        (id)[[UIColor colorWithRed:0.055 green:0.065 blue:0.17 alpha:0.96] CGColor],
+        (id)[[UIColor colorWithRed:0.12 green:0.10 blue:0.29 alpha:0.93] CGColor],
+        (id)[[UIColor colorWithRed:0.23 green:0.13 blue:0.40 alpha:0.91] CGColor],
+        (id)[[UIColor colorWithRed:0.08 green:0.16 blue:0.34 alpha:0.94] CGColor]
+    ];
+    grad.locations = @[@0.0, @0.34, @0.70, @1.0];
+    grad.startPoint = CGPointMake(0.05, 0.0);
+    grad.endPoint = CGPointMake(0.95, 1.0);
+    [self.view.layer insertSublayer:grad atIndex:0];
+    self.glassGradient = grad;
+
+    // 真正的 backdrop 模糊：存在则使用，不存在也不会影响设置页面。
     @try {
         Class backdropCls = NSClassFromString(@"CABackdropLayer");
         if (backdropCls) {
@@ -4115,43 +4221,45 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             [bd setValue:@"com.mowang.sbcpufloating" forKey:@"groupNamespace"];
             [bd setValue:@YES forKey:@"ignoresScreenClip"];
             [bd setValue:@1.0 forKey:@"scale"];
-            // 磨砂：backdrop 模糊半径可调（私有 key，失败自动忽略）
             @try {
-                [bd setValue:@(glassBlurRadius) forKey:@"blurRadius"];
+                [bd setValue:@(MAX(0.0, glassBlurRadius)) forKey:@"blurRadius"];
             } @catch (NSException *e) {}
-            [self.view.layer insertSublayer:bd atIndex:0];
+            [self.view.layer insertSublayer:bd above:grad];
             self.glassBackdrop = bd;
         }
     } @catch (NSException *e) {}
 
-    // 蓝紫渐变玻璃底（图二风格）：独立于 backdrop，始终存在，保证文字可读
-    CAGradientLayer *grad = [CAGradientLayer layer];
-    grad.frame = self.view.bounds;
-    grad.colors = @[
-        (id)[[UIColor colorWithRed:0.10 green:0.11 blue:0.28 alpha:1.0] CGColor],
-        (id)[[UIColor colorWithRed:0.16 green:0.14 blue:0.40 alpha:1.0] CGColor],
-        (id)[[UIColor colorWithRed:0.26 green:0.16 blue:0.48 alpha:1.0] CGColor],
+    // 顶部轻微白色光晕，让玻璃更“通透”。
+    CAGradientLayer *sheen = [CAGradientLayer layer];
+    sheen.frame = CGRectMake(0, 0, self.view.bounds.size.width, 240.0);
+    sheen.colors = @[
+        (id)[[UIColor colorWithWhite:1.0 alpha:0.055] CGColor],
+        (id)[[UIColor colorWithWhite:1.0 alpha:0.0] CGColor]
     ];
-    grad.locations = @[@0.0f, @0.55f, @1.0f];
-    grad.startPoint = CGPointMake(0.0f, 0.0f);
-    grad.endPoint = CGPointMake(1.0f, 1.0f);
-    grad.opacity = glassDimOpacity;
-    [self.view.layer insertSublayer:grad atIndex:0];
-    self.glassGradient = grad;
+    sheen.locations = @[@0.0, @1.0];
+    sheen.startPoint = CGPointMake(0.5, 0.0);
+    sheen.endPoint = CGPointMake(0.5, 1.0);
+    [self.view.layer addSublayer:sheen];
 
-    // 导航栏深色玻璃
     if (@available(iOS 13.0, *)) {
         UINavigationBarAppearance *app = [UINavigationBarAppearance new];
         [app configureWithTransparentBackground];
-        app.backgroundColor = [UIColor colorWithRed:0.14 green:0.12 blue:0.34 alpha:MIN(0.92f, glassDimOpacity + 0.02f)];
-        app.backgroundEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark];
-        app.titleTextAttributes = @{NSForegroundColorAttributeName: [UIColor whiteColor],
-                                    NSFontAttributeName: [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold]};
+        app.backgroundColor = [UIColor colorWithWhite:0.05 alpha:0.34];
+        app.backgroundEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark];
+        app.titleTextAttributes = @{
+            NSForegroundColorAttributeName: [UIColor colorWithWhite:1.0 alpha:0.96],
+            NSFontAttributeName: [UIFont systemFontOfSize:17.0 weight:UIFontWeightSemibold]
+        };
         self.navigationController.navigationBar.standardAppearance = app;
         self.navigationController.navigationBar.scrollEdgeAppearance = app;
         self.navigationController.navigationBar.compactAppearance = app;
+        self.navigationController.navigationBar.tintColor =
+            [UIColor colorWithRed:0.67 green:0.50 blue:1.0 alpha:1.0];
     }
-    self.navigationItem.rightBarButtonItem.tintColor = [UIColor colorWithRed:0.60 green:0.45 blue:1.0 alpha:1.0];
+
+    // 返回/完成按钮更加轻盈。
+    self.navigationItem.rightBarButtonItem.tintColor =
+        [UIColor colorWithRed:0.70 green:0.55 blue:1.0 alpha:1.0];
 }
 
 - (void)viewDidLayoutSubviews {
@@ -4289,6 +4397,42 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 11) return @""; 
     if (section == 12) return @"🔍 插件冲突检测";
     return @"";
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
+    (void)tableView;
+    // 隐藏真正没有内容的说明区，其他分组标题保持呼吸感。
+    if (section == 10 || section == 11) return 2.0;
+    if (section == 0) return 46.0;
+    return 38.0;
+}
+
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
+    (void)tableView;
+
+    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
+    if (!title.length) return nil;
+
+    UIView *header = [[UIView alloc] initWithFrame:CGRectZero];
+    header.backgroundColor = UIColor.clearColor;
+
+    // 去掉 emoji 后面的“脏感”，保留它们作为视觉识别。
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectZero];
+    label.text = title;
+    label.textColor = [UIColor colorWithWhite:1.0 alpha:0.76];
+    label.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightSemibold];
+    label.numberOfLines = 1;
+    label.translatesAutoresizingMaskIntoConstraints = NO;
+    [header addSubview:label];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [label.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:18.0],
+        [label.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-18.0],
+        [label.bottomAnchor constraintEqualToAnchor:header.bottomAnchor constant:-8.0],
+        [label.topAnchor constraintGreaterThanOrEqualToAnchor:header.topAnchor constant:4.0]
+    ]];
+
+    return header;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
