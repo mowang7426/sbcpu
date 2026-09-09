@@ -3991,7 +3991,6 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
         if (backdropCls) {
             CALayer *bd = [backdropCls layer];
             bd.frame = self.view.bounds;
-            bd.autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable;
             bd.masksToBounds = YES;
             [bd setValue:@NO forKey:@"layerUsesCoreImageFilters"];
             [bd setValue:@YES forKey:@"windowServerAware"];
