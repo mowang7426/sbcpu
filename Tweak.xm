@@ -4580,10 +4580,12 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             slider.minimumValue = 50;
             slider.maximumValue = 100;
             slider.value = smartChargeUpperLimit;
-            slider.continuous = NO;
+            // 实时跟手：拖动时不重载整个设置表。
+            slider.continuous = YES;
             slider.minimumTrackTintColor = [UIColor systemGreenColor];
             slider.tag = 931;
             [slider addTarget:self action:@selector(changeSmartChargeUpper:) forControlEvents:UIControlEventValueChanged];
+            [slider addTarget:self action:@selector(commitSmartChargeUpper:) forControlEvents:(UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel)];
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 4) {
@@ -4603,10 +4605,12 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             slider.minimumValue = 40;
             slider.maximumValue = 90;
             slider.value = smartChargeLowerLimit;
-            slider.continuous = NO;
+            // 实时跟手：拖动时不重载整个设置表。
+            slider.continuous = YES;
             slider.minimumTrackTintColor = [UIColor systemOrangeColor];
             slider.tag = 941;
             [slider addTarget:self action:@selector(changeSmartChargeLower:) forControlEvents:UIControlEventValueChanged];
+            [slider addTarget:self action:@selector(commitSmartChargeLower:) forControlEvents:(UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel)];
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         }
@@ -5664,25 +5668,111 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     [self.tableView reloadData];
 }
 
+// 智能停充：实时更新“充电区间”可视化。
+// 拖动过程中不 reloadData、不写 CFPreferences，避免主线程被反复布局/写配置拖慢。
+// 松手后再保存，确保设置仍然持久化。
+- (void)updateSmartChargeRangeVisualization {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self updateSmartChargeRangeVisualization];
+        });
+        return;
+    }
+
+    NSIndexPath *path = [NSIndexPath indexPathForRow:2 inSection:9];
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
+    if (!cell) return;
+
+    CGFloat cw = cell.contentView.bounds.size.width;
+    if (cw < 100.0) cw = self.tableView.bounds.size.width - 32.0;
+    CGFloat px = 20.0;
+    CGFloat pw = MAX(40.0, cw - 40.0);
+    CGFloat by = 62.0;
+    CGFloat bh = 14.0;
+
+    UILabel *lowVal = [cell.contentView viewWithTag:901];
+    UILabel *highVal = [cell.contentView viewWithTag:903];
+    if ([lowVal isKindOfClass:[UILabel class]])
+        lowVal.text = [NSString stringWithFormat:@"%ld%%", (long)smartChargeLowerLimit];
+    if ([highVal isKindOfClass:[UILabel class]])
+        highVal.text = [NSString stringWithFormat:@"%ld%%", (long)smartChargeUpperLimit];
+
+    UIView *rangeBar = [cell.contentView viewWithTag:905];
+    if (rangeBar) {
+        CGFloat startX = px + (smartChargeLowerLimit / 100.0) * pw;
+        CGFloat endX = px + (smartChargeUpperLimit / 100.0) * pw;
+        CGFloat width = MAX(bh, endX - startX);
+
+        // 关闭隐式动画：颜色区间与手指移动同一帧更新。
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        rangeBar.frame = CGRectMake(startX, by, width, bh);
+        rangeBar.layer.cornerRadius = bh / 2.0;
+        [CATransaction commit];
+
+        // Liquid Glass 风格：区间从暖色过渡到绿色，范围变化时实时重绘。
+        CAGradientLayer *gradient = nil;
+        for (CALayer *sub in [rangeBar.layer.sublayers copy]) {
+            if ([sub.name isEqualToString:@"SBCPUSmartChargeGradient"]) {
+                gradient = (CAGradientLayer *)sub;
+                break;
+            }
+        }
+        if (!gradient) {
+            gradient = [CAGradientLayer layer];
+            gradient.name = @"SBCPUSmartChargeGradient";
+            gradient.startPoint = CGPointMake(0, 0.5);
+            gradient.endPoint = CGPointMake(1, 0.5);
+            [rangeBar.layer insertSublayer:gradient atIndex:0];
+        }
+        gradient.frame = rangeBar.bounds;
+        gradient.cornerRadius = bh / 2.0;
+        gradient.colors = @[
+            (id)[UIColor systemOrangeColor].CGColor,
+            (id)[UIColor systemYellowColor].CGColor,
+            (id)[UIColor systemGreenColor].CGColor
+        ];
+    }
+
+    // 如果上下限发生自动修正，两个滑块也立即保持一致。
+    UISlider *upperSlider = [cell.contentView viewWithTag:931];
+    UISlider *lowerSlider = [cell.contentView viewWithTag:941];
+    if ([upperSlider isKindOfClass:[UISlider class]])
+        [upperSlider setValue:(float)smartChargeUpperLimit animated:NO];
+    if ([lowerSlider isKindOfClass:[UISlider class]])
+        [lowerSlider setValue:(float)smartChargeLowerLimit animated:NO];
+}
+
 // 智能停充：停充上限
 - (void)changeSmartChargeUpper:(UISlider *)slider {
-    smartChargeUpperLimit = (NSInteger)slider.value;
-    if (smartChargeUpperLimit <= smartChargeLowerLimit) {
+    smartChargeUpperLimit = (NSInteger)lrintf(slider.value);
+    if (smartChargeUpperLimit <= smartChargeLowerLimit)
         smartChargeLowerLimit = MAX(40, smartChargeUpperLimit - 5);
-    }
-    SavePreferencesAndNotify();
+
     smartChargeStopped = NO;
-    [self.tableView reloadData];
+    [self updateSmartChargeRangeVisualization];
+}
+
+- (void)commitSmartChargeUpper:(UISlider *)slider {
+    (void)slider;
+    SavePreferencesAndNotify();
+    [self updateSmartChargeRangeVisualization];
 }
 
 // 智能停充：回充下限
 - (void)changeSmartChargeLower:(UISlider *)slider {
-    smartChargeLowerLimit = (NSInteger)slider.value;
-    if (smartChargeLowerLimit >= smartChargeUpperLimit) {
+    smartChargeLowerLimit = (NSInteger)lrintf(slider.value);
+    if (smartChargeLowerLimit >= smartChargeUpperLimit)
         smartChargeUpperLimit = MIN(100, smartChargeLowerLimit + 5);
-    }
+
+    smartChargeStopped = NO;
+    [self updateSmartChargeRangeVisualization];
+}
+
+- (void)commitSmartChargeLower:(UISlider *)slider {
+    (void)slider;
     SavePreferencesAndNotify();
-    [self.tableView reloadData];
+    [self updateSmartChargeRangeVisualization];
 }
 
 // 🔍 插件冲突检测：扫描按钮
