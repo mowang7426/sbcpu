@@ -180,6 +180,9 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) UIView *collapsedContainerView;
 @property (nonatomic, strong) UIView *statusDot;
 @property (nonatomic, strong) UILabel *miniCpuLabel;
+@property (nonatomic, strong) UILabel *miniFpsLabel;   // 横屏迷你胶囊：FPS
+@property (nonatomic, strong) UILabel *miniBattLabel;  // 横屏迷你胶囊：电量
+@property (nonatomic, strong) UILabel *miniTempLabel;  // 横屏迷你胶囊：温度
 @property (nonatomic, strong) UIView *startupContainer;
 @property (nonatomic, strong) UIView *startupIconCircle;
 @property (nonatomic, strong) UILabel *startupIconLabel;
@@ -212,6 +215,7 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 - (void)resetInactivityTimer;
 - (void)collapseToEdgeAnimated:(BOOL)animated;
 - (void)expandFromEdgeAnimated:(BOOL)animated;
+- (void)syncCollapsedLayoutForOrientation;
 - (void)triggerPlugAnimation;
 - (void)prepareStartupAnimationView;
 - (void)showStartupStage:(NSUInteger)index title:(NSString *)title detail:(NSString *)detail icon:(NSString *)icon progress:(CGFloat)progress;
@@ -1273,10 +1277,14 @@ if (charging && !previousChargingState) {
             UIInterfaceOrientation orientation = getEffectiveFloatingOrientation();
             BOOL isLandscape = (orientation == UIInterfaceOrientationLandscapeLeft || orientation == UIInterfaceOrientationLandscapeRight);
             
-            if (isLandscape && !wasLandscape && floatingView.isCollapsed && !floatingView.isShowingNotification) {
-                [floatingView expandFromEdgeAnimated:YES];
-            } else if (!isLandscape && wasLandscape && !floatingView.isCollapsed && !floatingView.isShowingNotification) {
-                [floatingView resetInactivityTimer];
+            if (isLandscape && !wasLandscape && !floatingView.isCollapsed && !floatingView.isShowingNotification) {
+                // 横屏（游戏）自动缩小为迷你胶囊（CPU/FPS/电量/温度），替代原自动展开大浮窗
+                [floatingView collapseToEdgeAnimated:YES];
+            } else if (!isLandscape && wasLandscape && !floatingView.isShowingNotification) {
+                // 退出横屏：若处于迷你折叠态，恢复竖屏折叠布局
+                if (floatingView.isCollapsed) {
+                    [floatingView syncCollapsedLayoutForOrientation];
+                }
             }
             wasLandscape = isLandscape;
         }
@@ -1630,6 +1638,9 @@ static void LGRemoveLabelShadowInView(UIView *view) {
     _tempValueLabel.textColor = monoColor;
     _currentValueLabel.textColor = monoColor;
     _miniCpuLabel.textColor = monoColor;
+    _miniFpsLabel.textColor = monoColor;   // 横屏迷你胶囊四项参与反色
+    _miniBattLabel.textColor = monoColor;
+    _miniTempLabel.textColor = monoColor;
     _timeLabel.textColor = monoColor; // 时间显示也参与反色
     // 通知文字
     _notifAppNameLabel.textColor = lightBg ? [UIColor darkGrayColor] : [UIColor lightGrayColor];
@@ -2082,6 +2093,28 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _miniCpuLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
         _miniCpuLabel.textAlignment = NSTextAlignmentLeft;
         [_collapsedContainerView addSubview:_miniCpuLabel];
+
+        // 横屏迷你胶囊：FPS / 电量 / 温度（默认隐藏，进入横屏折叠态时显示）
+        _miniFpsLabel = [[UILabel alloc] initWithFrame:CGRectMake(84, 5, 44, 18)];
+        _miniFpsLabel.textColor = [UIColor blackColor];
+        _miniFpsLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+        _miniFpsLabel.textAlignment = NSTextAlignmentLeft;
+        _miniFpsLabel.hidden = YES;
+        [_collapsedContainerView addSubview:_miniFpsLabel];
+
+        _miniBattLabel = [[UILabel alloc] initWithFrame:CGRectMake(130, 5, 42, 18)];
+        _miniBattLabel.textColor = [UIColor blackColor];
+        _miniBattLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+        _miniBattLabel.textAlignment = NSTextAlignmentLeft;
+        _miniBattLabel.hidden = YES;
+        [_collapsedContainerView addSubview:_miniBattLabel];
+
+        _miniTempLabel = [[UILabel alloc] initWithFrame:CGRectMake(174, 5, 52, 18)];
+        _miniTempLabel.textColor = [UIColor blackColor];
+        _miniTempLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+        _miniTempLabel.textAlignment = NSTextAlignmentLeft;
+        _miniTempLabel.hidden = YES;
+        [_collapsedContainerView addSubview:_miniTempLabel];
         
         _notificationContainer = [[UIView alloc] initWithFrame:content.bounds];
         _notificationContainer.userInteractionEnabled = NO;
@@ -2693,8 +2726,10 @@ return self;
     UIView *parent = self.superview;
     CGRect containerBounds = parent ? parent.bounds : [UIScreen mainScreen].bounds;
 
-    CGFloat targetW = 68.0f;
-    CGFloat targetH = 28.0f;
+    // 横屏（游戏）折叠 = 迷你胶囊四段：CPU / FPS / 电量 / 温度；竖屏保持原单段胶囊
+    BOOL isLandscapeNow = ([UIScreen mainScreen].bounds.size.width > [UIScreen mainScreen].bounds.size.height);
+    CGFloat targetW = isLandscapeNow ? 230.0f : 68.0f;
+    CGFloat targetH = isLandscapeNow ? 30.0f : 28.0f;
     CGFloat targetHalfW = targetW / 2.0f;
     CGFloat targetHalfH = targetH / 2.0f;
 
@@ -2722,6 +2757,27 @@ return self;
         self.collapsedContainerView.frame = CGRectMake(0, 0, targetW, targetH);
 
         self.blurView.frame = CGRectMake(0, 0, targetW, targetH);
+
+        // 横屏迷你胶囊：CPU / FPS / 电量 / 温度 四段；竖屏仅 CPU 单段
+        if (isLandscapeNow) {
+            _miniCpuLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+            _miniCpuLabel.frame = CGRectMake(24, 5, 56, 18);
+            _miniFpsLabel.hidden = NO;
+            _miniFpsLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+            _miniFpsLabel.frame = CGRectMake(84, 5, 44, 18);
+            _miniBattLabel.hidden = NO;
+            _miniBattLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+            _miniBattLabel.frame = CGRectMake(130, 5, 42, 18);
+            _miniTempLabel.hidden = NO;
+            _miniTempLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+            _miniTempLabel.frame = CGRectMake(174, 5, 52, 18);
+        } else {
+            _miniCpuLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+            _miniCpuLabel.frame = CGRectMake(22, 5, 45, 18);
+            _miniFpsLabel.hidden = YES;
+            _miniBattLabel.hidden = YES;
+            _miniTempLabel.hidden = YES;
+        }
         
         CGFloat cornerRad = floatingCornerRadius;
         if (cornerRad > targetH / 2.0f) cornerRad = targetH / 2.0f;
@@ -2786,6 +2842,51 @@ return self;
     } else {
         animationsBlock();
         completionBlock(YES);
+    }
+}
+
+// 旋转后已折叠状态的尺寸/布局自适应（无动画）：横屏=迷你四段，竖屏=单段
+- (void)syncCollapsedLayoutForOrientation {
+    if (!self.isCollapsed || self.isShowingNotification) return;
+    BOOL isLandscapeNow = ([UIScreen mainScreen].bounds.size.width > [UIScreen mainScreen].bounds.size.height);
+    CGFloat targetW = isLandscapeNow ? 230.0f : 68.0f;
+    CGFloat targetH = isLandscapeNow ? 30.0f : 28.0f;
+    UIView *parent = self.superview;
+    CGRect containerBounds = parent ? parent.bounds : [UIScreen mainScreen].bounds;
+    CGFloat halfW = targetW / 2.0f;
+    CGFloat halfH = targetH / 2.0f;
+    BOOL isLeft = (self.center.x <= containerBounds.size.width / 2.0f);
+    CGFloat targetX = isLeft ? (halfW + 4.0f) : (containerBounds.size.width - halfW - 4.0f);
+    CGFloat minY = halfH + floatingTopSafeMargin(parent);
+    CGFloat maxY = containerBounds.size.height - halfH - 10.0f;
+    CGFloat targetY = MIN(MAX(self.center.y, minY), maxY);
+
+    self.collapsedContainerView.frame = CGRectMake(0, 0, targetW, targetH);
+    self.blurView.frame = CGRectMake(0, 0, targetW, targetH);
+    CGFloat cornerRad = floatingCornerRadius;
+    if (cornerRad > targetH / 2.0f) cornerRad = targetH / 2.0f;
+    self.blurView.layer.cornerRadius = cornerRad;
+    self.bounds = CGRectMake(0, 0, targetW, targetH);
+    self.center = CGPointMake(targetX, targetY);
+
+    if (isLandscapeNow) {
+        _miniCpuLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+        _miniCpuLabel.frame = CGRectMake(24, 5, 56, 18);
+        _miniFpsLabel.hidden = NO;
+        _miniFpsLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+        _miniFpsLabel.frame = CGRectMake(84, 5, 44, 18);
+        _miniBattLabel.hidden = NO;
+        _miniBattLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+        _miniBattLabel.frame = CGRectMake(130, 5, 42, 18);
+        _miniTempLabel.hidden = NO;
+        _miniTempLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+        _miniTempLabel.frame = CGRectMake(174, 5, 52, 18);
+    } else {
+        _miniCpuLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+        _miniCpuLabel.frame = CGRectMake(22, 5, 45, 18);
+        _miniFpsLabel.hidden = YES;
+        _miniBattLabel.hidden = YES;
+        _miniTempLabel.hidden = YES;
     }
 }
 
@@ -3015,6 +3116,18 @@ return self;
         _miniCpuLabel.text = [NSString stringWithFormat:@"%.0fmA", current];
     } else if (collapsedDisplayMode == 4) {
         _miniCpuLabel.text = [NSString stringWithFormat:@"%ld%%", (long)MAX(0, MIN(100, battery))];
+    }
+
+    // 横屏迷你胶囊：旋转后自适应布局 + 四项实时刷新（CPU/FPS/电量/温度）
+    BOOL isLandscapeNow = ([UIScreen mainScreen].bounds.size.width > [UIScreen mainScreen].bounds.size.height);
+    if (self.isCollapsed) {
+        [self syncCollapsedLayoutForOrientation];
+        if (isLandscapeNow) {
+            _miniCpuLabel.text = [NSString stringWithFormat:@"%.0f%%", cpu];
+            _miniFpsLabel.text = [NSString stringWithFormat:@"%.0fF", fps];
+            _miniBattLabel.text = [NSString stringWithFormat:@"%ld%%", (long)MAX(0, MIN(100, battery))];
+            _miniTempLabel.text = (temp > 0) ? [NSString stringWithFormat:@"%.0f°", temp] : @"--°";
+        }
     }
     
     if (YES) {
