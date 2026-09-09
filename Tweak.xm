@@ -1104,9 +1104,9 @@ static void openSettings(void) {
     nav.view.layer.cornerRadius = 26.0f;
     nav.view.layer.masksToBounds = YES;
     nav.view.backgroundColor = [UIColor clearColor];
-    // 方案A 极简液态玻璃：细描边高光
+    // 浅色原生：细描边淡灰
     nav.view.layer.borderWidth = 1.0f;
-    nav.view.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.30].CGColor;
+    nav.view.layer.borderColor = [UIColor colorWithWhite:0.0 alpha:0.10].CGColor;
 
     [root presentViewController:container animated:NO completion:^{
         CGFloat W = container.view.bounds.size.width;
@@ -3679,10 +3679,10 @@ return self;
 @implementation SBCPUValuePickerController
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    self.view.backgroundColor = [UIColor colorWithWhite:0.11 alpha:1.0];
-    self.tableView.backgroundColor = [UIColor colorWithWhite:0.11 alpha:1.0];
-    self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.12];
+    self.overrideUserInterfaceStyle = UIUserInterfaceStyleLight;
+    self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    self.tableView.separatorColor = [UIColor colorWithWhite:0.85 alpha:1.0];
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { 
@@ -3721,10 +3721,10 @@ return self;
 @implementation SBCPUTimePickerController
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    self.view.backgroundColor = [UIColor colorWithWhite:0.11 alpha:1.0];
-    self.tableView.backgroundColor = [UIColor colorWithWhite:0.11 alpha:1.0];
-    self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.12];
+    self.overrideUserInterfaceStyle = UIUserInterfaceStyleLight;
+    self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    self.tableView.separatorColor = [UIColor colorWithWhite:0.85 alpha:1.0];
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { 
@@ -4049,122 +4049,64 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (!cell || !indexPath) return;
 
     // ============================================================
-    // SBCPUFloating V3.4 — 方案 A / iOS 26 Liquid Glass
-    // 设计原则：透明、柔和、层次清晰，不改变任何原有功能。
+    // V4.11 — 浅色原生设置中心
+    // 白底分组、黑字清晰、iOS 系统蓝/绿强调，不透明、不碍眼。
     // ============================================================
-    cell.backgroundColor = UIColor.clearColor;
-    cell.contentView.backgroundColor = UIColor.clearColor;
+    cell.backgroundColor = UIColor.whiteColor;
+    cell.contentView.backgroundColor = UIColor.whiteColor;
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
 
-    // 每一行独立使用“玻璃片”，由首/中/尾行决定圆角。
+    // 清理旧版液态玻璃层（升级残留，防止叠层/误渲染）
     UIView *glass = [cell.contentView viewWithTag:9899];
-    if (!glass) {
-        glass = [[UIView alloc] initWithFrame:CGRectZero];
-        glass.tag = 9899;
-        glass.userInteractionEnabled = NO;
-        [cell.contentView insertSubview:glass atIndex:0];
+    if (glass) [glass removeFromSuperview];
+    UIView *highlight = [cell.contentView viewWithTag:9900];
+    if (highlight) [highlight removeFromSuperview];
 
-        // 柔和的玻璃描边
-        glass.layer.borderWidth = 0.7;
-        glass.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.14].CGColor;
-
-        // 内部高光
-        UIView *highlight = [[UIView alloc] initWithFrame:CGRectZero];
-        highlight.tag = 9900;
-        highlight.userInteractionEnabled = NO;
-        highlight.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.035];
-        highlight.layer.cornerRadius = 18.0;
-        [glass addSubview:highlight];
-    }
-
-    BOOL first = (indexPath.row == 0);
-    NSInteger rows = 0;
-    switch (indexPath.section) {
-        case 0: rows = 6; break;
-        case 1: rows = 3; break;
-        case 2: rows = 5; break;
-        case 3: rows = 7; break;
-        case 4: rows = 3; break;
-        case 5: rows = 1; break;
-        case 6: rows = 10; break;
-        case 7: rows = 3; break;
-        case 8: rows = 10; break;
-        case 9: rows = 5; break;
-        case 12:
-            rows = gPluginScanDone ? (1 + gPluginConflictCount + gPluginCategories.count + gPluginTotalCount) : 1;
-            break;
-        default: rows = 1; break;
-    }
-    BOOL last = (indexPath.row == MAX(0, rows - 1));
-
-    CGFloat radius = 18.0;
-    glass.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.075];
-    glass.layer.cornerRadius = (first || last) ? radius : 0.0;
-    glass.layer.masksToBounds = YES;
-    glass.frame = CGRectInset(cell.bounds, 0.0, 0.5);
-
-    UIView *highlight = [glass viewWithTag:9900];
-    highlight.frame = glass.bounds;
-    highlight.layer.cornerRadius = glass.layer.cornerRadius;
-
-    // 关键功能使用更明亮的紫色玻璃，但仍保持半透明。
-    NSString *txt = cell.textLabel.text ?: @"";
-    if ([txt rangeOfString:@"充电增强"].location != NSNotFound ||
-        [txt rangeOfString:@"智能停充"].location != NSNotFound ||
-        [txt rangeOfString:@"强制满血快充"].location != NSNotFound) {
-        glass.backgroundColor = [UIColor colorWithRed:0.48 green:0.32 blue:0.90 alpha:0.20];
-        glass.layer.borderColor = [UIColor colorWithRed:0.78 green:0.68 blue:1.0 alpha:0.28].CGColor;
-    }
-
-    // 主标题：iOS 风格白色，副标题降低层级。
-    cell.textLabel.textColor = [UIColor colorWithWhite:0.98 alpha:0.98];
-    cell.textLabel.font = [UIFont systemFontOfSize:16.0 weight:UIFontWeightSemibold];
+    // 主标题：系统黑
+    cell.textLabel.textColor = UIColor.blackColor;
+    cell.textLabel.font = [UIFont systemFontOfSize:16.0 weight:UIFontWeightRegular];
     cell.textLabel.numberOfLines = 2;
 
+    // 副标题：系统灰
     if (cell.detailTextLabel) {
-        cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.86 alpha:0.64];
+        cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.45 alpha:1.0];
         cell.detailTextLabel.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightRegular];
         cell.detailTextLabel.numberOfLines = 2;
     }
 
-    // 开关：更接近 Liquid Glass 的柔和紫色。
+    // 开关：iOS 标准绿
     if ([cell.accessoryView isKindOfClass:[UISwitch class]]) {
         UISwitch *sw = (UISwitch *)cell.accessoryView;
-        sw.onTintColor = [UIColor colorWithRed:0.56 green:0.38 blue:0.98 alpha:1.0];
-        sw.tintColor = [UIColor colorWithWhite:1.0 alpha:0.18];
-        sw.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.06];
-        sw.layer.cornerRadius = sw.bounds.size.height / 2.0;
+        sw.onTintColor = [UIColor systemGreenColor];
+        sw.tintColor = nil;
+        sw.backgroundColor = UIColor.clearColor;
+        sw.layer.cornerRadius = 0.0f;
     }
 
-    // 滑块统一为紫蓝玻璃强调色。
+    // 滑块：iOS 标准蓝
     for (UIView *sub in cell.contentView.subviews) {
         if ([sub isKindOfClass:[UISlider class]]) {
             UISlider *slider = (UISlider *)sub;
-            slider.minimumTrackTintColor = [UIColor colorWithRed:0.58 green:0.40 blue:1.0 alpha:1.0];
-            slider.maximumTrackTintColor = [UIColor colorWithWhite:1.0 alpha:0.16];
+            slider.minimumTrackTintColor = [UIColor systemBlueColor];
+            slider.maximumTrackTintColor = [UIColor colorWithWhite:0.85 alpha:1.0];
             if (@available(iOS 15.0, *)) {
-                slider.thumbTintColor = [UIColor colorWithWhite:0.98 alpha:1.0];
+                slider.thumbTintColor = UIColor.whiteColor;
             }
         }
     }
 
-    // SF Symbols 图标统一做成柔和的玻璃紫。
+    // SF Symbols 图标：保留 sbcpuIconForTitle 的彩色圆角图标（不染色）
     if (!cell.imageView.image) {
         UIImage *icon = sbcpuIconForTitle(cell.textLabel.text, indexPath.section);
         if (icon) {
-            cell.imageView.image = [icon imageWithTintColor:[UIColor colorWithRed:0.78 green:0.69 blue:1.0 alpha:1.0]
-                                             renderingMode:UIImageRenderingModeAlwaysOriginal];
+            cell.imageView.image = icon;
         }
     }
 
-    // 选中态不要出现系统刺眼蓝色。
+    // 选中态：原生浅灰
     UIView *selected = [[UIView alloc] initWithFrame:CGRectZero];
-    selected.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.08];
-    selected.layer.cornerRadius = (first || last) ? radius : 0.0;
+    selected.backgroundColor = [UIColor colorWithWhite:0.90 alpha:1.0];
     cell.selectedBackgroundView = selected;
-
-    // 保证我们自定义的玻璃层在布局后始终覆盖正确尺寸。
-    glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 }
 
 @implementation SBCPUSettingsController
@@ -4179,12 +4121,12 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
                                                      action:@selector(closeSettings)];
 
     // ============================================================
-    // 方案 A：iOS 26 Liquid Glass 设置中心
-    // 仅修改设置页面视觉层，不改动任何业务逻辑。
+    // V4.11 — 浅色原生设置中心
+    // 系统 InsetGrouped 默认样式：浅灰分组背景 + 白色圆角卡片 + 黑字
     // ============================================================
-    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    self.view.backgroundColor = UIColor.clearColor;
-    self.tableView.backgroundColor = UIColor.clearColor;
+    self.overrideUserInterfaceStyle = UIUserInterfaceStyleLight;
+    self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     self.tableView.showsVerticalScrollIndicator = NO;
     self.tableView.clipsToBounds = NO;
@@ -4193,73 +4135,32 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     self.tableView.contentInset = UIEdgeInsetsMake(8.0, 0.0, 24.0, 0.0);
     self.tableView.scrollIndicatorInsets = UIEdgeInsetsMake(8.0, 0.0, 24.0, 0.0);
 
-    // 背景：深蓝 → 紫蓝的柔和液态渐变。
-    CAGradientLayer *grad = [CAGradientLayer layer];
-    grad.frame = self.view.bounds;
-    grad.colors = @[
-        (id)[[UIColor colorWithRed:0.055 green:0.065 blue:0.17 alpha:0.96] CGColor],
-        (id)[[UIColor colorWithRed:0.12 green:0.10 blue:0.29 alpha:0.93] CGColor],
-        (id)[[UIColor colorWithRed:0.23 green:0.13 blue:0.40 alpha:0.91] CGColor],
-        (id)[[UIColor colorWithRed:0.08 green:0.16 blue:0.34 alpha:0.94] CGColor]
-    ];
-    grad.locations = @[@0.0, @0.34, @0.70, @1.0];
-    grad.startPoint = CGPointMake(0.05, 0.0);
-    grad.endPoint = CGPointMake(0.95, 1.0);
-    [self.view.layer insertSublayer:grad atIndex:0];
-    self.glassGradient = grad;
-
-    // 真正的 backdrop 模糊：存在则使用，不存在也不会影响设置页面。
-    @try {
-        Class backdropCls = NSClassFromString(@"CABackdropLayer");
-        if (backdropCls) {
-            CALayer *bd = [backdropCls layer];
-            bd.frame = self.view.bounds;
-            bd.masksToBounds = YES;
-            [bd setValue:@NO forKey:@"layerUsesCoreImageFilters"];
-            [bd setValue:@YES forKey:@"windowServerAware"];
-            [bd setValue:@"com.mowang.sbcpufloating.settings.glass" forKey:@"groupName"];
-            [bd setValue:@"com.mowang.sbcpufloating" forKey:@"groupNamespace"];
-            [bd setValue:@YES forKey:@"ignoresScreenClip"];
-            [bd setValue:@1.0 forKey:@"scale"];
-            @try {
-                [bd setValue:@(MAX(0.0, glassBlurRadius)) forKey:@"blurRadius"];
-            } @catch (NSException *e) {}
-            [self.view.layer insertSublayer:bd above:grad];
-            self.glassBackdrop = bd;
-        }
-    } @catch (NSException *e) {}
-
-    // 顶部轻微白色光晕，让玻璃更“通透”。
-    CAGradientLayer *sheen = [CAGradientLayer layer];
-    sheen.frame = CGRectMake(0, 0, self.view.bounds.size.width, 240.0);
-    sheen.colors = @[
-        (id)[[UIColor colorWithWhite:1.0 alpha:0.055] CGColor],
-        (id)[[UIColor colorWithWhite:1.0 alpha:0.0] CGColor]
-    ];
-    sheen.locations = @[@0.0, @1.0];
-    sheen.startPoint = CGPointMake(0.5, 0.0);
-    sheen.endPoint = CGPointMake(0.5, 1.0);
-    [self.view.layer addSublayer:sheen];
+    // 清理旧版液态玻璃层（升级残留，防止深色渐变/毛玻璃残留）
+    if (self.glassBackdrop) {
+        [self.glassBackdrop removeFromSuperlayer];
+        self.glassBackdrop = nil;
+    }
+    if (self.glassGradient) {
+        [self.glassGradient removeFromSuperlayer];
+        self.glassGradient = nil;
+    }
 
     if (@available(iOS 13.0, *)) {
         UINavigationBarAppearance *app = [UINavigationBarAppearance new];
-        [app configureWithTransparentBackground];
-        app.backgroundColor = [UIColor colorWithWhite:0.05 alpha:0.34];
-        app.backgroundEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark];
+        [app configureWithDefaultBackground];
+        app.backgroundColor = UIColor.whiteColor;
         app.titleTextAttributes = @{
-            NSForegroundColorAttributeName: [UIColor colorWithWhite:1.0 alpha:0.96],
+            NSForegroundColorAttributeName: UIColor.blackColor,
             NSFontAttributeName: [UIFont systemFontOfSize:17.0 weight:UIFontWeightSemibold]
         };
         self.navigationController.navigationBar.standardAppearance = app;
         self.navigationController.navigationBar.scrollEdgeAppearance = app;
         self.navigationController.navigationBar.compactAppearance = app;
-        self.navigationController.navigationBar.tintColor =
-            [UIColor colorWithRed:0.67 green:0.50 blue:1.0 alpha:1.0];
+        self.navigationController.navigationBar.tintColor = UIColor.systemBlueColor;
     }
 
-    // 返回/完成按钮更加轻盈。
-    self.navigationItem.rightBarButtonItem.tintColor =
-        [UIColor colorWithRed:0.70 green:0.55 blue:1.0 alpha:1.0];
+    // 完成按钮：系统蓝
+    self.navigationItem.rightBarButtonItem.tintColor = UIColor.systemBlueColor;
 }
 
 - (void)viewDidLayoutSubviews {
@@ -6663,7 +6564,8 @@ static void detectPluginConflicts(void) {
     [self.tableView reloadData];
 }
 - (void)applyGlassTheme {
-    self.view.backgroundColor = [UIColor clearColor];
+    // 浅色原生模式下：保持系统浅色背景与白色导航栏（滑块仍保存数值，供浮窗玻璃使用）
+    self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
     if (self.glassGradient) {
         self.glassGradient.opacity = glassDimOpacity;
     }
@@ -6675,7 +6577,7 @@ static void detectPluginConflicts(void) {
     if (@available(iOS 13.0, *)) {
         UINavigationBarAppearance *app = self.navigationController.navigationBar.standardAppearance;
         if (app) {
-            app.backgroundColor = [UIColor colorWithRed:0.14 green:0.12 blue:0.34 alpha:MIN(0.92f, glassDimOpacity + 0.02f)];
+            app.backgroundColor = UIColor.whiteColor;
             self.navigationController.navigationBar.standardAppearance = app;
             self.navigationController.navigationBar.scrollEdgeAppearance = app;
             self.navigationController.navigationBar.compactAppearance = app;
