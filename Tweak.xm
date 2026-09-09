@@ -3808,7 +3808,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 
     // === A+C 深色液态玻璃主题 ===
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    self.view.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.34];
+    self.view.backgroundColor = [UIColor colorWithWhite:0.16 alpha:0.30];
     self.tableView.backgroundColor = [UIColor clearColor];
     self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.18];
 
@@ -3825,11 +3825,15 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             [bd setValue:@"com.mowang.sbcpufloating" forKey:@"groupNamespace"];
             [bd setValue:@YES forKey:@"ignoresScreenClip"];
             [bd setValue:@1.0 forKey:@"scale"];
+            // 磨砂：调大 backdrop 模糊半径（私有 key，失败自动忽略）
+            @try {
+                [bd setValue:@40.0 forKey:@"blurRadius"];
+            } @catch (NSException *e) {}
             [self.view.layer insertSublayer:bd atIndex:0];
 
             // 深色压暗层（放在 backdrop 之上、tableView 之下）
             UIView *dim = [[UIView alloc] initWithFrame:self.view.bounds];
-            dim.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.34];
+            dim.backgroundColor = [UIColor colorWithWhite:0.18 alpha:0.26];
             dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
             dim.userInteractionEnabled = NO;
             [self.view insertSubview:dim belowSubview:self.tableView];
@@ -3840,7 +3844,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (@available(iOS 13.0, *)) {
         UINavigationBarAppearance *app = [UINavigationBarAppearance new];
         [app configureWithTransparentBackground];
-        app.backgroundColor = [UIColor colorWithWhite:0.14 alpha:0.55];
+        app.backgroundColor = [UIColor colorWithWhite:0.22 alpha:0.42];
         app.backgroundEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark];
         app.titleTextAttributes = @{NSForegroundColorAttributeName: [UIColor whiteColor],
                                     NSFontAttributeName: [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold]};
