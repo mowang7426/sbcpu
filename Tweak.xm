@@ -4360,11 +4360,16 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
         if (cw < 100) cw = self.tableView.bounds.size.width - 32;
 
         if (indexPath.row == 0) {
-            // 开关
+            // 开关（说明文字自绘 UILabel，两行完整显示，不受系统 cell 布局限制）
             cell.textLabel.text = @"智能停充";
-            cell.detailTextLabel.text = @"充到上限自动停充，降到下限自动恢复";
-            cell.textLabel.hidden = NO;
-            cell.detailTextLabel.hidden = NO;
+            cell.detailTextLabel.hidden = YES;
+            UILabel *descLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 34, cw - 125, 38)];
+            descLbl.text = @"充到上限自动停充，降到下限自动恢复";
+            descLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+            descLbl.textColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+            descLbl.numberOfLines = 2;
+            descLbl.tag = 980;
+            [cell.contentView addSubview:descLbl];
             UISwitch *sw = [UISwitch new];
             sw.on = smartChargeEnable;
             [sw addTarget:self action:@selector(changeSmartChargeEnable:) forControlEvents:UIControlEventValueChanged];
@@ -4466,11 +4471,15 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             [cell.contentView addSubview:rangeBar];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 3) {
-            // 停充上限滑块
-            cell.textLabel.text = @"停充上限";
-            cell.detailTextLabel.text = nil;
-            cell.textLabel.hidden = NO;
+            // 停充上限滑块（标题自绘，固定位置保证可见）
+            cell.textLabel.hidden = YES;
             cell.detailTextLabel.hidden = YES;
+            UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, 140, 28)];
+            titleLbl.text = @"停充上限";
+            titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+            titleLbl.textColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+            titleLbl.tag = 985;
+            [cell.contentView addSubview:titleLbl];
             // 右侧数值
             UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw - 80, 8, 65, 28)];
             valLbl.text = [NSString stringWithFormat:@"%ld%%", (long)smartChargeUpperLimit];
@@ -4492,11 +4501,15 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 4) {
-            // 回充下限滑块
-            cell.textLabel.text = @"回充下限";
-            cell.detailTextLabel.text = nil;
-            cell.textLabel.hidden = NO;
+            // 回充下限滑块（标题自绘，固定位置保证可见）
+            cell.textLabel.hidden = YES;
             cell.detailTextLabel.hidden = YES;
+            UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, 140, 28)];
+            titleLbl.text = @"回充下限";
+            titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+            titleLbl.textColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+            titleLbl.tag = 986;
+            [cell.contentView addSubview:titleLbl];
             UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw - 80, 8, 65, 28)];
             valLbl.text = [NSString stringWithFormat:@"%ld%%", (long)smartChargeLowerLimit];
             valLbl.font = [UIFont monospacedDigitSystemFontOfSize:17 weight:UIFontWeightBold];
@@ -4884,19 +4897,25 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0f%%", floatingAlpha * 100.0];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else if (indexPath.row == 2) {
-            // 浮窗大小：标题 + 右侧数值 + 下方滑块（数值完整可见）
-            cell.textLabel.text = @"浮窗大小";
+            // 浮窗大小：一行式（标题 + 弹性滑块 + 右侧数值），iOS 原生滑块行风格
+            cell.textLabel.hidden = YES;
             cell.detailTextLabel.hidden = YES;
             CGFloat cw2 = cell.contentView.bounds.size.width;
             if (cw2 < 100) cw2 = self.tableView.bounds.size.width - 32;
-            UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw2 - 90, 8, 75, 28)];
+            UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, 90, 28)];
+            titleLbl.text = @"浮窗大小";
+            titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightRegular];
+            titleLbl.textColor = [UIColor labelColor];
+            titleLbl.tag = 966;
+            [cell.contentView addSubview:titleLbl];
+            UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw2 - 80, 7, 66, 30)];
             valLbl.text = [NSString stringWithFormat:@"%.0f%%", floatingScale * 100];
-            valLbl.font = [UIFont monospacedDigitSystemFontOfSize:16 weight:UIFontWeightBold];
+            valLbl.font = [UIFont monospacedDigitSystemFontOfSize:15 weight:UIFontWeightBold];
             valLbl.textColor = [UIColor systemBlueColor];
             valLbl.textAlignment = NSTextAlignmentRight;
             valLbl.tag = 960;
             [cell.contentView addSubview:valLbl];
-            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(16, 40, cw2 - 32, 30)];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(112, 11, cw2 - 112 - 84, 32)];
             slider.minimumValue = 0.4; slider.maximumValue = 1.6; slider.value = floatingScale;
             slider.continuous = YES;
             slider.tag = 963;
@@ -4904,19 +4923,25 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 3) {
-            // 字体大小
-            cell.textLabel.text = @"字体大小";
+            // 字体大小：一行式
+            cell.textLabel.hidden = YES;
             cell.detailTextLabel.hidden = YES;
             CGFloat cw3 = cell.contentView.bounds.size.width;
             if (cw3 < 100) cw3 = self.tableView.bounds.size.width - 32;
-            UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw3 - 90, 8, 75, 28)];
+            UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, 90, 28)];
+            titleLbl.text = @"字体大小";
+            titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightRegular];
+            titleLbl.textColor = [UIColor labelColor];
+            titleLbl.tag = 967;
+            [cell.contentView addSubview:titleLbl];
+            UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw3 - 80, 7, 66, 30)];
             valLbl.text = [NSString stringWithFormat:@"%.0fpt", floatingFontSize];
-            valLbl.font = [UIFont monospacedDigitSystemFontOfSize:16 weight:UIFontWeightBold];
+            valLbl.font = [UIFont monospacedDigitSystemFontOfSize:15 weight:UIFontWeightBold];
             valLbl.textColor = [UIColor systemBlueColor];
             valLbl.textAlignment = NSTextAlignmentRight;
             valLbl.tag = 961;
             [cell.contentView addSubview:valLbl];
-            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(16, 40, cw3 - 32, 30)];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(112, 11, cw3 - 112 - 84, 32)];
             slider.minimumValue = 8.0; slider.maximumValue = 15.0; slider.value = floatingFontSize;
             slider.continuous = YES;
             slider.tag = 964;
@@ -4924,19 +4949,25 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 4) {
-            // 圆角大小
-            cell.textLabel.text = @"圆角大小";
+            // 圆角大小：一行式
+            cell.textLabel.hidden = YES;
             cell.detailTextLabel.hidden = YES;
             CGFloat cw4 = cell.contentView.bounds.size.width;
             if (cw4 < 100) cw4 = self.tableView.bounds.size.width - 32;
-            UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw4 - 90, 8, 75, 28)];
+            UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, 90, 28)];
+            titleLbl.text = @"圆角大小";
+            titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightRegular];
+            titleLbl.textColor = [UIColor labelColor];
+            titleLbl.tag = 968;
+            [cell.contentView addSubview:titleLbl];
+            UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw4 - 80, 7, 66, 30)];
             valLbl.text = [NSString stringWithFormat:@"%.0f", floatingCornerRadius];
-            valLbl.font = [UIFont monospacedDigitSystemFontOfSize:16 weight:UIFontWeightBold];
+            valLbl.font = [UIFont monospacedDigitSystemFontOfSize:15 weight:UIFontWeightBold];
             valLbl.textColor = [UIColor systemBlueColor];
             valLbl.textAlignment = NSTextAlignmentRight;
             valLbl.tag = 962;
             [cell.contentView addSubview:valLbl];
-            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(16, 40, cw4 - 32, 30)];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(112, 11, cw4 - 112 - 84, 32)];
             slider.minimumValue = 4.0; slider.maximumValue = 35.0; slider.value = floatingCornerRadius;
             slider.continuous = YES;
             slider.tag = 965;
@@ -6619,7 +6650,7 @@ static void detectPluginConflicts(void) {
         return 64.0;
     }
     if (indexPath.section == 2) {
-        if (indexPath.row == 2 || indexPath.row == 3 || indexPath.row == 4) return 78.0; // 浮窗/字体/圆角滑块
+        if (indexPath.row == 2 || indexPath.row == 3 || indexPath.row == 4) return 56.0; // 浮窗/字体/圆角一行式滑块
         return 56.0;
     }
     if (indexPath.section == 8) {
