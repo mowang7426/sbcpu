@@ -315,8 +315,8 @@ static BOOL showBatteryTemperature = YES;
 static BOOL showBatteryCurrent = YES;
 static BOOL liquidGlassEnabled = YES; // 液态玻璃效果开关
 // V4.8 液态玻璃自定义：背景白雾透明度 / 磨砂强度(blurRadius) / 卡片不透明度
-static float glassDimOpacity = 0.30f;
-static float glassBlurRadius = 40.0f;
+static float glassDimOpacity = 0.42f;
+static float glassBlurRadius = 50.0f;
 static float glassCardOpacity = 0.80f;
 // 智能停充
 static BOOL smartChargeEnable = NO;
@@ -516,8 +516,8 @@ static void LoadPreferences(void) {
     smartChargeUpperLimit = (NSInteger)getFloatPref(CFSTR("smartChargeUpperLimit"), 80.0f);
     smartChargeLowerLimit = (NSInteger)getFloatPref(CFSTR("smartChargeLowerLimit"), 70.0f);
     smartChargeMode = (NSInteger)getFloatPref(CFSTR("smartChargeMode"), 0.0f);
-    glassDimOpacity = getFloatPref(CFSTR("glassDimOpacity"), 0.30f);
-    glassBlurRadius = getFloatPref(CFSTR("glassBlurRadius"), 40.0f);
+    glassDimOpacity = getFloatPref(CFSTR("glassDimOpacity"), 0.42f);
+    glassBlurRadius = getFloatPref(CFSTR("glassBlurRadius"), 50.0f);
     glassCardOpacity = getFloatPref(CFSTR("glassCardOpacity"), 0.80f);
     
     chargeBoostEnable = getBoolPref(CFSTR("chargeBoostEnable"), NO);
@@ -3956,7 +3956,7 @@ static UIImage *sbcpuIconForTitle(NSString *title, NSInteger section) {
 static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (!cell || !indexPath) return;
     // 方案A 极简液态玻璃：cell 底色由"卡片不透明度"滑块控制（0=全透，1=近实底）
-    cell.backgroundColor = [UIColor colorWithWhite:1.0 alpha:(0.25f * glassCardOpacity)];
+    cell.backgroundColor = [UIColor colorWithWhite:1.0 alpha:(0.32f * glassCardOpacity)];
     cell.layer.cornerRadius = 0.0f;
     cell.layer.borderWidth = 0.0f;
     cell.layer.borderColor = nil;
@@ -4003,9 +4003,9 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     self.title = @"SBCPUFloating V3.4";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeSettings)];
 
-    // === A+C 深色液态玻璃主题 ===
+    // === 方案A 极简液态玻璃主题（白雾玻璃，对齐 demo 效果）===
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    self.view.backgroundColor = [UIColor colorWithWhite:0.16 alpha:glassDimOpacity];
+    self.view.backgroundColor = [UIColor colorWithWhite:0.24 alpha:glassDimOpacity];
     self.tableView.backgroundColor = [UIColor clearColor];
     self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.10];
     self.tableView.showsVerticalScrollIndicator = NO;
@@ -4030,9 +4030,9 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             [self.view.layer insertSublayer:bd atIndex:0];
             self.glassBackdrop = bd;
 
-            // 白雾压暗层（放在 backdrop 之上、tableView 之下），透明度可调
+            // 白雾压暗层（放在 backdrop 之上、tableView 之下）：白雾加厚对齐 demo
             UIView *dim = [[UIView alloc] initWithFrame:self.view.bounds];
-            dim.backgroundColor = [UIColor colorWithWhite:0.18 alpha:MAX(0.06f, glassDimOpacity - 0.04f)];
+            dim.backgroundColor = [UIColor colorWithWhite:0.32 alpha:MIN(0.55f, glassDimOpacity + 0.10f)];
             dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
             dim.userInteractionEnabled = NO;
             [self.view insertSubview:dim belowSubview:self.tableView];
@@ -4044,7 +4044,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (@available(iOS 13.0, *)) {
         UINavigationBarAppearance *app = [UINavigationBarAppearance new];
         [app configureWithTransparentBackground];
-        app.backgroundColor = [UIColor colorWithWhite:0.22 alpha:MIN(0.55f, glassDimOpacity + 0.12f)];
+        app.backgroundColor = [UIColor colorWithWhite:0.30 alpha:MIN(0.60f, glassDimOpacity + 0.14f)];
         app.backgroundEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark];
         app.titleTextAttributes = @{NSForegroundColorAttributeName: [UIColor whiteColor],
                                     NSFontAttributeName: [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold]};
@@ -6312,9 +6312,9 @@ static void detectPluginConflicts(void) {
     [self.tableView reloadData];
 }
 - (void)applyGlassTheme {
-    self.view.backgroundColor = [UIColor colorWithWhite:0.16 alpha:glassDimOpacity];
+    self.view.backgroundColor = [UIColor colorWithWhite:0.24 alpha:glassDimOpacity];
     if (self.glassDimView) {
-        self.glassDimView.backgroundColor = [UIColor colorWithWhite:0.18 alpha:MAX(0.06f, glassDimOpacity - 0.04f)];
+        self.glassDimView.backgroundColor = [UIColor colorWithWhite:0.32 alpha:MIN(0.55f, glassDimOpacity + 0.10f)];
     }
     if (self.glassBackdrop) {
         @try {
@@ -6324,7 +6324,7 @@ static void detectPluginConflicts(void) {
     if (@available(iOS 13.0, *)) {
         UINavigationBarAppearance *app = self.navigationController.navigationBar.standardAppearance;
         if (app) {
-            app.backgroundColor = [UIColor colorWithWhite:0.22 alpha:MIN(0.55f, glassDimOpacity + 0.12f)];
+            app.backgroundColor = [UIColor colorWithWhite:0.30 alpha:MIN(0.60f, glassDimOpacity + 0.14f)];
             self.navigationController.navigationBar.standardAppearance = app;
             self.navigationController.navigationBar.scrollEdgeAppearance = app;
             self.navigationController.navigationBar.compactAppearance = app;
