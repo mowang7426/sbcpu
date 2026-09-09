@@ -1125,6 +1125,9 @@ static void openSettings(void) {
         nav.view.transform = CGAffineTransformMakeScale(0.12f, 0.12f);
         nav.view.alpha = 0.0f;
 
+        // 正确的容器 VC 配对，防止 nav.view 被布局拉伸/错位
+        [container addChildViewController:nav];
+        nav.view.autoresizingMask = UIViewAutoresizingNone;
         [container.view addSubview:nav.view];
         [nav didMoveToParentViewController:container];
 
@@ -1137,7 +1140,12 @@ static void openSettings(void) {
                             options:UIViewAnimationOptionCurveEaseOut animations:^{
             nav.view.transform = CGAffineTransformIdentity;
             nav.view.alpha = 1.0f;
-        } completion:nil];
+        } completion:^(BOOL finished) {
+            // 锚点复位到卡片中心（保持当前视觉位置），避免 frame 偏移
+            CGPoint c = nav.view.center;
+            nav.view.layer.anchorPoint = CGPointMake(0.5f, 0.5f);
+            nav.view.center = c;
+        }];
     }];
 }
 
@@ -4028,6 +4036,13 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
         self.navigationController.navigationBar.compactAppearance = app;
     }
     self.navigationItem.rightBarButtonItem.tintColor = [UIColor colorWithRed:0.60 green:0.45 blue:1.0 alpha:1.0];
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    // backdrop / 压暗层跟随卡片最终尺寸（viewDidLoad 时 bounds 尚未定型）
+    if (self.glassBackdrop) self.glassBackdrop.frame = self.view.bounds;
+    if (self.glassDimView) self.glassDimView.frame = self.view.bounds;
 }
 
 - (void)viewWillAppear:(BOOL)animated {
