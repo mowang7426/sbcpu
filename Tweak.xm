@@ -2976,6 +2976,10 @@ return self;
     self.notificationContainer.hidden = YES;
     self.notificationContainer.alpha = 0.0;
 
+    // ★ 保存折叠尺寸：展开动画需从胶囊平滑放大到完整面板（否则 bounds 瞬间跳变 = “消失再出现”）
+    CGRect collapsedBounds = self.bounds;
+    CGFloat collapsedCornerRad = self.blurView.layer.cornerRadius;
+
     BOOL charging = isChargingInternal();
     UIView *parent = self.superview;
     CGRect containerBounds = parent ? parent.bounds : [UIScreen mainScreen].bounds;
@@ -3008,7 +3012,62 @@ return self;
 
     CGPoint targetCenter = CGPointMake(targetX, targetY);
 
+    // ★ 动画开始前把容器恢复为折叠尺寸：展开动画从胶囊平滑放大到完整面板
+    {
+        CGFloat capW = collapsedBounds.size.width;
+        CGFloat capH = collapsedBounds.size.height;
+        self.bounds = collapsedBounds;
+        self.blurView.frame = CGRectMake(0, 0, capW, capH);
+        self.blurView.layer.cornerRadius = collapsedCornerRad;
+        self.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, capW, capH) cornerRadius:collapsedCornerRad].CGPath;
+        self.marqueeLayer.frame = self.blurView.bounds;
+        self.marqueeLayer.path = [UIBezierPath bezierPathWithRoundedRect:self.blurView.bounds cornerRadius:collapsedCornerRad].CGPath;
+        if (self.glassBackdropLayer) {
+            self.glassBackdropLayer.frame = self.blurView.bounds;
+            self.glassBackdropLayer.cornerRadius = collapsedCornerRad;
+        }
+        if (self.glassTintLayer) {
+            self.glassTintLayer.frame = self.blurView.bounds;
+            self.glassTintLayer.cornerRadius = collapsedCornerRad;
+        }
+        self.glassSheenLayer.frame = self.blurView.bounds;
+        self.glassSheenMask.frame = self.blurView.bounds;
+        self.glassSheenMask.cornerRadius = collapsedCornerRad;
+        self.glassBoostLayer.frame = self.blurView.bounds;
+        self.glassBoostMask.frame = self.blurView.bounds;
+        self.glassBoostMask.cornerRadius = collapsedCornerRad;
+        self.glassEdgeLayer.frame = self.blurView.bounds;
+        self.glassEdgeLayer.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(self.blurView.bounds, 0.5f, 0.5f) cornerRadius:collapsedCornerRad].CGPath;
+    }
+
+    CGFloat expandedCornerRad = floatingCornerRadius;
+    if (expandedCornerRad > expandedH / 2.0f) expandedCornerRad = expandedH / 2.0f;
+
     void (^animationsBlock)(void) = ^{
+        // ★ 尺寸过渡：胶囊 → 完整面板（与收起动画对称，视觉上平滑“膨胀”展开）
+        self.bounds = CGRectMake(0, 0, expandedW, expandedH);
+        self.blurView.frame = CGRectMake(0, 0, expandedW, expandedH);
+        self.blurView.layer.cornerRadius = expandedCornerRad;
+        self.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, expandedW, expandedH) cornerRadius:expandedCornerRad].CGPath;
+        self.marqueeLayer.frame = self.blurView.bounds;
+        self.marqueeLayer.path = [UIBezierPath bezierPathWithRoundedRect:self.blurView.bounds cornerRadius:expandedCornerRad].CGPath;
+        if (self.glassBackdropLayer) {
+            self.glassBackdropLayer.frame = self.blurView.bounds;
+            self.glassBackdropLayer.cornerRadius = expandedCornerRad;
+        }
+        if (self.glassTintLayer) {
+            self.glassTintLayer.frame = self.blurView.bounds;
+            self.glassTintLayer.cornerRadius = expandedCornerRad;
+        }
+        self.glassSheenLayer.frame = self.blurView.bounds;
+        self.glassSheenMask.frame = self.blurView.bounds;
+        self.glassSheenMask.cornerRadius = expandedCornerRad;
+        self.glassBoostLayer.frame = self.blurView.bounds;
+        self.glassBoostMask.frame = self.blurView.bounds;
+        self.glassBoostMask.cornerRadius = expandedCornerRad;
+        self.glassEdgeLayer.frame = self.blurView.bounds;
+        self.glassEdgeLayer.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(self.blurView.bounds, 0.5f, 0.5f) cornerRadius:expandedCornerRad].CGPath;
+
         self.collapsedContainerView.alpha = 0.0;
         self.horizontalDiv.alpha = 1.0;
         
