@@ -4069,9 +4069,9 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     cell.textLabel.font = [UIFont systemFontOfSize:16.0 weight:UIFontWeightRegular];
     cell.textLabel.numberOfLines = 2;
 
-    // 副标题：系统灰
+    // 副标题/右侧数值：黑色（浅色模式清晰可读）
     if (cell.detailTextLabel) {
-        cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.45 alpha:1.0];
+        cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.15 alpha:1.0];
         cell.detailTextLabel.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightRegular];
         cell.detailTextLabel.numberOfLines = 2;
     }
@@ -4322,7 +4322,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     // 去掉 emoji 后面的“脏感”，保留它们作为视觉识别。
     UILabel *label = [[UILabel alloc] initWithFrame:CGRectZero];
     label.text = title;
-    label.textColor = [UIColor colorWithWhite:1.0 alpha:0.76];
+    label.textColor = [UIColor colorWithWhite:0.15 alpha:1.0]; // 浅色模式：黑色小字清晰可读
     label.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightSemibold];
     label.numberOfLines = 1;
     label.translatesAutoresizingMaskIntoConstraints = NO;
@@ -4347,7 +4347,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
         cell.detailTextLabel.numberOfLines = 0;
         cell.textLabel.font = [UIFont systemFontOfSize:15.0 weight:UIFontWeightSemibold];
         cell.detailTextLabel.font = [UIFont systemFontOfSize:11.5 weight:UIFontWeightRegular];
-        cell.detailTextLabel.textColor = [UIColor grayColor];
+        cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.15 alpha:1.0];
     }
 
     if (indexPath.section == 9) {
@@ -4435,7 +4435,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             UILabel *arrowLbl = [[UILabel alloc] initWithFrame:CGRectMake(px + 80, 34, pw - 160, 20)];
             arrowLbl.text = @"← 循环区间 →";
             arrowLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
-            arrowLbl.textColor = [UIColor colorWithWhite:0.33 alpha:1.0]; // 深灰，白底清晰可读
+            arrowLbl.textColor = [UIColor colorWithWhite:0.15 alpha:1.0]; // 黑色，白底清晰可读
             arrowLbl.textAlignment = NSTextAlignmentCenter;
             arrowLbl.tag = 902;
             [cell.contentView addSubview:arrowLbl];
