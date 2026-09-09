@@ -2842,12 +2842,14 @@ return self;
             _miniTempLabel.hidden = NO;
             _miniTempLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
             _miniTempLabel.frame = CGRectMake(174, 5, 52, 18);
+            _statusDot.hidden = YES;   // 横屏四段胶囊不显示状态圆点
         } else {
             _miniCpuLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
             _miniCpuLabel.frame = CGRectMake(22, 5, 45, 18);
             _miniFpsLabel.hidden = YES;
             _miniBattLabel.hidden = YES;
             _miniTempLabel.hidden = YES;
+            _statusDot.hidden = NO;
         }
         
         CGFloat cornerRad = floatingCornerRadius;
@@ -2952,12 +2954,14 @@ return self;
         _miniTempLabel.hidden = NO;
         _miniTempLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
         _miniTempLabel.frame = CGRectMake(174, 5, 52, 18);
+        _statusDot.hidden = YES;
     } else {
         _miniCpuLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
         _miniCpuLabel.frame = CGRectMake(22, 5, 45, 18);
         _miniFpsLabel.hidden = YES;
         _miniBattLabel.hidden = YES;
         _miniTempLabel.hidden = YES;
+        _statusDot.hidden = NO;
     }
 }
 
