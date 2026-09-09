@@ -4869,6 +4869,10 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         }
     } else if (indexPath.section == 2) {
+        // 清理 cell 复用残留（滑块行结构自绘，必须移除旧视图防重叠）
+        for (UIView *v in [cell.contentView.subviews copy]) {
+            if (v.tag >= 900) [v removeFromSuperview];
+        }
         if (indexPath.row == 0) {
             cell.textLabel.text = @"透明度开关";
             UISwitch *sw = [UISwitch new];
@@ -4880,26 +4884,65 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0f%%", floatingAlpha * 100.0];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else if (indexPath.row == 2) {
+            // 浮窗大小：标题 + 右侧数值 + 下方滑块（数值完整可见）
             cell.textLabel.text = @"浮窗大小";
-            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(0,0,130,30)];
+            cell.detailTextLabel.hidden = YES;
+            CGFloat cw2 = cell.contentView.bounds.size.width;
+            if (cw2 < 100) cw2 = self.tableView.bounds.size.width - 32;
+            UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw2 - 90, 8, 75, 28)];
+            valLbl.text = [NSString stringWithFormat:@"%.0f%%", floatingScale * 100];
+            valLbl.font = [UIFont monospacedDigitSystemFontOfSize:16 weight:UIFontWeightBold];
+            valLbl.textColor = [UIColor systemBlueColor];
+            valLbl.textAlignment = NSTextAlignmentRight;
+            valLbl.tag = 960;
+            [cell.contentView addSubview:valLbl];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(16, 40, cw2 - 32, 30)];
             slider.minimumValue = 0.4; slider.maximumValue = 1.6; slider.value = floatingScale;
+            slider.continuous = YES;
+            slider.tag = 963;
             [slider addTarget:self action:@selector(changeScaleSlider:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = slider;
-            cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0f%%", floatingScale * 100];
+            [cell.contentView addSubview:slider];
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 3) {
+            // 字体大小
             cell.textLabel.text = @"字体大小";
-            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(0,0,130,30)];
+            cell.detailTextLabel.hidden = YES;
+            CGFloat cw3 = cell.contentView.bounds.size.width;
+            if (cw3 < 100) cw3 = self.tableView.bounds.size.width - 32;
+            UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw3 - 90, 8, 75, 28)];
+            valLbl.text = [NSString stringWithFormat:@"%.0fpt", floatingFontSize];
+            valLbl.font = [UIFont monospacedDigitSystemFontOfSize:16 weight:UIFontWeightBold];
+            valLbl.textColor = [UIColor systemBlueColor];
+            valLbl.textAlignment = NSTextAlignmentRight;
+            valLbl.tag = 961;
+            [cell.contentView addSubview:valLbl];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(16, 40, cw3 - 32, 30)];
             slider.minimumValue = 8.0; slider.maximumValue = 15.0; slider.value = floatingFontSize;
+            slider.continuous = YES;
+            slider.tag = 964;
             [slider addTarget:self action:@selector(changeFontSlider:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = slider;
-            cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0fpt", floatingFontSize];
+            [cell.contentView addSubview:slider];
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 4) {
+            // 圆角大小
             cell.textLabel.text = @"圆角大小";
-            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(0,0,130,30)];
+            cell.detailTextLabel.hidden = YES;
+            CGFloat cw4 = cell.contentView.bounds.size.width;
+            if (cw4 < 100) cw4 = self.tableView.bounds.size.width - 32;
+            UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw4 - 90, 8, 75, 28)];
+            valLbl.text = [NSString stringWithFormat:@"%.0f", floatingCornerRadius];
+            valLbl.font = [UIFont monospacedDigitSystemFontOfSize:16 weight:UIFontWeightBold];
+            valLbl.textColor = [UIColor systemBlueColor];
+            valLbl.textAlignment = NSTextAlignmentRight;
+            valLbl.tag = 962;
+            [cell.contentView addSubview:valLbl];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(16, 40, cw4 - 32, 30)];
             slider.minimumValue = 4.0; slider.maximumValue = 35.0; slider.value = floatingCornerRadius;
+            slider.continuous = YES;
+            slider.tag = 965;
             [slider addTarget:self action:@selector(changeCornerRadiusSlider:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = slider;
-            cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0f", floatingCornerRadius];
+            [cell.contentView addSubview:slider];
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
         }
     } else if (indexPath.section == 3) {
         if (indexPath.row == 0) {
@@ -5446,7 +5489,11 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 - (void)changeScaleSlider:(UISlider *)s { 
     floatingScale = s.value; 
     UITableViewCell *cell = [self _cellForView:s];
-    if (cell) cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0f%%", floatingScale * 100];
+    if (cell) {
+        UILabel *l = [cell.contentView viewWithTag:960];
+        if (l) l.text = [NSString stringWithFormat:@"%.0f%%", floatingScale * 100];
+        else cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0f%%", floatingScale * 100];
+    }
     
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(saveConfigs) object:nil];
     [self performSelector:@selector(saveConfigs) withObject:nil afterDelay:0.5];
@@ -5455,7 +5502,11 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 - (void)changeFontSlider:(UISlider *)s { 
     floatingFontSize = s.value;
     UITableViewCell *cell = [self _cellForView:s];
-    if (cell) cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0fpt", floatingFontSize];
+    if (cell) {
+        UILabel *l = [cell.contentView viewWithTag:961];
+        if (l) l.text = [NSString stringWithFormat:@"%.0fpt", floatingFontSize];
+        else cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0fpt", floatingFontSize];
+    }
 
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(saveConfigs) object:nil];
     [self performSelector:@selector(saveConfigs) withObject:nil afterDelay:0.5];
@@ -5464,7 +5515,11 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 - (void)changeCornerRadiusSlider:(UISlider *)s { 
     floatingCornerRadius = s.value;
     UITableViewCell *cell = [self _cellForView:s];
-    if (cell) cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0f", floatingCornerRadius];
+    if (cell) {
+        UILabel *l = [cell.contentView viewWithTag:962];
+        if (l) l.text = [NSString stringWithFormat:@"%.0f", floatingCornerRadius];
+        else cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0f", floatingCornerRadius];
+    }
 
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(saveConfigs) object:nil];
     [self performSelector:@selector(saveConfigs) withObject:nil afterDelay:0.5];
@@ -6557,10 +6612,15 @@ static void detectPluginConflicts(void) {
         return (indexPath.row == 9) ? 72.0 : 64.0;
     }
     if (indexPath.section == 9) {
+        if (indexPath.row == 0) return 84.0;  // 智能停充开关（说明两行完整显示）
         if (indexPath.row == 1) return 92.0;   // 预设按钮（卡片式）
         if (indexPath.row == 2) return 88.0;   // 充电区间可视化
         if (indexPath.row == 3 || indexPath.row == 4) return 78.0; // 滑块
         return 64.0;
+    }
+    if (indexPath.section == 2) {
+        if (indexPath.row == 2 || indexPath.row == 3 || indexPath.row == 4) return 78.0; // 浮窗/字体/圆角滑块
+        return 56.0;
     }
     if (indexPath.section == 8) {
         if (indexPath.row == 7) return 78.0; // 玻璃不透明度滑块
