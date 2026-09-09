@@ -4356,8 +4356,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             if (v.tag >= 900) [v removeFromSuperview];
         }
         [cell layoutIfNeeded];
-        CGFloat cw = cell.contentView.bounds.size.width;
-        if (cw < 100) cw = self.tableView.bounds.size.width - 32;
+        CGFloat cw = self.tableView.bounds.size.width - 32.0;
 
         if (indexPath.row == 0) {
             // 开关（主标题+说明全部自绘固定位置，避免系统 textLabel 垂直居中与说明重叠）
@@ -4544,6 +4543,8 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 
     // 🔍 插件冲突检测
     if (indexPath.section == 12) {
+        // 统一内容宽度口径（不依赖 cell 布局时机，不同机型一致）
+        CGFloat cw = self.tableView.bounds.size.width - 32.0;
         // 状态卡片(row 0)不可点击，其他全部可点击
         if (indexPath.row == 0) {
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
@@ -4558,7 +4559,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             // 🎨 卡片式状态卡片
             cell.backgroundColor = [UIColor clearColor];
             // 卡片背景
-            UIView *card = [[UIView alloc] initWithFrame:CGRectMake(12, 8, cell.contentView.bounds.size.width - 24, 100)];
+            UIView *card = [[UIView alloc] initWithFrame:CGRectMake(12, 8, cw - 24, 100)];
             card.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
                 return t.userInterfaceStyle == UIUserInterfaceStyleDark ?
                     [UIColor colorWithRed:0.1 green:0.15 blue:0.25 alpha:1.0] :
@@ -4637,7 +4638,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
                     iconColor = [UIColor colorWithRed:1.0 green:1.0 blue:0.85 alpha:1.0];
                 }
                 // 卡片背景
-                UIView *card = [[UIView alloc] initWithFrame:CGRectMake(12, 6, cell.contentView.bounds.size.width - 24, 76)];
+                UIView *card = [[UIView alloc] initWithFrame:CGRectMake(12, 6, cw - 24, 76)];
                 card.backgroundColor = cardColor;
                 card.layer.cornerRadius = 14;
                 [cell.contentView addSubview:card];
@@ -4709,19 +4710,19 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
                     iconLbl.textAlignment = NSTextAlignmentCenter;
                     [cell.contentView addSubview:iconLbl];
                     // 分类名称
-                    UILabel *nameLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 6, cell.contentView.bounds.size.width - 120, 22)];
+                    UILabel *nameLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 6, cw - 120, 22)];
                     nameLbl.text = [NSString stringWithFormat:@"%@（%ld个）", catInfo[@"name"], (long)catCount];
                     nameLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
                     nameLbl.textColor = [UIColor labelColor];
                     [cell.contentView addSubview:nameLbl];
                     // 描述
-                    UILabel *descLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 28, cell.contentView.bounds.size.width - 120, 16)];
+                    UILabel *descLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 28, cw - 120, 16)];
                     descLbl.text = [NSString stringWithFormat:@"共 %ld 个插件", (long)catCount];
                     descLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
                     descLbl.textColor = [UIColor secondaryLabelColor];
                     [cell.contentView addSubview:descLbl];
                     // 右侧箭头
-                    UILabel *arrowLbl = [[UILabel alloc] initWithFrame:CGRectMake(cell.contentView.bounds.size.width - 30, 14, 20, 24)];
+                    UILabel *arrowLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw - 30, 14, 20, 24)];
                     arrowLbl.text = @"›";
                     arrowLbl.font = [UIFont systemFontOfSize:24 weight:UIFontWeightBold];
                     arrowLbl.textColor = [UIColor tertiaryLabelColor];
@@ -4751,28 +4752,27 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
                             NSString *ver = plugin[@"version"];
                             NSInteger powerLevel = estimatePowerConsumption(plugin);
                             NSString *powerIcon = (powerLevel == 2) ? @"🔴" : (powerLevel == 1) ? @"🟡" : @"🟢";
-                            UILabel *nameLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 8, cell.contentView.bounds.size.width - 120, 20)];
+                            UILabel *nameLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 8, cw - 110, 20)];
                             nameLbl.text = [NSString stringWithFormat:@"%@  v%@  %@", plugin[@"name"], ver, powerIcon];
                             nameLbl.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
                             nameLbl.textColor = [UIColor labelColor];
                             [cell.contentView addSubview:nameLbl];
-                            // 描述（截断）
-                            NSString *pluginDesc = plugin[@"desc"];
-                            if (pluginDesc.length > 30) pluginDesc = [pluginDesc substringToIndex:30];
-                            UILabel *descLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 28, cell.contentView.bounds.size.width - 120, 16)];
-                            descLbl.text = pluginDesc;
+                            // 描述（最多两行完整显示，不再硬截断）
+                            UILabel *descLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 30, cw - 110, 30)];
+                            descLbl.text = plugin[@"desc"];
                             descLbl.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
-                            descLbl.textColor = [UIColor secondaryLabelColor];
+                            descLbl.textColor = [UIColor colorWithWhite:0.15 alpha:1.0]; // 黑色小字清晰可读
+                            descLbl.numberOfLines = 2;
                             [cell.contentView addSubview:descLbl];
                             // 注入进程数
                             NSArray *injected = plugin[@"injectedBundles"];
-                            UILabel *injectLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 44, cell.contentView.bounds.size.width - 120, 14)];
+                            UILabel *injectLbl = [[UILabel alloc] initWithFrame:CGRectMake(66, 62, cw - 110, 14)];
                             injectLbl.text = [NSString stringWithFormat:@"注入 %ld 个进程 · %@", (long)injected.count, plugin[@"category"]];
                             injectLbl.font = [UIFont systemFontOfSize:10 weight:UIFontWeightRegular];
-                            injectLbl.textColor = [UIColor tertiaryLabelColor];
+                            injectLbl.textColor = [UIColor colorWithWhite:0.35 alpha:1.0];
                             [cell.contentView addSubview:injectLbl];
                             // 右侧箭头
-                            UILabel *arrowLbl = [[UILabel alloc] initWithFrame:CGRectMake(cell.contentView.bounds.size.width - 30, 20, 20, 24)];
+                            UILabel *arrowLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw - 30, 32, 20, 24)];
                             arrowLbl.text = @"›";
                             arrowLbl.font = [UIFont systemFontOfSize:24 weight:UIFontWeightBold];
                             arrowLbl.textColor = [UIColor tertiaryLabelColor];
@@ -4910,8 +4910,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             // 浮窗大小：一行式（标题 + 弹性滑块 + 右侧数值），iOS 原生滑块行风格
             cell.textLabel.hidden = YES;
             cell.detailTextLabel.hidden = YES;
-            CGFloat cw2 = cell.contentView.bounds.size.width;
-            if (cw2 < 100) cw2 = self.tableView.bounds.size.width - 32;
+            CGFloat cw2 = self.tableView.bounds.size.width - 32.0;
             UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, 90, 28)];
             titleLbl.text = @"浮窗大小";
             titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightRegular];
@@ -4936,8 +4935,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             // 字体大小：一行式
             cell.textLabel.hidden = YES;
             cell.detailTextLabel.hidden = YES;
-            CGFloat cw3 = cell.contentView.bounds.size.width;
-            if (cw3 < 100) cw3 = self.tableView.bounds.size.width - 32;
+            CGFloat cw3 = self.tableView.bounds.size.width - 32.0;
             UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, 90, 28)];
             titleLbl.text = @"字体大小";
             titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightRegular];
@@ -4962,8 +4960,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             // 圆角大小：一行式
             cell.textLabel.hidden = YES;
             cell.detailTextLabel.hidden = YES;
-            CGFloat cw4 = cell.contentView.bounds.size.width;
-            if (cw4 < 100) cw4 = self.tableView.bounds.size.width - 32;
+            CGFloat cw4 = self.tableView.bounds.size.width - 32.0;
             UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, 90, 28)];
             titleLbl.text = @"圆角大小";
             titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightRegular];
@@ -5143,7 +5140,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             cell.accessoryView = sw;
         }
     } else if (indexPath.section == 8) {
-        CGFloat cw = cell.contentView.bounds.size.width; // 滑块行布局需要
+        CGFloat cw = self.tableView.bounds.size.width - 32.0; // 滑块行布局需要（稳定口径）
         if (indexPath.row == 0) {
             cell.textLabel.text = @"记忆悬浮窗位置";
             UISwitch *sw = [UISwitch new];
@@ -5638,8 +5635,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
     if (!cell) return;
 
-    CGFloat cw = cell.contentView.bounds.size.width;
-    if (cw < 100.0) cw = self.tableView.bounds.size.width - 32.0;
+    CGFloat cw = self.tableView.bounds.size.width - 32.0;
     CGFloat px = 20.0;
     CGFloat pw = MAX(40.0, cw - 40.0);
     CGFloat by = 62.0;
@@ -6683,7 +6679,7 @@ static void detectPluginConflicts(void) {
             if (relativeRow == currentRow) return 48.0;  // 分类标题
             currentRow++;
             for (NSInteger j = 0; j < catCount; j++) {
-                if (relativeRow == currentRow) return 76.0;  // 插件（显示版本+描述）
+                if (relativeRow == currentRow) return 90.0;  // 插件（名称+两行描述+注入进程）
                 currentRow++;
             }
         }
