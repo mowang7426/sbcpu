@@ -1716,6 +1716,8 @@ static void LGRemoveLabelShadowInView(UIView *view) {
     _miniBattLabel.textColor = monoColor;
     _miniTempLabel.textColor = monoColor;
     _timeLabel.textColor = monoColor; // 时间显示也参与反色
+    // 充电状态标签（智能停充/快充/充电增强）：跟随背景反色，白底黑字可读
+    if (_statusLabel) _statusLabel.textColor = monoColor;
     // 通知文字
     _notifAppNameLabel.textColor = lightBg ? [UIColor darkGrayColor] : [UIColor lightGrayColor];
     _notifMessageLabel.textColor = lightBg ? [UIColor colorWithWhite:0.15 alpha:1.0] : [UIColor colorWithWhite:0.85 alpha:1.0];
@@ -4269,7 +4271,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 5) return 1;
     if (section == 6) return 10;
     if (section == 7) return 3; 
-    if (section == 8) return 10; // 液态玻璃自定义 3 滑块
+    if (section == 8) return 8; // 位置与显示（磨砂强度/卡片不透明度已移除）
     if (section == 9) return 5; // 🔋 智能停充
     if (section == 10) return 0; // 📖 功能说明已移除
     if (section == 11) return 0; // 🌡️ 温控功能说明已移除
@@ -4432,8 +4434,8 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             [cell.contentView addSubview:lowVal];
             UILabel *arrowLbl = [[UILabel alloc] initWithFrame:CGRectMake(px + 80, 34, pw - 160, 20)];
             arrowLbl.text = @"← 循环区间 →";
-            arrowLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
-            arrowLbl.textColor = [UIColor secondaryLabelColor];
+            arrowLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+            arrowLbl.textColor = [UIColor colorWithWhite:0.33 alpha:1.0]; // 深灰，白底清晰可读
             arrowLbl.textAlignment = NSTextAlignmentCenter;
             arrowLbl.tag = 902;
             [cell.contentView addSubview:arrowLbl];
@@ -5121,50 +5123,6 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             slider.minimumTrackTintColor = [UIColor systemBlueColor];
             slider.tag = 951;
             [slider addTarget:self action:@selector(changeGlassDimOpacity:) forControlEvents:UIControlEventValueChanged];
-            [cell.contentView addSubview:slider];
-            cell.selectionStyle = UITableViewCellSelectionStyleNone;
-        } else if (indexPath.row == 8) {
-            // 磨砂强度滑块
-            cell.textLabel.text = @"磨砂强度";
-            cell.textLabel.hidden = NO;
-            cell.detailTextLabel.hidden = YES;
-            UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw - 90, 8, 75, 28)];
-            valLbl.text = [NSString stringWithFormat:@"%.0f", glassBlurRadius];
-            valLbl.font = [UIFont monospacedDigitSystemFontOfSize:16 weight:UIFontWeightBold];
-            valLbl.textColor = [UIColor systemPurpleColor];
-            valLbl.textAlignment = NSTextAlignmentRight;
-            valLbl.tag = 952;
-            [cell.contentView addSubview:valLbl];
-            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(16, 40, cw - 32, 30)];
-            slider.minimumValue = 0;
-            slider.maximumValue = 60;
-            slider.value = glassBlurRadius;
-            slider.continuous = NO;
-            slider.minimumTrackTintColor = [UIColor systemPurpleColor];
-            slider.tag = 953;
-            [slider addTarget:self action:@selector(changeGlassBlurRadius:) forControlEvents:UIControlEventValueChanged];
-            [cell.contentView addSubview:slider];
-            cell.selectionStyle = UITableViewCellSelectionStyleNone;
-        } else if (indexPath.row == 9) {
-            // 卡片不透明度滑块
-            cell.textLabel.text = @"卡片不透明度";
-            cell.textLabel.hidden = NO;
-            cell.detailTextLabel.hidden = YES;
-            UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw - 90, 8, 75, 28)];
-            valLbl.text = [NSString stringWithFormat:@"%.0f%%", glassCardOpacity * 100.0f];
-            valLbl.font = [UIFont monospacedDigitSystemFontOfSize:16 weight:UIFontWeightBold];
-            valLbl.textColor = [UIColor systemTealColor];
-            valLbl.textAlignment = NSTextAlignmentRight;
-            valLbl.tag = 954;
-            [cell.contentView addSubview:valLbl];
-            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(16, 40, cw - 32, 30)];
-            slider.minimumValue = 40;
-            slider.maximumValue = 100;
-            slider.value = glassCardOpacity * 100.0f;
-            slider.continuous = NO;
-            slider.minimumTrackTintColor = [UIColor systemTealColor];
-            slider.tag = 955;
-            [slider addTarget:self action:@selector(changeGlassCardOpacity:) forControlEvents:UIControlEventValueChanged];
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         }
@@ -6605,7 +6563,7 @@ static void detectPluginConflicts(void) {
         return 64.0;
     }
     if (indexPath.section == 8) {
-        if (indexPath.row == 7 || indexPath.row == 8 || indexPath.row == 9) return 78.0; // 液态玻璃自定义滑块
+        if (indexPath.row == 7) return 78.0; // 玻璃不透明度滑块
         return 64.0;
     }
     if (indexPath.section == 11) {
