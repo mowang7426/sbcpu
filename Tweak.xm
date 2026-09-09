@@ -3406,8 +3406,8 @@ return self;
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    self.view.backgroundColor = [UIColor colorWithWhite:0.07 alpha:1.0];
-    self.tableView.backgroundColor = [UIColor colorWithWhite:0.07 alpha:1.0];
+    self.view.backgroundColor = [UIColor colorWithWhite:0.11 alpha:1.0];
+    self.tableView.backgroundColor = [UIColor colorWithWhite:0.11 alpha:1.0];
     self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.12];
 }
 
@@ -3448,8 +3448,8 @@ return self;
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    self.view.backgroundColor = [UIColor colorWithWhite:0.07 alpha:1.0];
-    self.tableView.backgroundColor = [UIColor colorWithWhite:0.07 alpha:1.0];
+    self.view.backgroundColor = [UIColor colorWithWhite:0.11 alpha:1.0];
+    self.tableView.backgroundColor = [UIColor colorWithWhite:0.11 alpha:1.0];
     self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.12];
 }
 
@@ -3775,7 +3775,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
                         (indexPath.section == 9 && indexPath.row == 1) ||
                         (indexPath.section == 9 && indexPath.row == 2);
     if (!isCustomCard) {
-        cell.backgroundColor = [UIColor colorWithWhite:0.13 alpha:0.68];
+        cell.backgroundColor = [UIColor colorWithWhite:0.20 alpha:0.55];
     }
     // 手势说明行文字（原 darkGrayColor 深色下不可读）
     if (indexPath.section == 10) {
@@ -3808,9 +3808,9 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 
     // === A+C 深色液态玻璃主题 ===
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    self.view.backgroundColor = [UIColor colorWithWhite:0.04 alpha:0.6];
+    self.view.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.34];
     self.tableView.backgroundColor = [UIColor clearColor];
-    self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.12];
+    self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.18];
 
     // 液态玻璃 backdrop（复用浮窗同款私有 API，透出桌面模糊）
     @try {
@@ -3829,7 +3829,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 
             // 深色压暗层（放在 backdrop 之上、tableView 之下）
             UIView *dim = [[UIView alloc] initWithFrame:self.view.bounds];
-            dim.backgroundColor = [UIColor colorWithWhite:0.04 alpha:0.55];
+            dim.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.34];
             dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
             dim.userInteractionEnabled = NO;
             [self.view insertSubview:dim belowSubview:self.tableView];
@@ -3840,7 +3840,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (@available(iOS 13.0, *)) {
         UINavigationBarAppearance *app = [UINavigationBarAppearance new];
         [app configureWithTransparentBackground];
-        app.backgroundColor = [UIColor colorWithWhite:0.06 alpha:0.72];
+        app.backgroundColor = [UIColor colorWithWhite:0.14 alpha:0.55];
         app.backgroundEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark];
         app.titleTextAttributes = @{NSForegroundColorAttributeName: [UIColor whiteColor],
                                     NSFontAttributeName: [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold]};
