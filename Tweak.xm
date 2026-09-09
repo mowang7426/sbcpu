@@ -239,6 +239,8 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @end
 @interface SBCPUSettingsController : UITableViewController
 - (void)saveConfigs;
+@property (nonatomic, strong) CALayer *glassBackdrop;  // 设置中心 backdrop 模糊层（可调磨砂强度）
+@property (nonatomic, strong) UIView *glassDimView;    // 设置中心白雾压暗层（可调透明度）
 @end
 @interface SBCPUDetailViewController : UIViewController
 @property (nonatomic, strong) UIVisualEffectView *blurEffectView;
@@ -310,6 +312,10 @@ static BOOL showBatteryPercent = YES;
 static BOOL showBatteryTemperature = YES;
 static BOOL showBatteryCurrent = YES;
 static BOOL liquidGlassEnabled = YES; // 液态玻璃效果开关
+// V4.8 液态玻璃自定义：背景白雾透明度 / 磨砂强度(blurRadius) / 卡片不透明度
+static float glassDimOpacity = 0.30f;
+static float glassBlurRadius = 40.0f;
+static float glassCardOpacity = 0.80f;
 // 智能停充
 static BOOL smartChargeEnable = NO;
 static NSInteger smartChargeUpperLimit = 80;  // 停充上限
@@ -508,6 +514,9 @@ static void LoadPreferences(void) {
     smartChargeUpperLimit = (NSInteger)getFloatPref(CFSTR("smartChargeUpperLimit"), 80.0f);
     smartChargeLowerLimit = (NSInteger)getFloatPref(CFSTR("smartChargeLowerLimit"), 70.0f);
     smartChargeMode = (NSInteger)getFloatPref(CFSTR("smartChargeMode"), 0.0f);
+    glassDimOpacity = getFloatPref(CFSTR("glassDimOpacity"), 0.30f);
+    glassBlurRadius = getFloatPref(CFSTR("glassBlurRadius"), 40.0f);
+    glassCardOpacity = getFloatPref(CFSTR("glassCardOpacity"), 0.80f);
     
     chargeBoostEnable = getBoolPref(CFSTR("chargeBoostEnable"), NO);
     forceFastChargeEnable = getBoolPref(CFSTR("forceFastChargeEnable"), NO);
@@ -562,6 +571,9 @@ static void SavePreferencesAndNotify(void) {
     setFloatPref(CFSTR("smartChargeUpperLimit"), (float)smartChargeUpperLimit);
     setFloatPref(CFSTR("smartChargeLowerLimit"), (float)smartChargeLowerLimit);
     setFloatPref(CFSTR("smartChargeMode"), (float)smartChargeMode);
+    setFloatPref(CFSTR("glassDimOpacity"), glassDimOpacity);
+    setFloatPref(CFSTR("glassBlurRadius"), glassBlurRadius);
+    setFloatPref(CFSTR("glassCardOpacity"), glassCardOpacity);
     setBoolPref(CFSTR("chargeBoostEnable"), chargeBoostEnable);
     setBoolPref(CFSTR("forceFastChargeEnable"), forceFastChargeEnable);
     setBoolPref(CFSTR("suppressPartRepair"), suppressPartRepairEnabled);
@@ -3883,10 +3895,10 @@ static UIImage *sbcpuIconForTitle(NSString *title, NSInteger section) {
 
 static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (!cell || !indexPath) return;
-    // 方案B：卡片近实底深色（section 12 为自绘实底卡片，保持透明让内部卡呈现）
+    // 卡片磨砂半透明（可调），section 12 为自绘实底卡片保持透明
     BOOL isCustomCard = (indexPath.section == 12);
     if (!isCustomCard) {
-        cell.backgroundColor = [UIColor colorWithWhite:0.11 alpha:0.97];
+        cell.backgroundColor = [UIColor colorWithWhite:0.16 alpha:glassCardOpacity];
     }
     // 手势说明行文字（原 darkGrayColor 深色下不可读）
     if (indexPath.section == 10) {
@@ -3919,7 +3931,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 
     // === A+C 深色液态玻璃主题 ===
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    self.view.backgroundColor = [UIColor colorWithWhite:0.16 alpha:0.30];
+    self.view.backgroundColor = [UIColor colorWithWhite:0.16 alpha:glassDimOpacity];
     self.tableView.backgroundColor = [UIColor clearColor];
     self.tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.18];
 
@@ -3936,18 +3948,20 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             [bd setValue:@"com.mowang.sbcpufloating" forKey:@"groupNamespace"];
             [bd setValue:@YES forKey:@"ignoresScreenClip"];
             [bd setValue:@1.0 forKey:@"scale"];
-            // 磨砂：调大 backdrop 模糊半径（私有 key，失败自动忽略）
+            // 磨砂：backdrop 模糊半径可调（私有 key，失败自动忽略）
             @try {
-                [bd setValue:@40.0 forKey:@"blurRadius"];
+                [bd setValue:@(glassBlurRadius) forKey:@"blurRadius"];
             } @catch (NSException *e) {}
             [self.view.layer insertSublayer:bd atIndex:0];
+            self.glassBackdrop = bd;
 
-            // 深色压暗层（放在 backdrop 之上、tableView 之下）
+            // 白雾压暗层（放在 backdrop 之上、tableView 之下），透明度可调
             UIView *dim = [[UIView alloc] initWithFrame:self.view.bounds];
-            dim.backgroundColor = [UIColor colorWithWhite:0.18 alpha:0.26];
+            dim.backgroundColor = [UIColor colorWithWhite:0.18 alpha:MAX(0.06f, glassDimOpacity - 0.04f)];
             dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
             dim.userInteractionEnabled = NO;
             [self.view insertSubview:dim belowSubview:self.tableView];
+            self.glassDimView = dim;
         }
     } @catch (NSException *e) {}
 
@@ -3955,7 +3969,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (@available(iOS 13.0, *)) {
         UINavigationBarAppearance *app = [UINavigationBarAppearance new];
         [app configureWithTransparentBackground];
-        app.backgroundColor = [UIColor colorWithWhite:0.22 alpha:0.42];
+        app.backgroundColor = [UIColor colorWithWhite:0.22 alpha:MIN(0.55f, glassDimOpacity + 0.12f)];
         app.backgroundEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark];
         app.titleTextAttributes = @{NSForegroundColorAttributeName: [UIColor whiteColor],
                                     NSFontAttributeName: [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold]};
@@ -4043,10 +4057,10 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 5) return 1;
     if (section == 6) return 10;
     if (section == 7) return 3; 
-    if (section == 8) return 7;
+    if (section == 8) return 10; // 液态玻璃自定义 3 滑块
     if (section == 9) return 5; // 🔋 智能停充
-    if (section == 10) return 5; // 📖 功能说明行数
-    if (section == 11) return 8; // 🌡️ 温控功能说明
+    if (section == 10) return 0; // 📖 功能说明已移除
+    if (section == 11) return 0; // 🌡️ 温控功能说明已移除
     if (section == 12) {
         // 🔍 插件冲突检测：1状态卡片 + 冲突数 + 分类标题数 + 插件数
         if (!gPluginScanDone) return 1;
@@ -4068,8 +4082,8 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 7) return @"🔌 充电增强";
     if (section == 8) return @"📍 位置与显示";
     if (section == 9) return @"🔋 智能停充";
-    if (section == 10) return @"📖 功能与使用说明";
-    if (section == 11) return @"🌡️ 温度保护功能说明"; 
+    if (section == 10) return @"";
+    if (section == 11) return @""; 
     if (section == 12) return @"🔍 插件冲突检测";
     return @"";
 }
@@ -4827,6 +4841,72 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             sw.on = liquidGlassEnabled;
             [sw addTarget:self action:@selector(changeLiquidGlass:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
+        } else if (indexPath.row == 7) {
+            // 玻璃透明度滑块
+            cell.textLabel.text = @"背景透明度";
+            cell.textLabel.hidden = NO;
+            cell.detailTextLabel.hidden = YES;
+            UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw - 90, 8, 75, 28)];
+            valLbl.text = [NSString stringWithFormat:@"%.0f%%", glassDimOpacity * 100.0f];
+            valLbl.font = [UIFont monospacedDigitSystemFontOfSize:16 weight:UIFontWeightBold];
+            valLbl.textColor = [UIColor systemBlueColor];
+            valLbl.textAlignment = NSTextAlignmentRight;
+            valLbl.tag = 950;
+            [cell.contentView addSubview:valLbl];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(16, 40, cw - 32, 30)];
+            slider.minimumValue = 10;
+            slider.maximumValue = 70;
+            slider.value = glassDimOpacity * 100.0f;
+            slider.continuous = NO;
+            slider.minimumTrackTintColor = [UIColor systemBlueColor];
+            slider.tag = 951;
+            [slider addTarget:self action:@selector(changeGlassDimOpacity:) forControlEvents:UIControlEventValueChanged];
+            [cell.contentView addSubview:slider];
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else if (indexPath.row == 8) {
+            // 磨砂强度滑块
+            cell.textLabel.text = @"磨砂强度";
+            cell.textLabel.hidden = NO;
+            cell.detailTextLabel.hidden = YES;
+            UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw - 90, 8, 75, 28)];
+            valLbl.text = [NSString stringWithFormat:@"%.0f", glassBlurRadius];
+            valLbl.font = [UIFont monospacedDigitSystemFontOfSize:16 weight:UIFontWeightBold];
+            valLbl.textColor = [UIColor systemPurpleColor];
+            valLbl.textAlignment = NSTextAlignmentRight;
+            valLbl.tag = 952;
+            [cell.contentView addSubview:valLbl];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(16, 40, cw - 32, 30)];
+            slider.minimumValue = 0;
+            slider.maximumValue = 60;
+            slider.value = glassBlurRadius;
+            slider.continuous = NO;
+            slider.minimumTrackTintColor = [UIColor systemPurpleColor];
+            slider.tag = 953;
+            [slider addTarget:self action:@selector(changeGlassBlurRadius:) forControlEvents:UIControlEventValueChanged];
+            [cell.contentView addSubview:slider];
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else if (indexPath.row == 9) {
+            // 卡片不透明度滑块
+            cell.textLabel.text = @"卡片不透明度";
+            cell.textLabel.hidden = NO;
+            cell.detailTextLabel.hidden = YES;
+            UILabel *valLbl = [[UILabel alloc] initWithFrame:CGRectMake(cw - 90, 8, 75, 28)];
+            valLbl.text = [NSString stringWithFormat:@"%.0f%%", glassCardOpacity * 100.0f];
+            valLbl.font = [UIFont monospacedDigitSystemFontOfSize:16 weight:UIFontWeightBold];
+            valLbl.textColor = [UIColor systemTealColor];
+            valLbl.textAlignment = NSTextAlignmentRight;
+            valLbl.tag = 954;
+            [cell.contentView addSubview:valLbl];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(16, 40, cw - 32, 30)];
+            slider.minimumValue = 40;
+            slider.maximumValue = 100;
+            slider.value = glassCardOpacity * 100.0f;
+            slider.continuous = NO;
+            slider.minimumTrackTintColor = [UIColor systemTealColor];
+            slider.tag = 955;
+            [slider addTarget:self action:@selector(changeGlassCardOpacity:) forControlEvents:UIControlEventValueChanged];
+            [cell.contentView addSubview:slider];
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
         }
     }
     applySettingsTheme(cell, indexPath);
@@ -6108,6 +6188,52 @@ static void detectPluginConflicts(void) {
 - (void)changeWechatEnable:(UISwitch *)sw { wechatEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeQqEnable:(UISwitch *)sw { qqEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeTimEnable:(UISwitch *)sw { timEnable = sw.isOn; SavePreferencesAndNotify(); }
+// 液态玻璃自定义：三个滑块 action + 即时应用
+- (void)changeGlassDimOpacity:(UISlider *)sender {
+    glassDimOpacity = sender.value / 100.0f;
+    setFloatPref(CFSTR("glassDimOpacity"), glassDimOpacity);
+    [self applyGlassTheme];
+    [self reloadGlassValueLabels];
+}
+- (void)changeGlassBlurRadius:(UISlider *)sender {
+    glassBlurRadius = sender.value;
+    setFloatPref(CFSTR("glassBlurRadius"), glassBlurRadius);
+    [self applyGlassTheme];
+    [self reloadGlassValueLabels];
+}
+- (void)changeGlassCardOpacity:(UISlider *)sender {
+    glassCardOpacity = sender.value / 100.0f;
+    setFloatPref(CFSTR("glassCardOpacity"), glassCardOpacity);
+    [self.tableView reloadData];
+}
+- (void)applyGlassTheme {
+    self.view.backgroundColor = [UIColor colorWithWhite:0.16 alpha:glassDimOpacity];
+    if (self.glassDimView) {
+        self.glassDimView.backgroundColor = [UIColor colorWithWhite:0.18 alpha:MAX(0.06f, glassDimOpacity - 0.04f)];
+    }
+    if (self.glassBackdrop) {
+        @try {
+            [self.glassBackdrop setValue:@(glassBlurRadius) forKey:@"blurRadius"];
+        } @catch (NSException *e) {}
+    }
+    if (@available(iOS 13.0, *)) {
+        UINavigationBarAppearance *app = self.navigationController.navigationBar.standardAppearance;
+        if (app) {
+            app.backgroundColor = [UIColor colorWithWhite:0.22 alpha:MIN(0.55f, glassDimOpacity + 0.12f)];
+            self.navigationController.navigationBar.standardAppearance = app;
+            self.navigationController.navigationBar.scrollEdgeAppearance = app;
+            self.navigationController.navigationBar.compactAppearance = app;
+        }
+    }
+}
+- (void)reloadGlassValueLabels {
+    for (UITableViewCell *cell in self.tableView.visibleCells) {
+        UILabel *l = [cell.contentView viewWithTag:950];
+        if (l) l.text = [NSString stringWithFormat:@"%.0f%%", glassDimOpacity * 100.0f];
+        l = [cell.contentView viewWithTag:952];
+        if (l) l.text = [NSString stringWithFormat:@"%.0f", glassBlurRadius];
+    }
+}
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
     (void)tableView;
     if (indexPath.section == 6) {
@@ -6118,6 +6244,10 @@ static void detectPluginConflicts(void) {
         if (indexPath.row == 1) return 92.0;   // 预设按钮（卡片式）
         if (indexPath.row == 2) return 88.0;   // 充电区间可视化
         if (indexPath.row == 3 || indexPath.row == 4) return 78.0; // 滑块
+        return 64.0;
+    }
+    if (indexPath.section == 8) {
+        if (indexPath.row == 7 || indexPath.row == 8 || indexPath.row == 9) return 78.0; // 液态玻璃自定义滑块
         return 64.0;
     }
     if (indexPath.section == 11) {
