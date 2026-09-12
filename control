@@ -1,0 +1,9 @@
+Package: com.yourname.sbcpufloating
+Name: SB CPU Floating
+Version: 4.12.0
+Architecture: iphoneos-arm64
+Maintainer: MoWang
+Author: MoWang
+Description: SpringBoard CPU Floating Monitor V4.12.0 (自适应屏幕版) - 液态玻璃悬浮窗、智能停充、插件冲突检测、横屏迷你胶囊、控制中心模块
+Section: Tweaks
+Depends: mobilesubstrate, preferenceloader
