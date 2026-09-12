@@ -1,15 +1,8 @@
-name: Build ArcStatusBar
+
+name: Build SBCPUFloating V3.0
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - 'Tweak.x'
-      - 'ArcStatusBarViews.h'
-      - 'ArcStatusBarViews.m'
-      - 'Makefile'
-      - 'control'
-      - 'Filter.plist'
 
 jobs:
   build:
@@ -66,18 +59,18 @@ jobs:
       - name: Build Rootless
         run: |
           set -e
-          make clean || true
+          make clean
           THEOS_PACKAGE_SCHEME=rootless make package FINALPACKAGE=1
 
       - name: Copy Rootless package
         run: |
           set -e
           ROOTLESS_DEB=$(find packages -maxdepth 1 -type f -name "*.deb" | head -n 1)
-          cp "$ROOTLESS_DEB" "build/ArcStatusBar-rootless.deb"
+          cp "$ROOTLESS_DEB" "build/SBCPUFloating-V3.0-rootless.deb"
 
       - name: Clean before RootHide
         run: |
-          make clean || true
+          make clean
           rm -rf packages
 
       - name: Build RootHide
@@ -89,10 +82,19 @@ jobs:
         run: |
           set -e
           ROOTHIDE_DEB=$(find packages -maxdepth 1 -type f -name "*.deb" | head -n 1)
-          cp "$ROOTHIDE_DEB" "build/ArcStatusBar-roothide.deb"
+          cp "$ROOTHIDE_DEB" "build/SBCPUFloating-V3.0-roothide.deb"
+
+      - name: Verify preference bundle is packaged
+        run: |
+          set -e
+          for deb in build/*.deb; do
+            echo "===== Checking $deb ====="
+            dpkg-deb -c "$deb" | grep -E 'PreferenceBundles/SBCPUPrefs\.bundle|PreferenceLoader/Preferences/SBCPUPrefs\.plist'
+          done
 
       - name: Upload DEB packages
         uses: actions/upload-artifact@v4
         with:
-          name: ArcStatusBar-debs
+          name: SBCPUFloating-V3.0
           path: build/*.deb
+
