@@ -1,21 +1,31 @@
-# SBCPUFloating V4.12.0 自适应屏幕版 - THEOS 工程
-
-ARCHS = arm64 arm64e
-TARGET = iphone:clang:16.5:14.0
+export TARGET ?= iphone:clang:16.5:14.0
+export ARCHS ?= arm64 arm64e
+SBLIQUIDGLASS_DEBUG ?= 0
+export SBLIQUIDGLASS_DEBUG
+INSTALL_TARGET_PROCESSES = backboardd SpringBoard
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = SBCPUFloating
+TWEAK_NAME = sbliquidglass
 
-SBCPUFloating_FILES = Tweak.xm
-SBCPUFloating_CFLAGS = -fobjc-arc -Iinclude
-SBCPUFloating_FRAMEWORKS = UIKit Foundation QuartzCore CoreMotion
-SBCPUFloating_PRIVATE_FRAMEWORKS = PowerUI IOKit FrontBoardServices
-SBCPUFloating_INSTALL_TARGET_PROCESSES = SpringBoard
+sbliquidglass_FILES     = Tweak.x Hooks/Dock.x Hooks/Folder.x Hooks/AppIcons.x Hooks/Banner.x Hooks/ControlCenter.x \
+                      Hooks/AppLibrary.x Hooks/SearchPill.x Hooks/Spotlight.x Hooks/Widgets.x Hooks/ContextMenu.x \
+                      Hooks/QuickActions.x Hooks/Passcode.x Hooks/Clock.x Hooks/Alerts.x \
+                      Hooks/PreferencesControls.x Hooks/CoverSheet.x Hooks/TabBar.x \
+                      Hooks/Keyboard.x Hooks/DynamicIsland.x \
+                      SBLiquidGlassPrefs/LGPrefsLiquidSlider.m \
+                      SBLiquidGlassPrefs/LGPrefsLiquidSwitch.m \
+                      Shared/LGGlassKit.x Shared/LGLiveBackdropView.m \
+                      Shared/LGWallpaperBlurCache.m \
+                      Shared/LGSharedSupport.m \
+                      Hooks/AssistiveTouchTextAdaptive.x
 
-# roothide 越狱支持
-ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
-SBCPUFloating_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide
-endif
+sbliquidglass_CFLAGS    = -fobjc-arc -DSBLIQUIDGLASS_DEBUG=$(SBLIQUIDGLASS_DEBUG)
+sbliquidglass_FRAMEWORKS = UIKit QuartzCore CoreText CoreGraphics CoreMotion CoreImage
 
-include $(THEOS_MAKE_PATH)/tweak.mk
+include $(THEOS)/makefiles/tweak.mk
+
+SUBPROJECTS += SBLiquidGlassBackboardd
+SUBPROJECTS += SBLiquidGlassRWB
+SUBPROJECTS += SBLiquidGlassPrefs
+include $(THEOS_MAKE_PATH)/aggregate.mk
