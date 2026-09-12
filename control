@@ -1,9 +1,9 @@
-Package: dylv.sbliquidglass
-Name: SBLiquidGlass
-Version: 1.7.0
-Architecture: iphoneos-arm
-Description: A staged Liquid Glass system UI tweak with a safe surface architecture.
+Package: com.sbcpu.floating
+Name: SB CPU Floating
+Version: 3.6
+Architecture: iphoneos-arm64
 Maintainer: MoWang
 Author: MoWang
+Description:新增插件耗电情况，仅供参考
 Section: Tweaks
-Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 14.0), firmware (<< 26.0), preferenceloader
+Depends: mobilesubstrate, preferenceloader
