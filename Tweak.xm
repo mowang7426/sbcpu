@@ -6764,7 +6764,12 @@ static void registerV160Observers(void) {
 @end
 
 // 实时读取当前是否已锁屏（所有触发路径共用同一判断）
+// 注意：SBLockScreenManager 在 SpringBoard 启动极早期（dyld 构造器阶段）不可访问，
+// 此时调用 +sharedInstance 会在 dispatch_once 内抛异常导致 SIGABRT 安全模式，
+// 因此 gSBReady 在 %ctor 延迟 3 秒后才置 YES，早期一律返回 NO。
+static BOOL gSBReady = NO;
 static BOOL isSBLocked(void) {
+    if (!gSBReady) return NO;
     Class lockClass = NSClassFromString(@"SBLockScreenManager");
     if (lockClass && [lockClass respondsToSelector:@selector(sharedInstance)]) {
         id mgr = [lockClass performSelector:@selector(sharedInstance)];
@@ -6790,18 +6795,19 @@ static void performLockScreenCleanup(void) {
         int killedCount = 0;
         NSMutableArray *killedBids = [NSMutableArray array];
 
-        // 方案一（优先）：SpringBoard 进程内 SBApplicationController + killForReason:
-        Class ctrlCls = NSClassFromString(@"SBApplicationController");
-        if (ctrlCls && [ctrlCls respondsToSelector:@selector(sharedInstance)]) {
-            id ctrl = [ctrlCls performSelector:@selector(sharedInstance)];
-            if (ctrl && [ctrl respondsToSelector:@selector(allApplications)]) {
-                NSArray *apps = [ctrl performSelector:@selector(allApplications)];
-                for (id app in apps) {
+        // ===== 主逻辑：只清理 App Switcher 卡片里在运行的应用（含系统软件应用）=====
+        // 卡片列表天然只包含用户可见的应用，守护进程（backboardd/locationd/mediaserverd 等）
+        // 不会出现在卡片里，因此绝不会误伤系统危险进程。
+        NSMutableArray *toRemove = [NSMutableArray array];
+        Class swModelCls = NSClassFromString(@"SBAppSwitcherModel");
+        if (swModelCls && [swModelCls respondsToSelector:@selector(sharedInstance)]) {
+            id swModel = [swModelCls performSelector:@selector(sharedInstance)];
+            if (swModel && [swModel respondsToSelector:@selector(applications)]) {
+                NSArray *switcherApps = [swModel performSelector:@selector(applications)];
+                for (id app in switcherApps) {
                     NSString *bid = [app respondsToSelector:@selector(bundleIdentifier)] ? [app performSelector:@selector(bundleIdentifier)] : nil;
                     if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
-                    // 唯一硬排除：不能杀 SpringBoard 自身（否则白屏重启）；其余应用（含系统应用）全部杀
-                    if ([bid isEqualToString:@"com.apple.springboard"]) continue;
-                    if ([app respondsToSelector:@selector(isRunning)] && !(BOOL)[app performSelector:@selector(isRunning)]) continue; // 只杀正在运行的
+                    if ([bid isEqualToString:@"com.apple.springboard"]) continue; // 唯一硬排除：不杀 SpringBoard 自身
 
                     BOOL killed = NO;
                     // 方式1：私有 API killForReason:（SBApplicationKillReasonUser）
@@ -6821,48 +6827,63 @@ static void performLockScreenCleanup(void) {
                         killedCount++;
                         [killedBids addObject:bid];
                     }
-                }
-            } else {
-                NSLog(@"[SBCPUFloating] 锁屏清理：SBApplicationController 无 allApplications，走兜底方案");
-            }
-        } else {
-            NSLog(@"[SBCPUFloating] 锁屏清理：SBApplicationController 不可用，走兜底方案");
-        }
-
-        // 清空 App Switcher 后台卡片（进程被杀后卡片快照仍会残留，必须主动移除）
-        Class swModelCls = NSClassFromString(@"SBAppSwitcherModel");
-        if (swModelCls && [swModelCls respondsToSelector:@selector(sharedInstance)]) {
-            id swModel = [swModelCls performSelector:@selector(sharedInstance)];
-            if (swModel && [swModel respondsToSelector:@selector(applications)]) {
-                NSArray *switcherApps = [swModel performSelector:@selector(applications)];
-                NSMutableArray *toRemove = [NSMutableArray array];
-                for (id app in switcherApps) {
-                    NSString *bid = [app respondsToSelector:@selector(bundleIdentifier)] ? [app performSelector:@selector(bundleIdentifier)] : nil;
-                    if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
-                    if ([bid isEqualToString:@"com.apple.springboard"]) continue; // 唯一硬排除：不能移除 SpringBoard 自身
                     [toRemove addObject:app];
                 }
                 if (toRemove.count > 0) {
                     if ([swModel respondsToSelector:@selector(removeApplications:)]) {
                         [swModel removeApplications:toRemove];
-                        NSLog(@"[SBCPUFloating] 锁屏清理：已清空 %lu 张后台卡片", (unsigned long)toRemove.count);
                     } else if ([swModel respondsToSelector:@selector(removeApplication:)]) {
                         for (id app in toRemove) {
                             [swModel removeApplication:app];
                         }
-                        NSLog(@"[SBCPUFloating] 锁屏清理：已逐张清空 %lu 张后台卡片", (unsigned long)toRemove.count);
                     }
+                    NSLog(@"[SBCPUFloating] 锁屏清理：卡片应用已关闭 %lu 个，卡片已移除 %lu 张", (unsigned long)killedBids.count, (unsigned long)toRemove.count);
                 } else {
-                    NSLog(@"[SBCPUFloating] 锁屏清理：后台卡片已无第三方应用");
+                    NSLog(@"[SBCPUFloating] 锁屏清理：后台卡片已无应用");
                 }
             } else {
-                NSLog(@"[SBCPUFloating] 锁屏清理：SBAppSwitcherModel 无 applications 接口");
+                NSLog(@"[SBCPUFloating] 锁屏清理：SBAppSwitcherModel 无 applications 接口，走兜底方案");
             }
         } else {
-            NSLog(@"[SBCPUFloating] 锁屏清理：SBAppSwitcherModel 不可用");
+            NSLog(@"[SBCPUFloating] 锁屏清理：SBAppSwitcherModel 不可用，走兜底方案");
         }
 
-        // 方案二（兜底）：LSApplicationWorkspace + FBSSystemService
+        // ===== 兜底方案（仅当卡片 API 不可用时）：全量清理应用进程 =====
+        // 只操作 SBApplication（可启动的应用，含系统软件），守护进程不在其列
+        if (killedCount == 0) {
+            Class ctrlCls = NSClassFromString(@"SBApplicationController");
+            if (ctrlCls && [ctrlCls respondsToSelector:@selector(sharedInstance)]) {
+                id ctrl = [ctrlCls performSelector:@selector(sharedInstance)];
+                if (ctrl && [ctrl respondsToSelector:@selector(allApplications)]) {
+                    NSArray *apps = [ctrl performSelector:@selector(allApplications)];
+                    for (id app in apps) {
+                        NSString *bid = [app respondsToSelector:@selector(bundleIdentifier)] ? [app performSelector:@selector(bundleIdentifier)] : nil;
+                        if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+                        if ([bid isEqualToString:@"com.apple.springboard"]) continue; // 唯一硬排除：不杀 SpringBoard 自身
+                        if ([app respondsToSelector:@selector(isRunning)] && !(BOOL)[app performSelector:@selector(isRunning)]) continue; // 只杀正在运行的
+
+                        BOOL killed = NO;
+                        if ([app respondsToSelector:@selector(killForReason:)]) {
+                            [app killForReason:1];
+                            killed = YES;
+                        }
+                        if (!killed && [app respondsToSelector:@selector(pid)]) {
+                            int pid = [app pid];
+                            if (pid > 1) {
+                                kill(pid, SIGKILL);
+                                killed = YES;
+                            }
+                        }
+                        if (killed) {
+                            killedCount++;
+                            [killedBids addObject:bid];
+                        }
+                    }
+                }
+            }
+        }
+
+        // 最终兜底：LSApplicationWorkspace + FBSSystemService
         if (killedCount == 0) {
             Class wsCls = NSClassFromString(@"LSApplicationWorkspace");
             Class fbsCls = NSClassFromString(@"FBSSystemService");
@@ -7443,9 +7464,14 @@ static void onPartRepairBundleDidLoad(CFNotificationCenterRef center, void *obse
         registerThermalHeartbeatListener();
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onCCNotificationReceived, kPrefChangedNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         // 锁屏清理后台：注册系统锁屏通知 + 每秒轮询（双保险，不依赖单个 hook 方法）
-        NSLog(@"[SBCPUFloating] 锁屏清理模块已加载，开关状态=%d，当前锁屏=%d", lockCleanupEnable, isSBLocked());
+        // 注意：此处不能调用 isSBLocked()——SpringBoard 启动早期访问 SBLockScreenManager 会崩溃进安全模式
+        NSLog(@"[SBCPUFloating] 锁屏清理模块已加载，开关状态=%d", lockCleanupEnable);
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onLockStateChanged, CFSTR("com.apple.springboard.lockstate"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) { checkLockStateTick(); }];
+        // 延迟 3 秒：等 SpringBoard 完全就绪后才允许访问 SBLockScreenManager 并启动锁屏轮询
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            gSBReady = YES;
+            [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) { checkLockStateTick(); }];
+        });
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             createCPUWindow();
             registerV160Observers();
