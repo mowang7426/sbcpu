@@ -6763,6 +6763,20 @@ static void registerV160Observers(void) {
 - (void)removeApplications:(NSArray *)applications;
 @end
 
+// SpringBoard 主工作空间：正规终止流程会联动清理 App Switcher 卡片
+@interface SBMainWorkspace : NSObject
++ (id)sharedInstance;
+- (void)terminateApplication:(id)application forReason:(int)reason;
+@end
+
+// iOS 16+ 的 App Switcher 管理器：卡片 = SBAppLayout（含 SBDisplayItem）
+// 清卡片必须用 _deleteAppLayoutsMatchingBundleIdentifier:（社区在 iOS 16/17 验证有效）
+@interface SBMainSwitcherControllerCoordinator : NSObject
++ (id)sharedInstance;
+- (NSArray *)recentAppLayouts;
+- (void)_deleteAppLayoutsMatchingBundleIdentifier:(NSString *)bundleIdentifier;
+@end
+
 // 实时读取当前是否已锁屏（所有触发路径共用同一判断）
 // 注意：SBLockScreenManager 在 SpringBoard 启动极早期（dyld 构造器阶段）不可访问，
 // 此时调用 +sharedInstance 会在 dispatch_once 内抛异常导致 SIGABRT 安全模式，
@@ -6780,6 +6794,69 @@ static BOOL isSBLocked(void) {
     return NO;
 }
 
+// iOS 16+ 专用：统计当前 App Switcher 里的布局数（-1 表示接口不可用）
+static long countRecentAppLayouts(void) {
+    Class coordCls = NSClassFromString(@"SBMainSwitcherControllerCoordinator");
+    if (coordCls && [coordCls respondsToSelector:@selector(sharedInstance)]) {
+        id coord = [coordCls performSelector:@selector(sharedInstance)];
+        if (coord && [coord respondsToSelector:@selector(recentAppLayouts)]) {
+            NSArray *layouts = [coord performSelector:@selector(recentAppLayouts)];
+            if ([layouts isKindOfClass:[NSArray class]]) {
+                return (long)layouts.count;
+            }
+        }
+    }
+    return -1;
+}
+
+// iOS 16+ 专用：清空 App Switcher 卡片（SBMainSwitcherControllerCoordinator 方案）
+// 逐个 SBAppLayout → SBDisplayItem → bundleIdentifier → _deleteAppLayoutsMatchingBundleIdentifier:
+static void clearAllSwitcherCards(void) {
+    Class coordCls = NSClassFromString(@"SBMainSwitcherControllerCoordinator");
+    if (!coordCls) {
+        NSLog(@"[SBCPUFloating] 锁屏清理：SBMainSwitcherControllerCoordinator 类不存在");
+        return;
+    }
+    if (![coordCls respondsToSelector:@selector(sharedInstance)]) {
+        NSLog(@"[SBCPUFloating] 锁屏清理：coordinator 无 sharedInstance");
+        return;
+    }
+    id coord = [coordCls performSelector:@selector(sharedInstance)];
+    if (!coord) {
+        NSLog(@"[SBCPUFloating] 锁屏清理：coordinator 实例不可用");
+        return;
+    }
+    if (![coord respondsToSelector:@selector(recentAppLayouts)]) {
+        NSLog(@"[SBCPUFloating] 锁屏清理：coordinator 无 recentAppLayouts 接口");
+        return;
+    }
+    NSArray *layouts = [coord performSelector:@selector(recentAppLayouts)];
+    if (![layouts isKindOfClass:[NSArray class]]) {
+        NSLog(@"[SBCPUFloating] 锁屏清理：recentAppLayouts 返回类型异常");
+        return;
+    }
+    NSLog(@"[SBCPUFloating] 锁屏清理：当前 recentAppLayouts 共 %lu 个布局", (unsigned long)layouts.count);
+    if (![coord respondsToSelector:@selector(_deleteAppLayoutsMatchingBundleIdentifier:)]) {
+        NSLog(@"[SBCPUFloating] ⚠️ coordinator 无 _deleteAppLayoutsMatchingBundleIdentifier: 接口");
+        return;
+    }
+    int deleted = 0;
+    for (id layout in layouts) {
+        NSArray *items = nil;
+        if ([layout respondsToSelector:@selector(allItems)]) {
+            items = [layout performSelector:@selector(allItems)];
+        }
+        for (id item in items) {
+            NSString *bid = [item respondsToSelector:@selector(bundleIdentifier)] ? [item performSelector:@selector(bundleIdentifier)] : nil;
+            if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+            if ([bid isEqualToString:@"com.apple.springboard"]) continue; // 唯一硬排除：不清 SpringBoard 自身
+            [coord performSelector:@selector(_deleteAppLayoutsMatchingBundleIdentifier:) withObject:bid];
+            deleted++;
+        }
+    }
+    NSLog(@"[SBCPUFloating] 锁屏清理：已对 %d 个应用布局调用 _deleteAppLayoutsMatchingBundleIdentifier:", deleted);
+}
+
 static void performLockScreenCleanup(void) {
     if (!lockCleanupEnable) return;
     if (!isSBLocked()) return; // 只在真正锁屏时执行
@@ -6792,193 +6869,103 @@ static void performLockScreenCleanup(void) {
     NSLog(@"[SBCPUFloating] 锁屏清理后台：触发，开始清理…");
     // 延后执行：等锁屏动画走完再清，避免与锁屏过程抢主线程
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        int killedCount = 0;
-        NSMutableArray *killedBids = [NSMutableArray array];
 
-        // ===== 主逻辑：只清理 App Switcher 卡片里在运行的应用（含系统软件应用）=====
-        // 卡片列表天然只包含用户可见的应用，守护进程（backboardd/locationd/mediaserverd 等）
-        // 不会出现在卡片里，因此绝不会误伤系统危险进程。
-        NSMutableArray *toRemove = [NSMutableArray array];
-        Class swModelCls = NSClassFromString(@"SBAppSwitcherModel");
-        if (swModelCls && [swModelCls respondsToSelector:@selector(sharedInstance)]) {
-            id swModel = [swModelCls performSelector:@selector(sharedInstance)];
-            if (swModel && [swModel respondsToSelector:@selector(applications)]) {
-                NSArray *switcherApps = [swModel performSelector:@selector(applications)];
-                for (id app in switcherApps) {
-                    NSString *bid = [app respondsToSelector:@selector(bundleIdentifier)] ? [app performSelector:@selector(bundleIdentifier)] : nil;
-                    if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
-                    if ([bid isEqualToString:@"com.apple.springboard"]) continue; // 唯一硬排除：不杀 SpringBoard 自身
+        // ========== 第一步：收集卡片中的应用（iOS 16+ 主方案 + 老接口兜底）==========
+        NSMutableSet *bidsToKill = [NSMutableSet set];
 
-                    BOOL killed = NO;
-                    // 方式1：私有 API killForReason:（SBApplicationKillReasonUser）
-                    if ([app respondsToSelector:@selector(killForReason:)]) {
-                        [app killForReason:1];
-                        killed = YES;
-                    }
-                    // 方式2（兜底）：直接对进程发 SIGKILL（SpringBoard 拥有 root 权限）
-                    if (!killed && [app respondsToSelector:@selector(pid)]) {
-                        int pid = [app pid];
-                        if (pid > 1) {
-                            kill(pid, SIGKILL);
-                            killed = YES;
+        // 来源1（iOS 16+ 主方案）：SBMainSwitcherControllerCoordinator recentAppLayouts → SBDisplayItem
+        Class coordCls = NSClassFromString(@"SBMainSwitcherControllerCoordinator");
+        if (coordCls && [coordCls respondsToSelector:@selector(sharedInstance)]) {
+            id coord = [coordCls performSelector:@selector(sharedInstance)];
+            if (coord && [coord respondsToSelector:@selector(recentAppLayouts)]) {
+                NSArray *layouts = [coord performSelector:@selector(recentAppLayouts)];
+                for (id layout in layouts) {
+                    NSArray *items = [layout respondsToSelector:@selector(allItems)] ? [layout performSelector:@selector(allItems)] : nil;
+                    for (id item in items) {
+                        NSString *bid = [item respondsToSelector:@selector(bundleIdentifier)] ? [item performSelector:@selector(bundleIdentifier)] : nil;
+                        if ([bid isKindOfClass:[NSString class]] && bid.length > 0) {
+                            [bidsToKill addObject:bid];
                         }
                     }
-                    if (killed) {
-                        killedCount++;
-                        [killedBids addObject:bid];
-                    }
-                    [toRemove addObject:app];
                 }
-                if (toRemove.count > 0) {
-                    BOOL removed = NO;
-                    // 尝试1：批量移除
-                    if ([swModel respondsToSelector:@selector(removeApplications:)]) {
-                        [swModel removeApplications:toRemove];
-                        removed = YES;
-                        NSLog(@"[SBCPUFloating] 锁屏清理：removeApplications: 已调用，共 %lu 张卡片", (unsigned long)toRemove.count);
-                    }
-                    // 尝试2：逐个移除
-                    if (!removed && [swModel respondsToSelector:@selector(removeApplication:)]) {
-                        for (id app in toRemove) {
-                            [swModel removeApplication:app];
-                        }
-                        removed = YES;
-                        NSLog(@"[SBCPUFloating] 锁屏清理：removeApplication: 已逐张调用，共 %lu 张卡片", (unsigned long)toRemove.count);
-                    }
-                    // 尝试3：下划线私有接口
-                    if (!removed && [swModel respondsToSelector:@selector(_removeApplication:)]) {
-                        for (id app in toRemove) {
-                            [swModel performSelector:@selector(_removeApplication:) withObject:app];
-                        }
-                        removed = YES;
-                        NSLog(@"[SBCPUFloating] 锁屏清理：_removeApplication: 已逐张调用，共 %lu 张卡片", (unsigned long)toRemove.count);
-                    }
-                    if (!removed) {
-                        NSLog(@"[SBCPUFloating] ⚠️ SBAppSwitcherModel 无任何可用移除接口，卡片清空失败（进程已杀）");
-                    }
-                    // 强制持久化（若接口存在）
-                    if ([swModel respondsToSelector:@selector(_save)]) [swModel performSelector:@selector(_save)];
-                    else if ([swModel respondsToSelector:@selector(save)]) [swModel performSelector:@selector(save)];
-
-                    // ===== 验证闭环：立即回读模型，确认卡片是否真的被移除 =====
-                    NSUInteger leftCount = 0;
-                    if ([swModel respondsToSelector:@selector(applications)]) {
-                        NSArray *afterApps = [swModel performSelector:@selector(applications)];
-                        leftCount = afterApps.count;
-                        NSLog(@"[SBCPUFloating] 锁屏清理：移除后模型剩余 %lu 张卡片", (unsigned long)leftCount);
-                    }
-                    // 发送模型变化通知，强制 App Switcher UI 监听刷新
-                    [[NSNotificationCenter defaultCenter] postNotificationName:@"SBAppSwitcherModelDidChangeNotification" object:nil];
-                    [[NSNotificationCenter defaultCenter] postNotificationName:@"SBAppSwitcherModelChangedNotification" object:nil];
-                    // 强制刷新 App Switcher UI
-                    Class swCtrlCls = NSClassFromString(@"SBAppSwitcherController");
-                    if (swCtrlCls) {
-                        id ctrl = nil;
-                        if ([swCtrlCls respondsToSelector:@selector(sharedInstanceIfExists)]) ctrl = [swCtrlCls performSelector:@selector(sharedInstanceIfExists)];
-                        if (!ctrl && [swCtrlCls respondsToSelector:@selector(sharedInstance)]) ctrl = [swCtrlCls performSelector:@selector(sharedInstance)];
-                        if (ctrl) {
-                            if ([ctrl respondsToSelector:@selector(reloadData)]) {
-                                [ctrl performSelector:@selector(reloadData)];
-                                NSLog(@"[SBCPUFloating] 锁屏清理：已刷新 App Switcher UI（reloadData）");
-                            } else if ([ctrl respondsToSelector:@selector(_reloadData)]) {
-                                [ctrl performSelector:@selector(_reloadData)];
-                                NSLog(@"[SBCPUFloating] 锁屏清理：已刷新 App Switcher UI（_reloadData）");
-                            }
-                        }
-                    }
-                    // 第二轮清除：SpringBoard 可能在杀进程后异步重新加入卡片，延迟 0.5 秒再清一次
-                    if (leftCount > 0) {
-                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                            NSArray *left = [swModel performSelector:@selector(applications)];
-                            NSMutableArray *leftToRemove = [NSMutableArray array];
-                            for (id app in left) {
-                                NSString *bid = [app respondsToSelector:@selector(bundleIdentifier)] ? [app performSelector:@selector(bundleIdentifier)] : nil;
-                                if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
-                                if ([bid isEqualToString:@"com.apple.springboard"]) continue;
-                                [leftToRemove addObject:app];
-                            }
-                            if (leftToRemove.count > 0) {
-                                if ([swModel respondsToSelector:@selector(removeApplications:)]) {
-                                    [swModel removeApplications:leftToRemove];
-                                } else if ([swModel respondsToSelector:@selector(removeApplication:)]) {
-                                    for (id app in leftToRemove) {
-                                        [swModel removeApplication:app];
-                                    }
-                                }
-                                NSLog(@"[SBCPUFloating] 锁屏清理：第二轮移除剩余 %lu 张卡片", (unsigned long)leftToRemove.count);
-                            } else {
-                                NSLog(@"[SBCPUFloating] 锁屏清理：第二轮确认卡片已清空");
-                            }
-                        });
-                    }
-                    NSLog(@"[SBCPUFloating] 锁屏清理：卡片应用已关闭 %lu 个，待移除卡片 %lu 张", (unsigned long)killedBids.count, (unsigned long)toRemove.count);
-                } else {
-                    NSLog(@"[SBCPUFloating] 锁屏清理：后台卡片已无应用");
-                }
-            } else {
-                NSLog(@"[SBCPUFloating] 锁屏清理：SBAppSwitcherModel 无 applications 接口，走兜底方案");
             }
-        } else {
-            NSLog(@"[SBCPUFloating] 锁屏清理：SBAppSwitcherModel 不可用，走兜底方案");
         }
-
-        // ===== 兜底方案（仅当卡片 API 不可用时）：全量清理应用进程 =====
-        // 只操作 SBApplication（可启动的应用，含系统软件），守护进程不在其列
-        if (killedCount == 0) {
-            Class ctrlCls = NSClassFromString(@"SBApplicationController");
-            if (ctrlCls && [ctrlCls respondsToSelector:@selector(sharedInstance)]) {
-                id ctrl = [ctrlCls performSelector:@selector(sharedInstance)];
-                if (ctrl && [ctrl respondsToSelector:@selector(allApplications)]) {
-                    NSArray *apps = [ctrl performSelector:@selector(allApplications)];
+        // 来源2（老接口兜底）：SBAppSwitcherModel applications
+        if (bidsToKill.count == 0) {
+            Class swModelCls = NSClassFromString(@"SBAppSwitcherModel");
+            if (swModelCls && [swModelCls respondsToSelector:@selector(sharedInstance)]) {
+                id swModel = [swModelCls performSelector:@selector(sharedInstance)];
+                if (swModel && [swModel respondsToSelector:@selector(applications)]) {
+                    NSArray *apps = [swModel performSelector:@selector(applications)];
                     for (id app in apps) {
                         NSString *bid = [app respondsToSelector:@selector(bundleIdentifier)] ? [app performSelector:@selector(bundleIdentifier)] : nil;
-                        if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
-                        if ([bid isEqualToString:@"com.apple.springboard"]) continue; // 唯一硬排除：不杀 SpringBoard 自身
-                        if ([app respondsToSelector:@selector(isRunning)] && !(BOOL)[app performSelector:@selector(isRunning)]) continue; // 只杀正在运行的
-
-                        BOOL killed = NO;
-                        if ([app respondsToSelector:@selector(killForReason:)]) {
-                            [app killForReason:1];
-                            killed = YES;
-                        }
-                        if (!killed && [app respondsToSelector:@selector(pid)]) {
-                            int pid = [app pid];
-                            if (pid > 1) {
-                                kill(pid, SIGKILL);
-                                killed = YES;
-                            }
-                        }
-                        if (killed) {
-                            killedCount++;
-                            [killedBids addObject:bid];
+                        if ([bid isKindOfClass:[NSString class]] && bid.length > 0) {
+                            [bidsToKill addObject:bid];
                         }
                     }
                 }
             }
         }
+        [bidsToKill removeObject:@"com.apple.springboard"]; // 唯一硬排除：不杀 SpringBoard 自身
+        NSLog(@"[SBCPUFloating] 锁屏清理：收集到 %lu 个待清理应用", (unsigned long)bidsToKill.count);
 
-        // 最终兜底：LSApplicationWorkspace + FBSSystemService
-        if (killedCount == 0) {
-            Class wsCls = NSClassFromString(@"LSApplicationWorkspace");
-            Class fbsCls = NSClassFromString(@"FBSSystemService");
-            if (wsCls && [wsCls respondsToSelector:@selector(defaultWorkspace)] && fbsCls && [fbsCls respondsToSelector:@selector(sharedService)]) {
-                id ws = [wsCls performSelector:@selector(defaultWorkspace)];
-                id fbs = [fbsCls performSelector:@selector(sharedService)];
-                if (ws && [ws respondsToSelector:@selector(allApplications)] && fbs && [fbs respondsToSelector:@selector(terminateApplication:forReason:andReport:withDescription:)]) {
-                    NSArray *proxies = [ws performSelector:@selector(allApplications)];
-                    for (id proxy in proxies) {
-                        NSString *bid = [proxy respondsToSelector:@selector(bundleIdentifier)] ? [proxy performSelector:@selector(bundleIdentifier)] : nil;
-                        if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
-                        if ([bid isEqualToString:@"com.apple.springboard"]) continue; // 唯一硬排除：不能杀 SpringBoard 自身
-                        [fbs terminateApplication:bid forReason:4 andReport:YES withDescription:@"SBCPUFloating lock cleanup"];
-                        killedCount++;
-                        [killedBids addObject:bid];
-                    }
+        // ========== 第二步：杀进程（SBMainWorkspace 正规终止 → killForReason → SIGKILL）==========
+        int killedCount = 0;
+        NSMutableArray *killedBids = [NSMutableArray array];
+        Class ctrlCls = NSClassFromString(@"SBApplicationController");
+        id ctrl = (ctrlCls && [ctrlCls respondsToSelector:@selector(sharedInstance)]) ? [ctrlCls performSelector:@selector(sharedInstance)] : nil;
+        Class wsMainCls = NSClassFromString(@"SBMainWorkspace");
+        id mainWS = (wsMainCls && [wsMainCls respondsToSelector:@selector(sharedInstance)]) ? [wsMainCls performSelector:@selector(sharedInstance)] : nil;
+        for (NSString *bid in bidsToKill) {
+            if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+            id app = nil;
+            if (ctrl && [ctrl respondsToSelector:@selector(applicationWithBundleIdentifier:)]) {
+                app = [ctrl performSelector:@selector(applicationWithBundleIdentifier:) withObject:bid];
+            }
+            BOOL killed = NO;
+            // 方式1（最优）：SBMainWorkspace 正规终止——完整终止流程，系统会联动处理 App Switcher
+            if (mainWS && [mainWS respondsToSelector:@selector(terminateApplication:forReason:)] && app) {
+                [mainWS terminateApplication:app forReason:0];
+                killed = YES;
+            }
+            // 方式2：killForReason:
+            if (!killed && [app respondsToSelector:@selector(killForReason:)]) {
+                [app killForReason:1];
+                killed = YES;
+            }
+            // 方式3（兜底）：SIGKILL
+            if (!killed && [app respondsToSelector:@selector(pid)]) {
+                int pid = [app pid];
+                if (pid > 1) {
+                    kill(pid, SIGKILL);
+                    killed = YES;
                 }
             }
+            if (killed) {
+                killedCount++;
+                [killedBids addObject:bid];
+            }
         }
+        NSLog(@"[SBCPUFloating] 锁屏清理：杀进程完成 %d 个：%@", killedCount, killedBids);
 
-        NSLog(@"[SBCPUFloating] 锁屏清理后台完成，共关闭 %d 个应用：%@", killedCount, killedBids);
+        // ========== 第三步：延迟 0.5 秒等系统完成 termination，再清空卡片 ==========
+        // 不能立刻清：App 终止后 FrontBoard 还在更新 workspace，立即清会状态竞争导致卡片残留
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            clearAllSwitcherCards();
+
+            // ========== 第四步：再延迟 0.5 秒回读验证，有残留再清一次 ==========
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                long left = countRecentAppLayouts();
+                if (left > 0) {
+                    NSLog(@"[SBCPUFloating] 锁屏清理：仍有 %ld 个布局残留，再清一次", left);
+                    clearAllSwitcherCards();
+                } else if (left == 0) {
+                    NSLog(@"[SBCPUFloating] 锁屏清理：后台卡片已全部清空 ✓");
+                } else {
+                    NSLog(@"[SBCPUFloating] 锁屏清理：验证接口不可用（countRecentAppLayouts=-1）");
+                }
+            });
+        });
     });
 }
 
@@ -7015,6 +7002,18 @@ static void onLockStateChanged(CFNotificationCenterRef center, void *observer, C
 - (void)_lockUIFromSource:(long long)source withOptions:(id)options {
     %orig;
     performLockScreenCleanup();
+}
+%end
+
+// 观测：SBAppSwitcherModel 移除接口是否存在、是否被调用（诊断用）
+%hook SBAppSwitcherModel
+- (void)removeApplication:(id)application {
+    NSLog(@"[SBCPUFloating] hook观测：removeApplication: 被调用，bid=%@", [application respondsToSelector:@selector(bundleIdentifier)] ? [application performSelector:@selector(bundleIdentifier)] : @"?");
+    %orig;
+}
+- (void)removeApplications:(NSArray *)applications {
+    NSLog(@"[SBCPUFloating] hook观测：removeApplications: 被调用，%lu 个", (unsigned long)applications.count);
+    %orig;
 }
 %end
 
