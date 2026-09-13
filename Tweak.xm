@@ -6755,6 +6755,14 @@ static void registerV160Observers(void) {
 - (void)terminateApplication:(NSString *)bundleIdentifier forReason:(int)reason andReport:(BOOL)report withDescription:(NSString *)description;
 @end
 
+// App Switcher（后台卡片）模型：用于锁屏后清空后台应用卡片
+@interface SBAppSwitcherModel : NSObject
++ (id)sharedInstance;
+- (NSArray *)applications;
+- (void)removeApplication:(id)application;
+- (void)removeApplications:(NSArray *)applications;
+@end
+
 // 实时读取当前是否已锁屏（所有触发路径共用同一判断）
 static BOOL isSBLocked(void) {
     Class lockClass = NSClassFromString(@"SBLockScreenManager");
@@ -6820,6 +6828,40 @@ static void performLockScreenCleanup(void) {
             }
         } else {
             NSLog(@"[SBCPUFloating] 锁屏清理：SBApplicationController 不可用，走兜底方案");
+        }
+
+        // 清空 App Switcher 后台卡片（进程被杀后卡片快照仍会残留，必须主动移除）
+        Class swModelCls = NSClassFromString(@"SBAppSwitcherModel");
+        if (swModelCls && [swModelCls respondsToSelector:@selector(sharedInstance)]) {
+            id swModel = [swModelCls performSelector:@selector(sharedInstance)];
+            if (swModel && [swModel respondsToSelector:@selector(applications)]) {
+                NSArray *switcherApps = [swModel performSelector:@selector(applications)];
+                NSMutableArray *toRemove = [NSMutableArray array];
+                for (id app in switcherApps) {
+                    NSString *bid = [app respondsToSelector:@selector(bundleIdentifier)] ? [app performSelector:@selector(bundleIdentifier)] : nil;
+                    if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+                    if ([bid hasPrefix:@"com.apple."]) continue;               // 保留系统应用卡片
+                    if ([bid isEqualToString:@"com.yourname.sbcpufloating"]) continue;
+                    [toRemove addObject:app];
+                }
+                if (toRemove.count > 0) {
+                    if ([swModel respondsToSelector:@selector(removeApplications:)]) {
+                        [swModel removeApplications:toRemove];
+                        NSLog(@"[SBCPUFloating] 锁屏清理：已清空 %lu 张后台卡片", (unsigned long)toRemove.count);
+                    } else if ([swModel respondsToSelector:@selector(removeApplication:)]) {
+                        for (id app in toRemove) {
+                            [swModel removeApplication:app];
+                        }
+                        NSLog(@"[SBCPUFloating] 锁屏清理：已逐张清空 %lu 张后台卡片", (unsigned long)toRemove.count);
+                    }
+                } else {
+                    NSLog(@"[SBCPUFloating] 锁屏清理：后台卡片已无第三方应用");
+                }
+            } else {
+                NSLog(@"[SBCPUFloating] 锁屏清理：SBAppSwitcherModel 无 applications 接口");
+            }
+        } else {
+            NSLog(@"[SBCPUFloating] 锁屏清理：SBAppSwitcherModel 不可用");
         }
 
         // 方案二（兜底）：LSApplicationWorkspace + FBSSystemService
