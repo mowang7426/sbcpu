@@ -343,6 +343,7 @@ static BOOL wechatEnable = YES;
 static BOOL qqEnable = YES;
 static BOOL timEnable = YES;
 static BOOL hideContentOnLockScreen = NO;
+static BOOL lockCleanupEnable = NO; // 锁屏清理后台：锁屏后自动关闭所有第三方后台应用
 // 横屏状态是否允许消息通知弹出；默认开启，保持原有行为。
 static BOOL landscapeNotificationEnable = YES;
 static NSInteger notificationDuration = 5;
@@ -533,6 +534,7 @@ static void LoadPreferences(void) {
     qqEnable = getBoolPref(CFSTR("qqEnable"), YES);
     timEnable = getBoolPref(CFSTR("timEnable"), YES);
     hideContentOnLockScreen = getBoolPref(CFSTR("hideContentOnLockScreen"), NO);
+    lockCleanupEnable = getBoolPref(CFSTR("lockCleanupEnable"), NO);
     landscapeNotificationEnable = getBoolPref(CFSTR("landscapeNotificationEnable"), YES);
     notificationDuration = getIntPref(CFSTR("notificationDuration"), 5);
 
@@ -589,6 +591,7 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("qqEnable"), qqEnable);
     setBoolPref(CFSTR("timEnable"), timEnable);
     setBoolPref(CFSTR("hideContentOnLockScreen"), hideContentOnLockScreen);
+    setBoolPref(CFSTR("lockCleanupEnable"), lockCleanupEnable);
     setBoolPref(CFSTR("landscapeNotificationEnable"), landscapeNotificationEnable);
     setIntPref(CFSTR("notificationDuration"), notificationDuration);
     
@@ -4264,7 +4267,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     (void)tableView;
     if (section == 0) return 6; 
-    if (section == 1) return 3;
+    if (section == 1) return 4;
     if (section == 2) return 5;
     if (section == 3) return 7; // 通知管理
     if (section == 4) return 3;
@@ -4890,6 +4893,13 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             cell.textLabel.text = @"持续时间";
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%ld 秒", (long)logoutDuration];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        } else if (indexPath.row == 3) {
+            cell.textLabel.text = @"锁屏清理后台";
+            cell.detailTextLabel.text = @"锁屏后自动关闭所有后台应用";
+            UISwitch *sw = [UISwitch new];
+            sw.on = lockCleanupEnable;
+            [sw addTarget:self action:@selector(changeLockCleanup:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
         }
     } else if (indexPath.section == 2) {
         // 清理 cell 复用残留（滑块行结构自绘，必须移除旧视图防重叠）
@@ -6689,6 +6699,7 @@ static void detectPluginConflicts(void) {
 }
 
 - (void)changeHideContentLockScreen:(UISwitch *)sw { hideContentOnLockScreen = sw.isOn; SavePreferencesAndNotify(); }
+- (void)changeLockCleanup:(UISwitch *)sw { lockCleanupEnable = sw.isOn; SavePreferencesAndNotify(); }
 
 @end
 
@@ -6727,6 +6738,95 @@ static void registerV160Observers(void) {
         }];
     });
 }
+
+// ========== 锁屏清理后台（V4.13 新增） ==========
+@interface SBApplication (LockCleanup)
+- (BOOL)isRunning;
+- (BOOL)isSystemApplication;
+- (NSString *)bundleIdentifier;
+- (void)killForReason:(long long)reason;
+@end
+
+@interface FBSSystemService (LockCleanup)
++ (id)sharedService;
+- (void)terminateApplication:(NSString *)bundleIdentifier forReason:(int)reason andReport:(BOOL)report withDescription:(NSString *)description;
+@end
+
+static void performLockScreenCleanup(void) {
+    if (!lockCleanupEnable) return;
+    // 3 秒内去重，防止多个锁屏 hook 路径重复触发
+    static CFAbsoluteTime lastCleanupTime = 0;
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (now - lastCleanupTime < 3.0) return;
+    lastCleanupTime = now;
+
+    // 延后执行：等锁屏动画走完再清，避免与锁屏过程抢主线程
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        int killedCount = 0;
+
+        // 方案一（优先）：SpringBoard 进程内 SBApplicationController + killForReason:
+        Class ctrlCls = NSClassFromString(@"SBApplicationController");
+        if (ctrlCls && [ctrlCls respondsToSelector:@selector(sharedInstance)]) {
+            id ctrl = [ctrlCls performSelector:@selector(sharedInstance)];
+            if (ctrl && [ctrl respondsToSelector:@selector(allApplications)]) {
+                NSArray *apps = [ctrl performSelector:@selector(allApplications)];
+                for (id app in apps) {
+                    NSString *bid = [app respondsToSelector:@selector(bundleIdentifier)] ? [app performSelector:@selector(bundleIdentifier)] : nil;
+                    if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+                    if ([bid hasPrefix:@"com.apple."]) continue;               // 不杀系统应用
+                    if ([bid isEqualToString:@"com.yourname.sbcpufloating"]) continue;
+                    if ([app respondsToSelector:@selector(isSystemApplication)] && (BOOL)[app performSelector:@selector(isSystemApplication)]) continue;
+                    if ([app respondsToSelector:@selector(isRunning)] && !(BOOL)[app performSelector:@selector(isRunning)]) continue; // 只杀正在运行的
+                    if ([app respondsToSelector:@selector(killForReason:)]) {
+                        [app killForReason:1]; // SBApplicationKillReasonUser
+                        killedCount++;
+                    }
+                }
+            }
+        }
+
+        // 方案二（兜底）：LSApplicationWorkspace + FBSSystemService
+        if (killedCount == 0) {
+            Class wsCls = NSClassFromString(@"LSApplicationWorkspace");
+            Class fbsCls = NSClassFromString(@"FBSSystemService");
+            if (wsCls && [wsCls respondsToSelector:@selector(defaultWorkspace)] && fbsCls && [fbsCls respondsToSelector:@selector(sharedService)]) {
+                id ws = [wsCls performSelector:@selector(defaultWorkspace)];
+                id fbs = [fbsCls performSelector:@selector(sharedService)];
+                if (ws && [ws respondsToSelector:@selector(allApplications)] && fbs && [fbs respondsToSelector:@selector(terminateApplication:forReason:andReport:withDescription:)]) {
+                    NSArray *proxies = [ws performSelector:@selector(allApplications)];
+                    for (id proxy in proxies) {
+                        NSString *bid = [proxy respondsToSelector:@selector(bundleIdentifier)] ? [proxy performSelector:@selector(bundleIdentifier)] : nil;
+                        if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+                        NSString *type = [proxy respondsToSelector:@selector(applicationType)] ? [proxy performSelector:@selector(applicationType)] : @"User";
+                        if (![type isKindOfClass:[NSString class]] || ![type isEqualToString:@"User"]) continue; // 只杀第三方
+                        if ([bid hasPrefix:@"com.apple."]) continue;
+                        if ([bid isEqualToString:@"com.yourname.sbcpufloating"]) continue;
+                        [fbs terminateApplication:bid forReason:4 andReport:YES withDescription:@"SBCPUFloating lock cleanup"];
+                        killedCount++;
+                    }
+                }
+            }
+        }
+
+        NSLog(@"[SBCPUFloating] 锁屏清理后台完成，共关闭 %d 个应用", killedCount);
+    });
+}
+
+// 锁屏事件 hook：电源键锁屏 / 自动锁屏 / 手势锁屏都会走到这里
+%hook SBLockScreenManager
+- (void)lockUIFromSource:(long long)source {
+    %orig;
+    performLockScreenCleanup();
+}
+- (void)lockUIFromSource:(long long)source withOptions:(id)options {
+    %orig;
+    performLockScreenCleanup();
+}
+- (void)_lockUIFromSource:(long long)source withOptions:(id)options {
+    %orig;
+    performLockScreenCleanup();
+}
+%end
 
 // 🚀 终极通知拦截阵列
 %hook NCNotificationDispatcher
