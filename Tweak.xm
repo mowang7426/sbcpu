@@ -6740,14 +6740,16 @@ static void registerV160Observers(void) {
 }
 
 // ========== 锁屏清理后台（V4.13 新增） ==========
-@interface SBApplication (LockCleanup)
+// 注意：SBApplication / FBSSystemService 均为 SpringBoard 私有类，
+// 必须先以主类形式声明（不能写 category，否则找不到主 interface 会编译报错）
+@interface SBApplication : NSObject
 - (BOOL)isRunning;
 - (BOOL)isSystemApplication;
 - (NSString *)bundleIdentifier;
 - (void)killForReason:(long long)reason;
 @end
 
-@interface FBSSystemService (LockCleanup)
+@interface FBSSystemService : NSObject
 + (id)sharedService;
 - (void)terminateApplication:(NSString *)bundleIdentifier forReason:(int)reason andReport:(BOOL)report withDescription:(NSString *)description;
 @end
