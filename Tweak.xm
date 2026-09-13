@@ -6830,14 +6830,65 @@ static void performLockScreenCleanup(void) {
                     [toRemove addObject:app];
                 }
                 if (toRemove.count > 0) {
+                    BOOL removed = NO;
+                    // 尝试1：批量移除
                     if ([swModel respondsToSelector:@selector(removeApplications:)]) {
                         [swModel removeApplications:toRemove];
-                    } else if ([swModel respondsToSelector:@selector(removeApplication:)]) {
+                        removed = YES;
+                        NSLog(@"[SBCPUFloating] 锁屏清理：removeApplications: 已调用，共 %lu 张卡片", (unsigned long)toRemove.count);
+                    }
+                    // 尝试2：逐个移除
+                    if (!removed && [swModel respondsToSelector:@selector(removeApplication:)]) {
                         for (id app in toRemove) {
                             [swModel removeApplication:app];
                         }
+                        removed = YES;
+                        NSLog(@"[SBCPUFloating] 锁屏清理：removeApplication: 已逐张调用，共 %lu 张卡片", (unsigned long)toRemove.count);
                     }
-                    NSLog(@"[SBCPUFloating] 锁屏清理：卡片应用已关闭 %lu 个，卡片已移除 %lu 张", (unsigned long)killedBids.count, (unsigned long)toRemove.count);
+                    // 尝试3：下划线私有接口
+                    if (!removed && [swModel respondsToSelector:@selector(_removeApplication:)]) {
+                        for (id app in toRemove) {
+                            [swModel performSelector:@selector(_removeApplication:) withObject:app];
+                        }
+                        removed = YES;
+                        NSLog(@"[SBCPUFloating] 锁屏清理：_removeApplication: 已逐张调用，共 %lu 张卡片", (unsigned long)toRemove.count);
+                    }
+                    // 尝试4：按 bundle id 批量移除
+                    if (!removed && [swModel respondsToSelector:@selector(removeApplicationsForBundleIdentifiers:)]) {
+                        NSMutableArray *bids = [NSMutableArray array];
+                        for (id app in toRemove) {
+                            NSString *bid = [app respondsToSelector:@selector(bundleIdentifier)] ? [app performSelector:@selector(bundleIdentifier)] : nil;
+                            if ([bid isKindOfClass:[NSString class]] && bid.length > 0) {
+                                [bids addObject:bid];
+                            }
+                        }
+                        [swModel performSelector:@selector(removeApplicationsForBundleIdentifiers:) withObject:bids];
+                        removed = YES;
+                        NSLog(@"[SBCPUFloating] 锁屏清理：removeApplicationsForBundleIdentifiers: 已调用，共 %lu 个", (unsigned long)bids.count);
+                    }
+                    if (!removed) {
+                        NSLog(@"[SBCPUFloating] ⚠️ SBAppSwitcherModel 无任何可用移除接口，卡片清空失败（进程已杀）");
+                    }
+                    // 强制持久化（若接口存在）
+                    if ([swModel respondsToSelector:@selector(_save)]) [swModel performSelector:@selector(_save)];
+                    else if ([swModel respondsToSelector:@selector(save)]) [swModel performSelector:@selector(save)];
+                    // 强制刷新 App Switcher UI
+                    Class swCtrlCls = NSClassFromString(@"SBAppSwitcherController");
+                    if (swCtrlCls) {
+                        id ctrl = nil;
+                        if ([swCtrlCls respondsToSelector:@selector(sharedInstanceIfExists)]) ctrl = [swCtrlCls performSelector:@selector(sharedInstanceIfExists)];
+                        if (!ctrl && [swCtrlCls respondsToSelector:@selector(sharedInstance)]) ctrl = [swCtrlCls performSelector:@selector(sharedInstance)];
+                        if (ctrl) {
+                            if ([ctrl respondsToSelector:@selector(reloadData)]) {
+                                [ctrl performSelector:@selector(reloadData)];
+                                NSLog(@"[SBCPUFloating] 锁屏清理：已刷新 App Switcher UI（reloadData）");
+                            } else if ([ctrl respondsToSelector:@selector(_reloadData)]) {
+                                [ctrl performSelector:@selector(_reloadData)];
+                                NSLog(@"[SBCPUFloating] 锁屏清理：已刷新 App Switcher UI（_reloadData）");
+                            }
+                        }
+                    }
+                    NSLog(@"[SBCPUFloating] 锁屏清理：卡片应用已关闭 %lu 个，待移除卡片 %lu 张", (unsigned long)killedBids.count, (unsigned long)toRemove.count);
                 } else {
                     NSLog(@"[SBCPUFloating] 锁屏清理：后台卡片已无应用");
                 }
