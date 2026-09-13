@@ -6804,7 +6804,7 @@ static void performLockScreenCleanup(void) {
                     }
                     // 方式2（兜底）：直接对进程发 SIGKILL（SpringBoard 拥有 root 权限）
                     if (!killed && [app respondsToSelector:@selector(pid)]) {
-                        int pid = (int)[app performSelector:@selector(pid)];
+                        int pid = [app pid];
                         if (pid > 1) {
                             kill(pid, SIGKILL);
                             killed = YES;
