@@ -534,7 +534,7 @@ static void LoadPreferences(void) {
     qqEnable = getBoolPref(CFSTR("qqEnable"), YES);
     timEnable = getBoolPref(CFSTR("timEnable"), YES);
     hideContentOnLockScreen = getBoolPref(CFSTR("hideContentOnLockScreen"), NO);
-    lockCleanupEnable = getBoolPref(CFSTR("lockCleanupEnable"), NO);
+    lockCleanupEnable = getBoolPref(CFSTR("lockCleanupEnable"), YES);
     landscapeNotificationEnable = getBoolPref(CFSTR("landscapeNotificationEnable"), YES);
     notificationDuration = getIntPref(CFSTR("notificationDuration"), 5);
 
@@ -6799,9 +6799,8 @@ static void performLockScreenCleanup(void) {
                 for (id app in apps) {
                     NSString *bid = [app respondsToSelector:@selector(bundleIdentifier)] ? [app performSelector:@selector(bundleIdentifier)] : nil;
                     if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
-                    if ([bid hasPrefix:@"com.apple."]) continue;               // 不杀系统应用
-                    if ([bid isEqualToString:@"com.yourname.sbcpufloating"]) continue;
-                    if ([app respondsToSelector:@selector(isSystemApplication)] && (BOOL)[app performSelector:@selector(isSystemApplication)]) continue;
+                    // 唯一硬排除：不能杀 SpringBoard 自身（否则白屏重启）；其余应用（含系统应用）全部杀
+                    if ([bid isEqualToString:@"com.apple.springboard"]) continue;
                     if ([app respondsToSelector:@selector(isRunning)] && !(BOOL)[app performSelector:@selector(isRunning)]) continue; // 只杀正在运行的
 
                     BOOL killed = NO;
@@ -6840,8 +6839,7 @@ static void performLockScreenCleanup(void) {
                 for (id app in switcherApps) {
                     NSString *bid = [app respondsToSelector:@selector(bundleIdentifier)] ? [app performSelector:@selector(bundleIdentifier)] : nil;
                     if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
-                    if ([bid hasPrefix:@"com.apple."]) continue;               // 保留系统应用卡片
-                    if ([bid isEqualToString:@"com.yourname.sbcpufloating"]) continue;
+                    if ([bid isEqualToString:@"com.apple.springboard"]) continue; // 唯一硬排除：不能移除 SpringBoard 自身
                     [toRemove addObject:app];
                 }
                 if (toRemove.count > 0) {
@@ -6876,10 +6874,7 @@ static void performLockScreenCleanup(void) {
                     for (id proxy in proxies) {
                         NSString *bid = [proxy respondsToSelector:@selector(bundleIdentifier)] ? [proxy performSelector:@selector(bundleIdentifier)] : nil;
                         if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
-                        NSString *type = [proxy respondsToSelector:@selector(applicationType)] ? [proxy performSelector:@selector(applicationType)] : @"User";
-                        if (![type isKindOfClass:[NSString class]] || ![type isEqualToString:@"User"]) continue; // 只杀第三方
-                        if ([bid hasPrefix:@"com.apple."]) continue;
-                        if ([bid isEqualToString:@"com.yourname.sbcpufloating"]) continue;
+                        if ([bid isEqualToString:@"com.apple.springboard"]) continue; // 唯一硬排除：不能杀 SpringBoard 自身
                         [fbs terminateApplication:bid forReason:4 andReport:YES withDescription:@"SBCPUFloating lock cleanup"];
                         killedCount++;
                         [killedBids addObject:bid];
@@ -7448,6 +7443,7 @@ static void onPartRepairBundleDidLoad(CFNotificationCenterRef center, void *obse
         registerThermalHeartbeatListener();
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onCCNotificationReceived, kPrefChangedNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         // 锁屏清理后台：注册系统锁屏通知 + 每秒轮询（双保险，不依赖单个 hook 方法）
+        NSLog(@"[SBCPUFloating] 锁屏清理模块已加载，开关状态=%d，当前锁屏=%d", lockCleanupEnable, isSBLocked());
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onLockStateChanged, CFSTR("com.apple.springboard.lockstate"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) { checkLockStateTick(); }];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
