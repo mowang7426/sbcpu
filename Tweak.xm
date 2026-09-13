@@ -237,6 +237,7 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @end
 @interface SBCPUTimePickerController : UITableViewController
 @end
+@class SBCPULockCleanupWhitelistController, SBCPULockCleanupAddAppController;
 @interface SBCPUSettingsController : UITableViewController <UIGestureRecognizerDelegate>
 - (void)saveConfigs;
 @property (nonatomic, strong) CALayer *glassBackdrop;  // 设置中心 backdrop 模糊层（可调磨砂强度）
@@ -344,6 +345,7 @@ static BOOL qqEnable = YES;
 static BOOL timEnable = YES;
 static BOOL hideContentOnLockScreen = NO;
 static BOOL lockCleanupEnable = NO; // 锁屏清理后台：锁屏后自动关闭所有第三方后台应用
+static NSMutableArray *lockCleanupWhitelist = nil; // 锁屏清理白名单：这些应用不会被清理（bundle id 数组）
 // 横屏状态是否允许消息通知弹出；默认开启，保持原有行为。
 static BOOL landscapeNotificationEnable = YES;
 static NSInteger notificationDuration = 5;
@@ -470,6 +472,23 @@ static void setIntPref(CFStringRef key, NSInteger value) {
     CFRelease(num);
 }
 
+static NSArray *getArrayPref(CFStringRef key, NSArray *defaultVal) {
+    CFPropertyListRef val = CFPreferencesCopyValue(key, kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    if (val) {
+        if (CFGetTypeID(val) == CFArrayGetTypeID()) {
+            return (__bridge_transfer NSArray *)val;
+        }
+        CFRelease(val);
+    }
+    return defaultVal;
+}
+
+static void setArrayPref(CFStringRef key, NSArray *value) {
+    if (value) {
+        CFPreferencesSetValue(key, (__bridge CFArrayRef)value, kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    }
+}
+
 static void applyVisibility(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (cpuWindow) cpuWindow.hidden = !isEnabled;
@@ -535,6 +554,8 @@ static void LoadPreferences(void) {
     timEnable = getBoolPref(CFSTR("timEnable"), YES);
     hideContentOnLockScreen = getBoolPref(CFSTR("hideContentOnLockScreen"), NO);
     lockCleanupEnable = getBoolPref(CFSTR("lockCleanupEnable"), YES);
+    lockCleanupWhitelist = [getArrayPref(CFSTR("lockCleanupWhitelist"), @[]) mutableCopy];
+    if (!lockCleanupWhitelist) lockCleanupWhitelist = [NSMutableArray array];
     landscapeNotificationEnable = getBoolPref(CFSTR("landscapeNotificationEnable"), YES);
     notificationDuration = getIntPref(CFSTR("notificationDuration"), 5);
 
@@ -592,6 +613,7 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("timEnable"), timEnable);
     setBoolPref(CFSTR("hideContentOnLockScreen"), hideContentOnLockScreen);
     setBoolPref(CFSTR("lockCleanupEnable"), lockCleanupEnable);
+    setArrayPref(CFSTR("lockCleanupWhitelist"), lockCleanupWhitelist);
     setBoolPref(CFSTR("landscapeNotificationEnable"), landscapeNotificationEnable);
     setIntPref(CFSTR("notificationDuration"), notificationDuration);
     
@@ -4267,7 +4289,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     (void)tableView;
     if (section == 0) return 6; 
-    if (section == 1) return 4;
+    if (section == 1) return 5; // 自动控制与防护：自动注销/CPU触发值/持续时间/锁屏清理后台/锁屏清理白名单
     if (section == 2) return 5;
     if (section == 3) return 7; // 通知管理
     if (section == 4) return 3;
@@ -4900,6 +4922,10 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             sw.on = lockCleanupEnable;
             [sw addTarget:self action:@selector(changeLockCleanup:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
+        } else if (indexPath.row == 4) {
+            cell.textLabel.text = @"锁屏清理白名单";
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"已保护 %lu 个应用", (unsigned long)lockCleanupWhitelist.count];
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         }
     } else if (indexPath.section == 2) {
         // 清理 cell 复用残留（滑块行结构自绘，必须移除旧视图防重叠）
@@ -5454,6 +5480,9 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             [self.navigationController pushViewController:vc animated:YES];
         } else if (indexPath.row == 2) {
             SBCPUTimePickerController *vc = [[SBCPUTimePickerController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+            [self.navigationController pushViewController:vc animated:YES];
+        } else if (indexPath.row == 4) {
+            SBCPULockCleanupWhitelistController *vc = [[SBCPULockCleanupWhitelistController alloc] initWithStyle:UITableViewStyleInsetGrouped];
             [self.navigationController pushViewController:vc animated:YES];
         }
     } else if (indexPath.section == 2) {
@@ -6703,6 +6732,191 @@ static void detectPluginConflicts(void) {
 
 @end
 
+#pragma mark - 锁屏清理白名单
+
+// 根据 bundle id 解析应用显示名（LSApplicationWorkspace）
+static NSString *appDisplayNameForBundleID(NSString *bundleID) {
+    if (![bundleID isKindOfClass:[NSString class]] || bundleID.length == 0) return bundleID;
+    Class wsCls = NSClassFromString(@"LSApplicationWorkspace");
+    if (wsCls && [wsCls respondsToSelector:@selector(defaultWorkspace)]) {
+        id ws = [wsCls performSelector:@selector(defaultWorkspace)];
+        if (ws && [ws respondsToSelector:@selector(allApplications)]) {
+            NSArray *apps = [ws performSelector:@selector(allApplications)];
+            for (id proxy in apps) {
+                NSString *bid = [proxy respondsToSelector:@selector(bundleIdentifier)] ? [proxy performSelector:@selector(bundleIdentifier)] : nil;
+                if ([bid isKindOfClass:[NSString class]] && [bid isEqualToString:bundleID]) {
+                    NSString *name = [proxy respondsToSelector:@selector(localizedName)] ? [proxy performSelector:@selector(localizedName)] : nil;
+                    if ([name isKindOfClass:[NSString class]] && name.length > 0) return name;
+                    break;
+                }
+            }
+        }
+    }
+    return bundleID;
+}
+
+// ===== 添加白名单：已安装应用选择页 =====
+@interface SBCPULockCleanupAddAppController : UITableViewController <UISearchBarDelegate>
+@property (nonatomic, strong) NSArray *allApps;
+@property (nonatomic, strong) NSArray *filteredApps;
+@property (nonatomic, strong) UISearchBar *searchBar;
+@end
+
+@implementation SBCPULockCleanupAddAppController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"添加白名单应用";
+    NSMutableArray *apps = [NSMutableArray array];
+    Class wsCls = NSClassFromString(@"LSApplicationWorkspace");
+    if (wsCls && [wsCls respondsToSelector:@selector(defaultWorkspace)]) {
+        id ws = [wsCls performSelector:@selector(defaultWorkspace)];
+        if (ws && [ws respondsToSelector:@selector(allApplications)]) {
+            NSArray *all = [ws performSelector:@selector(allApplications)];
+            for (id proxy in all) {
+                NSString *bid = [proxy respondsToSelector:@selector(bundleIdentifier)] ? [proxy performSelector:@selector(bundleIdentifier)] : nil;
+                if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+                [apps addObject:proxy];
+            }
+        }
+    }
+    [apps sortUsingComparator:^NSComparisonResult(id a, id b) {
+        NSString *na = [a respondsToSelector:@selector(localizedName)] ? [a performSelector:@selector(localizedName)] : @"";
+        NSString *nb = [b respondsToSelector:@selector(localizedName)] ? [b performSelector:@selector(localizedName)] : @"";
+        return [na localizedCompare:nb];
+    }];
+    self.allApps = apps;
+    self.filteredApps = apps;
+
+    self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.tableView.bounds.size.width, 44)];
+    self.searchBar.delegate = self;
+    self.searchBar.placeholder = @"搜索应用";
+    self.tableView.tableHeaderView = self.searchBar;
+    [self.tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"Cell"];
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    return self.filteredApps.count;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell" forIndexPath:indexPath];
+    id proxy = self.filteredApps[indexPath.row];
+    NSString *name = [proxy respondsToSelector:@selector(localizedName)] ? [proxy performSelector:@selector(localizedName)] : @"";
+    NSString *bid = [proxy respondsToSelector:@selector(bundleIdentifier)] ? [proxy performSelector:@selector(bundleIdentifier)] : @"";
+    cell.textLabel.text = ([name isKindOfClass:[NSString class]] && [name length] > 0) ? name : bid;
+    cell.detailTextLabel.text = bid;
+    cell.accessoryType = [lockCleanupWhitelist containsObject:bid] ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    id proxy = self.filteredApps[indexPath.row];
+    NSString *bid = [proxy respondsToSelector:@selector(bundleIdentifier)] ? [proxy performSelector:@selector(bundleIdentifier)] : @"";
+    if (![bid isKindOfClass:[NSString class]] || bid.length == 0) return;
+    if ([lockCleanupWhitelist containsObject:bid]) {
+        [lockCleanupWhitelist removeObject:bid];
+    } else {
+        [lockCleanupWhitelist addObject:bid];
+    }
+    SavePreferencesAndNotify();
+    [self.tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationAutomatic];
+}
+
+- (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
+    if (searchText.length == 0) {
+        self.filteredApps = self.allApps;
+    } else {
+        NSMutableArray *filtered = [NSMutableArray array];
+        for (id proxy in self.allApps) {
+            NSString *name = [proxy respondsToSelector:@selector(localizedName)] ? [proxy performSelector:@selector(localizedName)] : @"";
+            NSString *bid = [proxy respondsToSelector:@selector(bundleIdentifier)] ? [proxy performSelector:@selector(bundleIdentifier)] : @"";
+            NSString *haystack = [NSString stringWithFormat:@"%@ %@", name, bid];
+            if ([haystack rangeOfString:searchText options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                [filtered addObject:proxy];
+            }
+        }
+        self.filteredApps = filtered;
+    }
+    [self.tableView reloadData];
+}
+
+- (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
+    [searchBar resignFirstResponder];
+}
+@end
+
+// ===== 锁屏清理白名单管理页 =====
+@interface SBCPULockCleanupWhitelistController : UITableViewController
+@end
+
+@implementation SBCPULockCleanupWhitelistController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"锁屏清理白名单";
+    UIBarButtonItem *addBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(addApp)];
+    self.navigationItem.rightBarButtonItem = addBtn;
+    [self.tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"Cell"];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self.tableView reloadData];
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return 2;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    if (section == 0) return @"说明";
+    return @"白名单应用";
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    if (section == 0) return 1;
+    return lockCleanupWhitelist.count;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell" forIndexPath:indexPath];
+    if (indexPath.section == 0) {
+        cell.textLabel.text = @"锁屏清理时会跳过白名单中的应用，不杀进程、不清卡片。适合需要持续运行的应用（音乐、下载、导航、输入法等）。";
+        cell.textLabel.numberOfLines = 0;
+        cell.textLabel.font = [UIFont systemFontOfSize:13];
+        cell.textLabel.textColor = [UIColor secondaryLabelColor];
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        return cell;
+    }
+    NSString *bid = lockCleanupWhitelist[indexPath.row];
+    cell.textLabel.text = appDisplayNameForBundleID(bid);
+    cell.detailTextLabel.text = bid;
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section == 0) return;
+    NSString *bid = lockCleanupWhitelist[indexPath.row];
+    NSString *name = appDisplayNameForBundleID(bid);
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:name message:[NSString stringWithFormat:@"从白名单移除 %@？", bid] preferredStyle:UIAlertControllerStyleActionSheet];
+    [alert addAction:[UIAlertAction actionWithTitle:@"移出白名单" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
+        [lockCleanupWhitelist removeObject:bid];
+        SavePreferencesAndNotify();
+        [self.tableView reloadData];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)addApp {
+    SBCPULockCleanupAddAppController *vc = [[SBCPULockCleanupAddAppController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    [self.navigationController pushViewController:vc animated:YES];
+}
+@end
+
 #pragma mark - 8. 进程通知与 SpringBoard 状态初始化
 
 static void onCCNotificationReceived(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
@@ -6850,6 +7064,7 @@ static void clearAllSwitcherCards(void) {
             NSString *bid = [item respondsToSelector:@selector(bundleIdentifier)] ? [item performSelector:@selector(bundleIdentifier)] : nil;
             if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
             if ([bid isEqualToString:@"com.apple.springboard"]) continue; // 唯一硬排除：不清 SpringBoard 自身
+            if ([lockCleanupWhitelist containsObject:bid]) continue; // 白名单保护：不清卡片
             [coord performSelector:@selector(_deleteAppLayoutsMatchingBundleIdentifier:) withObject:bid];
             deleted++;
         }
@@ -6907,6 +7122,13 @@ static void performLockScreenCleanup(void) {
             }
         }
         [bidsToKill removeObject:@"com.apple.springboard"]; // 唯一硬排除：不杀 SpringBoard 自身
+        // 白名单跳过：受保护的应用不杀进程、不清卡片
+        for (NSString *bid in [bidsToKill copy]) {
+            if ([lockCleanupWhitelist containsObject:bid]) {
+                NSLog(@"[SBCPUFloating] 锁屏清理：白名单保护，跳过 %@", bid);
+                [bidsToKill removeObject:bid];
+            }
+        }
         NSLog(@"[SBCPUFloating] 锁屏清理：收集到 %lu 个待清理应用", (unsigned long)bidsToKill.count);
 
         // ========== 第二步：杀进程（SBMainWorkspace 正规终止 → killForReason → SIGKILL）==========
