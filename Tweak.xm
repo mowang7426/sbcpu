@@ -237,7 +237,13 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @end
 @interface SBCPUTimePickerController : UITableViewController
 @end
-@class SBCPULockCleanupWhitelistController, SBCPULockCleanupAddAppController;
+@interface SBCPULockCleanupAddAppController : UITableViewController <UISearchBarDelegate>
+@property (nonatomic, strong) NSArray *allApps;
+@property (nonatomic, strong) NSArray *filteredApps;
+@property (nonatomic, strong) UISearchBar *searchBar;
+@end
+@interface SBCPULockCleanupWhitelistController : UITableViewController
+@end
 @interface SBCPUSettingsController : UITableViewController <UIGestureRecognizerDelegate>
 - (void)saveConfigs;
 @property (nonatomic, strong) CALayer *glassBackdrop;  // 设置中心 backdrop 模糊层（可调磨砂强度）
@@ -6756,12 +6762,6 @@ static NSString *appDisplayNameForBundleID(NSString *bundleID) {
 }
 
 // ===== 添加白名单：已安装应用选择页 =====
-@interface SBCPULockCleanupAddAppController : UITableViewController <UISearchBarDelegate>
-@property (nonatomic, strong) NSArray *allApps;
-@property (nonatomic, strong) NSArray *filteredApps;
-@property (nonatomic, strong) UISearchBar *searchBar;
-@end
-
 @implementation SBCPULockCleanupAddAppController
 
 - (void)viewDidLoad {
@@ -6848,9 +6848,6 @@ static NSString *appDisplayNameForBundleID(NSString *bundleID) {
 @end
 
 // ===== 锁屏清理白名单管理页 =====
-@interface SBCPULockCleanupWhitelistController : UITableViewController
-@end
-
 @implementation SBCPULockCleanupWhitelistController
 
 - (void)viewDidLoad {
