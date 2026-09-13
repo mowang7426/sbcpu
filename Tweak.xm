@@ -6853,25 +6853,23 @@ static void performLockScreenCleanup(void) {
                         removed = YES;
                         NSLog(@"[SBCPUFloating] 锁屏清理：_removeApplication: 已逐张调用，共 %lu 张卡片", (unsigned long)toRemove.count);
                     }
-                    // 尝试4：按 bundle id 批量移除
-                    if (!removed && [swModel respondsToSelector:@selector(removeApplicationsForBundleIdentifiers:)]) {
-                        NSMutableArray *bids = [NSMutableArray array];
-                        for (id app in toRemove) {
-                            NSString *bid = [app respondsToSelector:@selector(bundleIdentifier)] ? [app performSelector:@selector(bundleIdentifier)] : nil;
-                            if ([bid isKindOfClass:[NSString class]] && bid.length > 0) {
-                                [bids addObject:bid];
-                            }
-                        }
-                        [swModel performSelector:@selector(removeApplicationsForBundleIdentifiers:) withObject:bids];
-                        removed = YES;
-                        NSLog(@"[SBCPUFloating] 锁屏清理：removeApplicationsForBundleIdentifiers: 已调用，共 %lu 个", (unsigned long)bids.count);
-                    }
                     if (!removed) {
                         NSLog(@"[SBCPUFloating] ⚠️ SBAppSwitcherModel 无任何可用移除接口，卡片清空失败（进程已杀）");
                     }
                     // 强制持久化（若接口存在）
                     if ([swModel respondsToSelector:@selector(_save)]) [swModel performSelector:@selector(_save)];
                     else if ([swModel respondsToSelector:@selector(save)]) [swModel performSelector:@selector(save)];
+
+                    // ===== 验证闭环：立即回读模型，确认卡片是否真的被移除 =====
+                    NSUInteger leftCount = 0;
+                    if ([swModel respondsToSelector:@selector(applications)]) {
+                        NSArray *afterApps = [swModel performSelector:@selector(applications)];
+                        leftCount = afterApps.count;
+                        NSLog(@"[SBCPUFloating] 锁屏清理：移除后模型剩余 %lu 张卡片", (unsigned long)leftCount);
+                    }
+                    // 发送模型变化通知，强制 App Switcher UI 监听刷新
+                    [[NSNotificationCenter defaultCenter] postNotificationName:@"SBAppSwitcherModelDidChangeNotification" object:nil];
+                    [[NSNotificationCenter defaultCenter] postNotificationName:@"SBAppSwitcherModelChangedNotification" object:nil];
                     // 强制刷新 App Switcher UI
                     Class swCtrlCls = NSClassFromString(@"SBAppSwitcherController");
                     if (swCtrlCls) {
@@ -6887,6 +6885,31 @@ static void performLockScreenCleanup(void) {
                                 NSLog(@"[SBCPUFloating] 锁屏清理：已刷新 App Switcher UI（_reloadData）");
                             }
                         }
+                    }
+                    // 第二轮清除：SpringBoard 可能在杀进程后异步重新加入卡片，延迟 0.5 秒再清一次
+                    if (leftCount > 0) {
+                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                            NSArray *left = [swModel performSelector:@selector(applications)];
+                            NSMutableArray *leftToRemove = [NSMutableArray array];
+                            for (id app in left) {
+                                NSString *bid = [app respondsToSelector:@selector(bundleIdentifier)] ? [app performSelector:@selector(bundleIdentifier)] : nil;
+                                if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+                                if ([bid isEqualToString:@"com.apple.springboard"]) continue;
+                                [leftToRemove addObject:app];
+                            }
+                            if (leftToRemove.count > 0) {
+                                if ([swModel respondsToSelector:@selector(removeApplications:)]) {
+                                    [swModel removeApplications:leftToRemove];
+                                } else if ([swModel respondsToSelector:@selector(removeApplication:)]) {
+                                    for (id app in leftToRemove) {
+                                        [swModel removeApplication:app];
+                                    }
+                                }
+                                NSLog(@"[SBCPUFloating] 锁屏清理：第二轮移除剩余 %lu 张卡片", (unsigned long)leftToRemove.count);
+                            } else {
+                                NSLog(@"[SBCPUFloating] 锁屏清理：第二轮确认卡片已清空");
+                            }
+                        });
                     }
                     NSLog(@"[SBCPUFloating] 锁屏清理：卡片应用已关闭 %lu 个，待移除卡片 %lu 张", (unsigned long)killedBids.count, (unsigned long)toRemove.count);
                 } else {
