@@ -6739,7 +6739,7 @@ static void registerV160Observers(void) {
     });
 }
 
-// ========== 锁屏清理后台（V4.13 新增） ==========
+// ========== 锁屏清理后台（V4.13.1 加固版） ==========
 // 注意：SBApplication / FBSSystemService 均为 SpringBoard 私有类，
 // 必须先以主类形式声明（不能写 category，否则找不到主 interface 会编译报错）
 @interface SBApplication : NSObject
@@ -6747,6 +6747,7 @@ static void registerV160Observers(void) {
 - (BOOL)isSystemApplication;
 - (NSString *)bundleIdentifier;
 - (void)killForReason:(long long)reason;
+- (int)pid;
 @end
 
 @interface FBSSystemService : NSObject
@@ -6754,17 +6755,32 @@ static void registerV160Observers(void) {
 - (void)terminateApplication:(NSString *)bundleIdentifier forReason:(int)reason andReport:(BOOL)report withDescription:(NSString *)description;
 @end
 
+// 实时读取当前是否已锁屏（所有触发路径共用同一判断）
+static BOOL isSBLocked(void) {
+    Class lockClass = NSClassFromString(@"SBLockScreenManager");
+    if (lockClass && [lockClass respondsToSelector:@selector(sharedInstance)]) {
+        id mgr = [lockClass performSelector:@selector(sharedInstance)];
+        if ([mgr respondsToSelector:@selector(isUILocked)]) {
+            return (BOOL)[mgr performSelector:@selector(isUILocked)];
+        }
+    }
+    return NO;
+}
+
 static void performLockScreenCleanup(void) {
     if (!lockCleanupEnable) return;
-    // 3 秒内去重，防止多个锁屏 hook 路径重复触发
+    if (!isSBLocked()) return; // 只在真正锁屏时执行
+    // 3 秒内去重，防止多个触发路径重复执行
     static CFAbsoluteTime lastCleanupTime = 0;
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
     if (now - lastCleanupTime < 3.0) return;
     lastCleanupTime = now;
 
+    NSLog(@"[SBCPUFloating] 锁屏清理后台：触发，开始清理…");
     // 延后执行：等锁屏动画走完再清，避免与锁屏过程抢主线程
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         int killedCount = 0;
+        NSMutableArray *killedBids = [NSMutableArray array];
 
         // 方案一（优先）：SpringBoard 进程内 SBApplicationController + killForReason:
         Class ctrlCls = NSClassFromString(@"SBApplicationController");
@@ -6779,12 +6795,31 @@ static void performLockScreenCleanup(void) {
                     if ([bid isEqualToString:@"com.yourname.sbcpufloating"]) continue;
                     if ([app respondsToSelector:@selector(isSystemApplication)] && (BOOL)[app performSelector:@selector(isSystemApplication)]) continue;
                     if ([app respondsToSelector:@selector(isRunning)] && !(BOOL)[app performSelector:@selector(isRunning)]) continue; // 只杀正在运行的
+
+                    BOOL killed = NO;
+                    // 方式1：私有 API killForReason:（SBApplicationKillReasonUser）
                     if ([app respondsToSelector:@selector(killForReason:)]) {
-                        [app killForReason:1]; // SBApplicationKillReasonUser
+                        [app killForReason:1];
+                        killed = YES;
+                    }
+                    // 方式2（兜底）：直接对进程发 SIGKILL（SpringBoard 拥有 root 权限）
+                    if (!killed && [app respondsToSelector:@selector(pid)]) {
+                        int pid = (int)[app performSelector:@selector(pid)];
+                        if (pid > 1) {
+                            kill(pid, SIGKILL);
+                            killed = YES;
+                        }
+                    }
+                    if (killed) {
                         killedCount++;
+                        [killedBids addObject:bid];
                     }
                 }
+            } else {
+                NSLog(@"[SBCPUFloating] 锁屏清理：SBApplicationController 无 allApplications，走兜底方案");
             }
+        } else {
+            NSLog(@"[SBCPUFloating] 锁屏清理：SBApplicationController 不可用，走兜底方案");
         }
 
         // 方案二（兜底）：LSApplicationWorkspace + FBSSystemService
@@ -6805,12 +6840,33 @@ static void performLockScreenCleanup(void) {
                         if ([bid isEqualToString:@"com.yourname.sbcpufloating"]) continue;
                         [fbs terminateApplication:bid forReason:4 andReport:YES withDescription:@"SBCPUFloating lock cleanup"];
                         killedCount++;
+                        [killedBids addObject:bid];
                     }
                 }
             }
         }
 
-        NSLog(@"[SBCPUFloating] 锁屏清理后台完成，共关闭 %d 个应用", killedCount);
+        NSLog(@"[SBCPUFloating] 锁屏清理后台完成，共关闭 %d 个应用：%@", killedCount, killedBids);
+    });
+}
+
+// 轮询锁屏状态：不依赖任何私有方法名，每秒检查一次锁屏状态变化
+static BOOL gWasLocked = NO;
+static void checkLockStateTick(void) {
+    if (!lockCleanupEnable) return;
+    BOOL locked = isSBLocked();
+    if (locked && !gWasLocked) {
+        performLockScreenCleanup();
+    }
+    gWasLocked = locked;
+}
+
+// 系统锁屏通知：com.apple.springboard.lockstate（锁定/解锁都会广播）
+static void onLockStateChanged(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
+    if (!lockCleanupEnable) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (isSBLocked()) performLockScreenCleanup();
     });
 }
 
@@ -7349,6 +7405,9 @@ static void onPartRepairBundleDidLoad(CFNotificationCenterRef center, void *obse
         LoadPreferences();
         registerThermalHeartbeatListener();
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onCCNotificationReceived, kPrefChangedNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+        // 锁屏清理后台：注册系统锁屏通知 + 每秒轮询（双保险，不依赖单个 hook 方法）
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onLockStateChanged, CFSTR("com.apple.springboard.lockstate"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) { checkLockStateTick(); }];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             createCPUWindow();
             registerV160Observers();
