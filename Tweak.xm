@@ -424,18 +424,41 @@ static NSString *barsGlyph(NSInteger bars) {
     return @"▂▄▆█";
 }
 
-// 从 SpringBoard 私有 SBTelephonyManager 读信号格数（主卡），拿不到返回 -1
-// ⚠️ 安全说明：不要用 _CTServerConnectionGetSignalStrength 读 dBm —— iOS 17.0 上该私有
-//    API 已失效，实测 SIGSEGV 崩溃 SpringBoard（V4.18.5 安全模式即因此），已彻底移除。
+// 主卡信号格数（0-4），多来源链式读取，全部真实刷新：
+//   1) SBStatusBarStateAggregator —— iOS 11+ 状态栏数据聚合器，信号格数实时在此（iOS 17 首选）
+//   2) SBCellularManager —— iOS 13+ 蜂窝状态管理器
+//   3) SBTelephonyManager —— 旧版本兜底
+// 纯 ObjC 消息调用 + respondsToSelector 检查，不碰 CoreTelephony 私有 C API（避免 iOS 17 崩溃）。
 static NSInteger springBoardSignalBars(void) {
     @try {
+        Class aggCls = NSClassFromString(@"SBStatusBarStateAggregator");
+        if (aggCls) {
+            id agg = nil;
+            if ([aggCls respondsToSelector:@selector(sharedInstance)]) {
+                agg = [aggCls performSelector:@selector(sharedInstance)];
+            } else if ([aggCls respondsToSelector:@selector(_sharedInstance)]) {
+                agg = [aggCls performSelector:@selector(_sharedInstance)];
+            }
+            if (agg && [agg respondsToSelector:@selector(signalStrengthBars)]) {
+                NSInteger bars = (NSInteger)[agg performSelector:@selector(signalStrengthBars)];
+                if (bars >= 0 && bars <= 4) return bars;
+            }
+        }
+        Class cellCls = NSClassFromString(@"SBCellularManager");
+        if (cellCls && [cellCls respondsToSelector:@selector(sharedInstance)]) {
+            id mgr = [cellCls performSelector:@selector(sharedInstance)];
+            if (mgr && [mgr respondsToSelector:@selector(signalStrengthBars)]) {
+                NSInteger bars = (NSInteger)[mgr performSelector:@selector(signalStrengthBars)];
+                if (bars >= 0 && bars <= 4) return bars;
+            }
+        }
         Class cls = NSClassFromString(@"SBTelephonyManager");
-        if (!cls) return -1;
-        id mgr = [cls performSelector:@selector(sharedInstance)];
-        if (!mgr) return -1;
-        if ([mgr respondsToSelector:@selector(signalStrengthBars)]) {
-            NSInteger bars = (NSInteger)[mgr performSelector:@selector(signalStrengthBars)];
-            if (bars >= 0 && bars <= 4) return bars;
+        if (cls) {
+            id mgr = [cls performSelector:@selector(sharedInstance)];
+            if (mgr && [mgr respondsToSelector:@selector(signalStrengthBars)]) {
+                NSInteger bars = (NSInteger)[mgr performSelector:@selector(signalStrengthBars)];
+                if (bars >= 0 && bars <= 4) return bars;
+            }
         }
     } @catch (NSException *e) {}
     return -1;
@@ -2559,8 +2582,8 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         // SIM 卡信号行：浮窗最底部，实时显示运营商/制式/信号
         _signalLabel = [[UILabel alloc] init];
         _signalLabel.text = @"📶 信号检测中";
-        _signalLabel.textColor = [UIColor systemGrayColor];
-        _signalLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
+        _signalLabel.textColor = [UIColor whiteColor]; // 深色浮窗上白色更清晰（V4.18.6）
+        _signalLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
         _signalLabel.textAlignment = NSTextAlignmentCenter;
         _signalLabel.adjustsFontSizeToFitWidth = YES;
         _signalLabel.minimumScaleFactor = 0.6f;
