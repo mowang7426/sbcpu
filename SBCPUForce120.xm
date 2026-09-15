@@ -1,7 +1,9 @@
 // ============================================================
-// SBCPUForce120.xm —— 全局 120Hz 强制（V4.17.0）
-// 注入所有进程：hook 每个进程的 CADisplayLink，
-// 任何 App 的显示需求都申报 120Hz，ProMotion 协商器自然锁 120。
+// SBCPUForce120.xm —— 全局 120Hz 强制（V4.17.1）
+// 注入所有进程：
+//   1) hook CADisplayLink（所有 App 的 display link 申报 120Hz）
+//   2) hook CALayer.preferredFrameRateRange（iOS 16+，覆盖 CA 转场动画）
+//   3) hook displayLinkWithDisplay 变体（覆盖指定 display 创建的 link）
 // 低电量模式 / 系统临界过热时主动让位给系统（硬件保护）。
 // ============================================================
 #import <Foundation/Foundation.h>
@@ -33,6 +35,18 @@ static BOOL shouldForce120(void) {
     return YES;
 }
 
+// 对 display link 施加 120Hz 需求
+static void applyForce120ToLink(CADisplayLink *link) {
+    if (!link || !shouldForce120()) return;
+    @try {
+        if (@available(iOS 15.0, *)) {
+            link.preferredFrameRateRange = CAFrameRateRangeMake(120.0, 120.0, 120.0);
+        } else {
+            link.preferredFramesPerSecond = 120;
+        }
+    } @catch (NSException *e) {}
+}
+
 // CAFrameRateRange 是 iOS 15+ 类型，而工程部署目标为 iOS 14；
 // Logos 生成的 hook 声明无法用 @available 消音，这里压掉该警告（运行时仍由 @available 保护）。
 #pragma clang diagnostic push
@@ -40,18 +54,17 @@ static BOOL shouldForce120(void) {
 
 %hook CADisplayLink
 
-// 新建 display link 后立即强制
+// 新建 display link 后立即强制（标准入口）
 + (CADisplayLink *)displayLinkWithTarget:(id)target selector:(SEL)selector {
     CADisplayLink *link = %orig;
-    if (shouldForce120()) {
-        @try {
-            if (@available(iOS 15.0, *)) {
-                link.preferredFrameRateRange = CAFrameRateRangeMake(120.0, 120.0, 120.0);
-            } else {
-                link.preferredFramesPerSecond = 120;
-            }
-        } @catch (NSException *e) {}
-    }
+    applyForce120ToLink(link);
+    return link;
+}
+
+// 新建 display link 后立即强制（指定 display 的入口，iOS 3+ 公开 API）
++ (CADisplayLink *)displayLinkWithDisplay:(id)display target:(id)target selector:(SEL)selector {
+    CADisplayLink *link = %orig;
+    applyForce120ToLink(link);
     return link;
 }
 
@@ -67,6 +80,18 @@ static BOOL shouldForce120(void) {
 - (void)setPreferredFramesPerSecond:(NSInteger)framesPerSecond {
     if (shouldForce120()) framesPerSecond = 120;
     %orig(framesPerSecond);
+}
+
+%end
+
+%hook CALayer
+
+// iOS 16+：图层动画的帧率需求也强制 120，覆盖 App 打开/退出转场动画
+- (void)setPreferredFrameRateRange:(CAFrameRateRange)range {
+    if (shouldForce120()) {
+        range = CAFrameRateRangeMake(120.0, 120.0, 120.0);
+    }
+    %orig(range);
 }
 
 %end
