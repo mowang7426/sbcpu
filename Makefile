@@ -40,8 +40,10 @@ SBCPUFloatingCCRegistration_LIBRARIES = substrate
 SBCPUFloatingCCRegistration_INSTALL_TARGET_PROCESSES = SpringBoard
 
 # 5. 全局 120Hz 强制（V4.17.0）：注入所有进程，hook 每个 App 的 CADisplayLink
+# 单独部署目标 iOS 15：CAFrameRateRange 是 iOS 15+ 类型，per-target 覆盖 TARGET（不能用 -miphoneos-version-min，会与 theos 的 -target 冲突）
 SBCPUForce120_FILES = SBCPUForce120.xm
-SBCPUForce120_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -fvisibility=hidden -miphoneos-version-min=15.0
+SBCPUForce120_TARGET = iphone:clang:16.5:15.0
+SBCPUForce120_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -fvisibility=hidden
 SBCPUForce120_LDFLAGS += -Wl,-x -Wl,-dead_strip
 SBCPUForce120_FRAMEWORKS = Foundation QuartzCore
 SBCPUForce120_LIBRARIES = substrate
