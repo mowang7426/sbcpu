@@ -4931,17 +4931,21 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
         [arrow.centerYAnchor constraintEqualToAnchor:card.centerYAnchor],
         [arrow.widthAnchor constraintEqualToConstant:22.0],
 
-        [label.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16.0],
         [label.centerYAnchor constraintEqualToAnchor:card.centerYAnchor],
         [label.trailingAnchor constraintEqualToAnchor:arrow.leadingAnchor constant:-8.0]
     ]];
     if (iconView) {
+        // V4.18.3 — 修复：label 只保留一个 leading 约束（图标右侧），避免与图标重叠
         [NSLayoutConstraint activateConstraints:@[
             [iconView.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16.0],
             [iconView.centerYAnchor constraintEqualToAnchor:card.centerYAnchor],
             [iconView.widthAnchor constraintEqualToConstant:26.0],
             [iconView.heightAnchor constraintEqualToConstant:26.0],
             [label.leadingAnchor constraintEqualToAnchor:iconView.trailingAnchor constant:12.0]
+        ]];
+    } else {
+        [NSLayoutConstraint activateConstraints:@[
+            [label.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16.0]
         ]];
     }
 
