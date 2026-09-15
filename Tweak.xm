@@ -4534,7 +4534,7 @@ static UIImage *sbcpuIconForTitle(NSString *title, NSInteger section) {
     NSString *sym = nil;
     NSDictionary *rules = @{
         @"cpu.fill": @[@"cpu", @"频率", @"核心", @"占用"],
-        @"gauge.fill": @[@"fps", @"帧率", @"gauge", @"网速", @"网络"],
+        @"gauge.fill": @[@"fps", @"帧率", @"gauge", @"网速", @"网络", @"高刷"],
         @"thermometer.sun.fill": @[@"温度", @"温控", @"过热", @"高温", @"发热"],
         @"bolt.fill": @[@"充电", @"快充", @"电流", @"电压", @"功率", @"涓流"],
         @"battery.100percent": @[@"电池", @"电量", @"停充", @"满血"],
@@ -4542,11 +4542,11 @@ static UIImage *sbcpuIconForTitle(NSString *title, NSInteger section) {
         @"checkmark.shield.fill": @[@"插件", @"冲突", @"检测", @"扫描", @"耗电"],
         @"droplet.fill": @[@"液态玻璃", @"液态"],
         @"eye.fill": @[@"显示", @"悬浮窗", @"浮窗", @"透明"],
-        @"arrow.up.and.down": @[@"折叠", @"展开", @"伸缩", @"横屏"],
+        @"arrow.up.and.down": @[@"折叠", @"展开", @"伸缩", @"横屏", @"缩进", @"吸附"],
         @"slider.horizontal.3": @[@"透明度", @"缩放", @"大小", @"圆角", @"字号", @"字体", @"位置"],
         @"keyboard.fill": @[@"键盘", @"输入"],
         @"dock.rectangle": @[@"dock", @"停靠"],
-        @"hand.tap.fill": @[@"单击", @"双击", @"长按", @"拖动", @"手势"],
+        @"hand.tap.fill": @[@"单击", @"双击", @"长按", @"拖动", @"手势", @"智能选项"],
         @"mappin.and.ellipse": @[@"记忆", @"记住"],
         @"bell.fill": @[@"通知", @"提醒"],
         @"memorychip.fill": @[@"内存"],
@@ -4659,13 +4659,20 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
                                                      target:self
                                                      action:@selector(closeSettings)];
 
-    // V4.18.1 — 分组折叠：读取上次折叠状态（默认展开），标题栏可点击收起/展开
+    // V4.18.2 — 分组折叠：默认全部收起（分组显示为一行行入口，点击展开）
     self.collapsedSections = [NSMutableSet set];
     @try {
-        NSArray *saved = [[NSUserDefaults standardUserDefaults] objectForKey:@"sbfl_settings_collapsed_v1"];
-        if ([saved isKindOfClass:[NSArray class]]) {
+        NSArray *saved = [[NSUserDefaults standardUserDefaults] objectForKey:@"sbfl_settings_collapsed_v2"];
+        if ([saved isKindOfClass:[NSArray class]] && saved.count > 0) {
+            // 有历史折叠记录：尊重用户上次展开/收起的选择
             for (id num in saved) {
                 [self.collapsedSections addObject:num];
+            }
+        } else {
+            // 首次：默认全部收起（0~12 有内容的分组），打开即清爽的分组列表
+            for (NSInteger i = 0; i <= 12; i++) {
+                if (i == 10 || i == 11) continue;
+                [self.collapsedSections addObject:@(i)];
             }
         }
     } @catch (NSException *e) {}
@@ -4856,8 +4863,9 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     (void)tableView;
     // 隐藏真正没有内容的说明区，其他分组标题保持呼吸感。
     if (section == 10 || section == 11) return 2.0;
-    if (section == 0) return 46.0;
-    return 38.0;
+    // V4.18.2 — 分组入口行样式：卡片高度 48
+    if (section == 0) return 54.0;
+    return 48.0;
 }
 
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
@@ -4866,46 +4874,88 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     NSString *title = [self tableView:tableView titleForHeaderInSection:section];
     if (!title.length) return nil;
 
+    // V4.18.2 — 分组入口：白色圆角卡片行（图标 + 标题 + 右侧箭头），点击展开/收起
     UIView *header = [[UIView alloc] initWithFrame:CGRectZero];
     header.backgroundColor = UIColor.clearColor;
-    // V4.18.1 — 分组折叠：标题栏整体可点击
+
+    UIView *card = [[UIView alloc] initWithFrame:CGRectZero];
+    card.backgroundColor = UIColor.whiteColor;
+    card.layer.cornerRadius = 12.0f;
+    card.layer.masksToBounds = YES;
+    card.translatesAutoresizingMaskIntoConstraints = NO;
+    [header addSubview:card];
+
+    // 点击手势
     header.tag = 9000 + section;
     header.userInteractionEnabled = YES;
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleSection:)];
     tap.numberOfTapsRequired = 1;
     [header addGestureRecognizer:tap];
 
-    // 去掉 emoji 后面的“脏感”，保留它们作为视觉识别。
+    // 左侧彩色图标
+    UIImageView *iconView = nil;
+    UIImage *icon = sbcpuIconForTitle(title, section);
+    if (icon) {
+        iconView = [[UIImageView alloc] initWithImage:icon];
+        iconView.translatesAutoresizingMaskIntoConstraints = NO;
+        [card addSubview:iconView];
+    }
+
+    // 标题
     UILabel *label = [[UILabel alloc] initWithFrame:CGRectZero];
-    label.text = title;
-    label.textColor = [UIColor colorWithWhite:0.15 alpha:1.0]; // 浅色模式：黑色小字清晰可读
-    label.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightSemibold];
+    label.text = stripLeadingEmoji(title);
+    label.textColor = [UIColor colorWithWhite:0.12 alpha:1.0];
+    label.font = [UIFont systemFontOfSize:15.0 weight:UIFontWeightMedium];
     label.numberOfLines = 1;
     label.translatesAutoresizingMaskIntoConstraints = NO;
-    [header addSubview:label];
+    [card addSubview:label];
 
-    // V4.18.1 — 右侧折叠箭头（▾ 展开 / ▸ 收起）
+    // 右侧箭头：收起 ▶ / 展开 ▾
     BOOL collapsed = [self.collapsedSections containsObject:@(section)];
     UILabel *arrow = [[UILabel alloc] initWithFrame:CGRectZero];
-    arrow.text = collapsed ? @"▸" : @"▾";
-    arrow.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightSemibold];
+    arrow.text = collapsed ? @"▶" : @"▾";
+    arrow.font = [UIFont systemFontOfSize:11.0 weight:UIFontWeightSemibold];
     arrow.textColor = [UIColor systemGrayColor];
     arrow.textAlignment = NSTextAlignmentRight;
     arrow.translatesAutoresizingMaskIntoConstraints = NO;
     arrow.tag = 9100;
-    [header addSubview:arrow];
+    [card addSubview:arrow];
 
     [NSLayoutConstraint activateConstraints:@[
-        [label.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:18.0],
-        [label.trailingAnchor constraintEqualToAnchor:arrow.leadingAnchor constant:-12.0],
-        [label.bottomAnchor constraintEqualToAnchor:header.bottomAnchor constant:-8.0],
-        [label.topAnchor constraintGreaterThanOrEqualToAnchor:header.topAnchor constant:4.0],
-        [arrow.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-18.0],
-        [arrow.centerYAnchor constraintEqualToAnchor:label.centerYAnchor],
-        [arrow.widthAnchor constraintEqualToConstant:24.0]
+        [card.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:16.0],
+        [card.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-16.0],
+        [card.topAnchor constraintEqualToAnchor:header.topAnchor constant:2.0],
+        [card.bottomAnchor constraintEqualToAnchor:header.bottomAnchor constant:-6.0],
+
+        [arrow.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16.0],
+        [arrow.centerYAnchor constraintEqualToAnchor:card.centerYAnchor],
+        [arrow.widthAnchor constraintEqualToConstant:22.0],
+
+        [label.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16.0],
+        [label.centerYAnchor constraintEqualToAnchor:card.centerYAnchor],
+        [label.trailingAnchor constraintEqualToAnchor:arrow.leadingAnchor constant:-8.0]
     ]];
+    if (iconView) {
+        [NSLayoutConstraint activateConstraints:@[
+            [iconView.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16.0],
+            [iconView.centerYAnchor constraintEqualToAnchor:card.centerYAnchor],
+            [iconView.widthAnchor constraintEqualToConstant:26.0],
+            [iconView.heightAnchor constraintEqualToConstant:26.0],
+            [label.leadingAnchor constraintEqualToAnchor:iconView.trailingAnchor constant:12.0]
+        ]];
+    }
 
     return header;
+}
+
+// V4.18.2 — 分组入口行：去掉标题开头的 emoji（"📱 " → ""），让行内只保留文字+图标
+static NSString *stripLeadingEmoji(NSString *s) {
+    if (![s isKindOfClass:[NSString class]] || s.length == 0) return s;
+    NSRange r = [s rangeOfString:@" "];
+    if (r.location != NSNotFound && r.location < 4) {
+        return [s substringFromIndex:r.location + 1];
+    }
+    return s;
 }
 
 // V4.18.1 — 点击分组标题：展开/收起，带动画并记忆状态
@@ -4922,7 +4972,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 
     // 更新箭头
     UILabel *arrow = [gr.view viewWithTag:9100];
-    arrow.text = willCollapse ? @"▸" : @"▾";
+    arrow.text = willCollapse ? @"▶" : @"▾";
 
     // 动画收起/展开行
     [self.tableView beginUpdates];
@@ -4933,7 +4983,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     // 记忆折叠状态（跨打开保持）
     @try {
         NSArray *allKeys = [self.collapsedSections.allObjects sortedArrayUsingSelector:@selector(compare:)];
-        [[NSUserDefaults standardUserDefaults] setObject:allKeys forKey:@"sbfl_settings_collapsed_v1"];
+        [[NSUserDefaults standardUserDefaults] setObject:allKeys forKey:@"sbfl_settings_collapsed_v2"];
     } @catch (NSException *e) {}
 }
 
