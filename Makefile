@@ -41,7 +41,7 @@ SBCPUFloatingCCRegistration_INSTALL_TARGET_PROCESSES = SpringBoard
 
 # 5. 全局 120Hz 强制（V4.17.0）：注入所有进程，hook 每个 App 的 CADisplayLink
 SBCPUForce120_FILES = SBCPUForce120.xm
-SBCPUForce120_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -fvisibility=hidden
+SBCPUForce120_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -fvisibility=hidden -miphoneos-version-min=15.0
 SBCPUForce120_LDFLAGS += -Wl,-x -Wl,-dead_strip
 SBCPUForce120_FRAMEWORKS = Foundation QuartzCore
 SBCPUForce120_LIBRARIES = substrate
