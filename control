@@ -1,9 +1,9 @@
 Package: com.sbcpu.floating
 Name: SB CPU Floating
-Version: 3.8
+Version: 4.16.0
 Architecture: iphoneos-arm64
 Maintainer: MoWang
 Author: MoWang
-Description:新增插件耗电情况，仅供参考，长安浮窗显示
+Description:新增插件耗电情况，仅供参考
 Section: Tweaks
 Depends: mobilesubstrate, preferenceloader

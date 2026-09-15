@@ -244,6 +244,8 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @end
 @interface SBCPULockCleanupWhitelistController : UITableViewController
 @end
+@interface SBCPUChargeHistoryController : UITableViewController
+@end
 @interface SBCPUSettingsController : UITableViewController <UIGestureRecognizerDelegate>
 - (void)saveConfigs;
 @property (nonatomic, strong) CALayer *glassBackdrop;  // 设置中心 backdrop 模糊层（可调磨砂强度）
@@ -926,19 +928,24 @@ static double getChargerUtilisationPercent(void) {
 }
 
 // 停充实测验证：外部连接 + 未在充电 + 电量 50~99% + 电池电流 < 0.3A → 判定已停充/保持
+static BOOL getExternalConnectedState(void) {
+    BOOL external = NO;
+    io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
+    if (service) {
+        CFMutableDictionaryRef prop = NULL;
+        if (IORegistryEntryCreateCFProperties(service, &prop, kCFAllocatorDefault, 0) == KERN_SUCCESS && prop) {
+            NSDictionary *pDict = (__bridge NSDictionary *)prop;
+            external = [pDict[@"ExternalConnected"] boolValue];
+            CFRelease(prop);
+        }
+        IOObjectRelease(service);
+    }
+    return external;
+}
+
 static BOOL isChargingOnHold(void) {
     @try {
-        BOOL external = NO;
-        io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
-        if (service) {
-            CFMutableDictionaryRef prop = NULL;
-            if (IORegistryEntryCreateCFProperties(service, &prop, kCFAllocatorDefault, 0) == KERN_SUCCESS && prop) {
-                NSDictionary *pDict = (__bridge NSDictionary *)prop;
-                external = [pDict[@"ExternalConnected"] boolValue];
-                CFRelease(prop);
-            }
-            IOObjectRelease(service);
-        }
+        BOOL external = getExternalConnectedState();
         if (!external) return NO;
         BOOL charging = isChargingInternal();
         if (charging) return NO;
@@ -958,6 +965,171 @@ static double getBatteryTemperatureInternal(void) {
         return val;
     }
     return -1;
+}
+
+// ========== 无线充电功率 & 充电会话记录器（V4.16.0，移植 MiniWatts PowerSnapshot/ChargeSession/EnergyAccumulator） ==========
+// 无线充电功率（W）：MagSafe 线圈电压×电流（Charger VQ1u × IQ1u）
+static double getWirelessChargePower(void) {
+    NSDictionary *sensors = getHIDPowerSensors();
+    double v = 0, c = 0;
+    for (NSString *k in sensors) {
+        if ([k localizedCaseInsensitiveContainsString:@"VQ1u"]) v = [sensors[k] doubleValue];
+        else if ([k localizedCaseInsensitiveContainsString:@"IQ1u"]) c = [sensors[k] doubleValue];
+    }
+    if (v > 1 && c > 0) return v * c;
+    return 0;
+}
+
+// ---- 充电会话：插电开始采样（每 5 秒积分），拔电归档，JSON 持久化最多 60 条 ----
+static NSString *chargeSessionsFilePath(void) {
+    return @"/var/mobile/Library/Preferences/com.sbcpu.floating.charge-sessions.json";
+}
+static NSMutableArray *gChargeSessions = nil;
+static NSMutableDictionary *gActiveSession = nil;
+static BOOL gWasExternalCharging = NO;
+static double gSessInputWh = 0, gSessBatteryWh = 0, gSessBatteryMah = 0;
+static double gSessPeakInputW = 0, gSessPeakBattW = 0, gSessPeakTemp = -200;
+static double gSessLastInputW = -1, gSessLastBattW = -1, gSessLastBattA = -1;
+static NSTimeInterval gSessLastSampleTime = 0;
+static NSTimeInterval gSessStartTime = 0;
+static NSInteger gSessStartPercent = -1;
+static BOOL gSessWireless = NO;
+static NSInteger gSessThrottledSeconds = 0;
+
+static void saveChargeSessionsToDisk(void) {
+    @try {
+        NSData *data = [NSJSONSerialization dataWithJSONObject:(gChargeSessions ?: @[]) options:0 error:nil];
+        [data writeToFile:chargeSessionsFilePath() atomically:YES];
+    } @catch (id e) {}
+}
+
+static void loadChargeSessionsFromDisk(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        gChargeSessions = [NSMutableArray array];
+        NSData *data = [NSData dataWithContentsOfFile:chargeSessionsFilePath()];
+        if (!data) return;
+        NSArray *arr = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        if ([arr isKindOfClass:[NSArray class]]) {
+            gChargeSessions = [NSMutableArray arrayWithArray:arr];
+            if (gChargeSessions.count > 60) {
+                [gChargeSessions removeObjectsInRange:NSMakeRange(60, gChargeSessions.count - 60)];
+            }
+        }
+    });
+}
+
+static NSString *formatSessionDurationStr(NSTimeInterval secs) {
+    if (secs < 60) return [NSString stringWithFormat:@"%ld秒", (long)secs];
+    NSInteger m = (NSInteger)(secs / 60);
+    if (m < 60) return [NSString stringWithFormat:@"%ld分钟", (long)m];
+    return [NSString stringWithFormat:@"%ldh%02ldm", (long)(m / 60), (long)(m % 60)];
+}
+
+// 每秒调用：状态机（检测插拔）+ 梯形积分采样 + 拔电归档
+static void chargeSessionTick(void) {
+    loadChargeSessionsFromDisk();
+    BOOL external = getExternalConnectedState();
+    if (external && !gWasExternalCharging) {
+        // 插电：开启新会话
+        gActiveSession = [NSMutableDictionary dictionary];
+        gSessInputWh = gSessBatteryWh = gSessBatteryMah = 0;
+        gSessPeakInputW = gSessPeakBattW = 0;
+        gSessPeakTemp = -200;
+        gSessLastInputW = gSessLastBattW = gSessLastBattA = -1;
+        gSessLastSampleTime = 0;
+        gSessStartTime = [NSDate timeIntervalSinceReferenceDate];
+        gSessStartPercent = (NSInteger)([UIDevice currentDevice].batteryLevel * 100);
+        if (gSessStartPercent < 0) gSessStartPercent = 0;
+        gSessWireless = getWirelessChargePower() > 0.5;
+        gSessThrottledSeconds = 0;
+    }
+    if (external && gActiveSession) {
+        double inputW = getChargerInputPower();
+        NSDictionary *bat = getRealBatteryDetails();
+        double battW = [bat[@"CalculatedWatts"] doubleValue];
+        if (battW < 0) battW = 0;
+        double battA = fabs([bat[@"Amperage"] doubleValue]) / 1000.0;
+        NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+        if (gSessLastSampleTime > 0) {
+            double dt = now - gSessLastSampleTime;
+            if (dt > 0 && dt <= 10) {
+                double hours = dt / 3600.0;
+                if (gSessLastInputW >= 0) gSessInputWh += (gSessLastInputW + inputW) / 2.0 * hours;
+                if (gSessLastBattW >= 0) gSessBatteryWh += (gSessLastBattW + battW) / 2.0 * hours;
+                if (gSessLastBattA >= 0) gSessBatteryMah += (gSessLastBattA + battA) / 2.0 * hours * 1000.0;
+            }
+        }
+        gSessLastInputW = inputW;
+        gSessLastBattW = battW;
+        gSessLastBattA = battA;
+        gSessLastSampleTime = now;
+        if (inputW > gSessPeakInputW) gSessPeakInputW = inputW;
+        if (battW > gSessPeakBattW) gSessPeakBattW = battW;
+        double temp = getBatteryTemperatureInternal();
+        if (temp > gSessPeakTemp) gSessPeakTemp = temp;
+        if (NSProcessInfo.processInfo.thermalState == NSProcessInfoThermalStateSerious ||
+            NSProcessInfo.processInfo.thermalState == NSProcessInfoThermalStateCritical) {
+            gSessThrottledSeconds++;
+        }
+    }
+    if (!external && gWasExternalCharging && gActiveSession) {
+        // 拔电：归档
+        NSInteger endPercent = (NSInteger)([UIDevice currentDevice].batteryLevel * 100);
+        if (endPercent < 0) endPercent = 0;
+        double duration = [NSDate timeIntervalSinceReferenceDate] - gSessStartTime;
+        gActiveSession[@"start"] = @(gSessStartTime);
+        gActiveSession[@"duration"] = @(duration);
+        gActiveSession[@"startPercent"] = @(gSessStartPercent);
+        gActiveSession[@"endPercent"] = @(endPercent);
+        gActiveSession[@"inputWh"] = @(gSessInputWh);
+        gActiveSession[@"batteryWh"] = @(gSessBatteryWh);
+        gActiveSession[@"batteryMah"] = @(gSessBatteryMah);
+        gActiveSession[@"peakInputW"] = @(gSessPeakInputW);
+        gActiveSession[@"peakBattW"] = @(gSessPeakBattW);
+        gActiveSession[@"peakTemp"] = (gSessPeakTemp > -100) ? @(gSessPeakTemp) : (id)[NSNull null];
+        gActiveSession[@"wireless"] = @(gSessWireless);
+        gActiveSession[@"throttledSeconds"] = @(gSessThrottledSeconds);
+        [gChargeSessions insertObject:gActiveSession atIndex:0];
+        if (gChargeSessions.count > 60) {
+            [gChargeSessions removeObjectsInRange:NSMakeRange(60, gChargeSessions.count - 60)];
+        }
+        saveChargeSessionsToDisk();
+        gActiveSession = nil;
+    }
+    gWasExternalCharging = external;
+}
+
+// 本次充入字符串（详情面板/浮窗）
+static NSString *getCurrentChargeAmountString(void) {
+    if (!gActiveSession && !gWasExternalCharging) return @"未在充电";
+    double duration = [NSDate timeIntervalSinceReferenceDate] - gSessStartTime;
+    if (duration < 5) return @"充电中...";
+    NSMutableString *s = [NSMutableString string];
+    if (gSessBatteryMah >= 1) [s appendFormat:@"%.0fmAh", gSessBatteryMah];
+    if (gSessInputWh >= 0.001) {
+        if (s.length) [s appendString:@" · "];
+        [s appendFormat:@"输入%.1fWh", gSessInputWh];
+    }
+    if (gSessInputWh >= 0.001 && gSessBatteryWh >= 0.001) {
+        double loss = MAX(gSessInputWh - gSessBatteryWh, 0);
+        [s appendFormat:@" · 损耗%.1fWh", loss];
+    }
+    return s.length > 0 ? s : @"充电中...";
+}
+
+static void clearChargeSessions(void) {
+    loadChargeSessionsFromDisk();
+    [gChargeSessions removeAllObjects];
+    saveChargeSessionsToDisk();
+}
+
+// 本机时间格式化（充电历史用）
+static NSString *formatSessionStartTime(NSTimeInterval secs) {
+    NSDate *d = [NSDate dateWithTimeIntervalSinceReferenceDate:secs];
+    NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+    fmt.dateFormat = @"MM-dd HH:mm";
+    return [fmt stringFromDate:d];
 }
 
 static double getBatteryCurrentInternal(void) {
@@ -3390,6 +3562,12 @@ return self;
     _cpuFreqLabel.text = [NSString stringWithFormat:@"%.0f MHz", cpuFreq];
     _fpsValueLabel.text = [NSString stringWithFormat:@"%.0f", fps];
     _batteryValueLabel.text = [NSString stringWithFormat:@"%ld%%", (long)battery];
+    if (isCharging && gWasExternalCharging && gActiveSession) {
+        double duration = [NSDate timeIntervalSinceReferenceDate] - gSessStartTime;
+        if (duration >= 5 && gSessBatteryMah >= 1) {
+            _batteryValueLabel.text = [NSString stringWithFormat:@"%ld%% +%.0fmAh", (long)battery, gSessBatteryMah];
+        }
+    }
     _tempValueLabel.text = (temp > 0) ? [NSString stringWithFormat:@"%.1f°C", temp] : @"--°C";
     _currentValueLabel.text = [NSString stringWithFormat:@"%.0f mA", current];
 
@@ -3512,7 +3690,7 @@ return self;
     CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
     CGFloat screenH = [UIScreen mainScreen].bounds.size.height;
     CGFloat panelW = MIN(screenW - margin * 2, 420.0);
-    CGFloat panelH = MIN(screenH - margin * 4, 392.0);
+    CGFloat panelH = MIN(screenH - margin * 4, 436.0);
 
     UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialLight];
     _blurEffectView = [[UIVisualEffectView alloc] initWithEffect:blur];
@@ -3551,7 +3729,8 @@ return self;
 
     NSArray *leftKeys = @[
         @"电池健康程度", @"电池循环次数", @"电池预计充满", @"电池充电类型",
-        @"电池充电功率", @"充电器输入功率", @"充电器信息", @"停充状态",
+        @"电池充电功率", @"充电器输入功率", @"本次充入", @"无线充电功率",
+        @"充电器信息", @"停充状态",
         @"电池当前电流", @"电池当前电压", @"电池当前温度",
         @"电池当前电量", @"电池设计容量", @"电池实际容量", @"电池当前容量"
     ];
@@ -3683,6 +3862,14 @@ return self;
     // 充电器信息：名称 · 额定功率 · PD 档位
     NSString *adapterInfo = getAdapterInfoString();
     _labelsDict[@"充电器信息"].text = adapterInfo;
+
+    // 本次充入（充电会话积分）
+    _labelsDict[@"本次充入"].text = getCurrentChargeAmountString();
+
+    // 无线充电功率（MagSafe 线圈 V×A）
+    double wirelessW = getWirelessChargePower();
+    _labelsDict[@"无线充电功率"].text = wirelessW > 0.5 ?
+        [NSString stringWithFormat:@"%.1fW", wirelessW] : (charging ? @"未使用" : @"未充电");
 
     // 停充状态：实测验证（外部连接+未充电+电流<0.3A → 已停充/保持）
     BOOL holding = isChargingOnHold();
@@ -4488,7 +4675,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 4) return 3;
     if (section == 5) return 1;
     if (section == 6) return 10;
-    if (section == 7) return 3; 
+    if (section == 7) return 4; 
     if (section == 8) return 8; // 位置与显示（磨砂强度/卡片不透明度已移除）
     if (section == 9) return 5; // 🔋 智能停充
     if (section == 10) return 0; // 📖 功能说明已移除
@@ -5367,6 +5554,13 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             sw.on = suppressPartRepairEnabled;
             [sw addTarget:self action:@selector(changeSuppressPartRepair:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
+        } else if (indexPath.row == 3) {
+            cell.textLabel.text = @"📊 充电历史";
+            loadChargeSessionsFromDisk();
+            NSInteger cnt = gChargeSessions ? gChargeSessions.count : 0;
+            cell.detailTextLabel.text = cnt > 0 ? [NSString stringWithFormat:@"%ld 条记录", (long)cnt] : @"暂无记录";
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
         }
     } else if (indexPath.section == 8) {
         CGFloat cw = self.tableView.bounds.size.width - 32.0; // 滑块行布局需要（稳定口径）
@@ -5738,6 +5932,11 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             }
             [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
             [self presentViewController:alert animated:YES completion:nil];
+        }
+    } else if (indexPath.section == 7) {
+        if (indexPath.row == 3) {
+            SBCPUChargeHistoryController *vc = [[SBCPUChargeHistoryController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+            [self.navigationController pushViewController:vc animated:YES];
         }
     }
 }
@@ -7101,6 +7300,130 @@ static NSString *appDisplayNameForBundleID(NSString *bundleID) {
 }
 @end
 
+@implementation SBCPUChargeHistoryController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"充电历史";
+    UIBarButtonItem *clearBtn = [[UIBarButtonItem alloc] initWithTitle:@"清空" style:UIBarButtonItemStylePlain target:self action:@selector(clearAll)];
+    self.navigationItem.rightBarButtonItem = clearBtn;
+    [self.tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"Cell"];
+    loadChargeSessionsFromDisk();
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    loadChargeSessionsFromDisk();
+    [self.tableView reloadData];
+}
+
+- (void)clearAll {
+    loadChargeSessionsFromDisk();
+    NSInteger cnt = gChargeSessions ? gChargeSessions.count : 0;
+    if (cnt == 0) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"暂无记录" message:@"还没有任何充电记录" preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"好的" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"清空充电历史" message:[NSString stringWithFormat:@"确定删除全部 %ld 条充电记录？此操作不可恢复", (long)cnt] preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"全部清空" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
+        clearChargeSessions();
+        [self.tableView reloadData];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return 2;
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    if (section == 0) return 1;
+    loadChargeSessionsFromDisk();
+    return gChargeSessions ? gChargeSessions.count : 0;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    if (section == 0) return @"说明";
+    loadChargeSessionsFromDisk();
+    return [NSString stringWithFormat:@"全部记录（%ld）", (long)(gChargeSessions ? gChargeSessions.count : 0)];
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell" forIndexPath:indexPath];
+    if (indexPath.section == 0) {
+        cell.textLabel.text = @"每次插上充电器自动开始记录，拔下自动归档。包含：时长、充入电量、输入能量、峰值功率、转换效率与热降频时间。";
+        cell.textLabel.numberOfLines = 0;
+        cell.textLabel.font = [UIFont systemFontOfSize:13];
+        cell.textLabel.textColor = [UIColor secondaryLabelColor];
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        return cell;
+    }
+    loadChargeSessionsFromDisk();
+    NSDictionary *s = gChargeSessions[indexPath.row];
+    NSString *timeStr = formatSessionStartTime([s[@"start"] doubleValue]);
+    NSString *durStr = formatSessionDurationStr([s[@"duration"] doubleValue]);
+    NSInteger sp = [s[@"startPercent"] integerValue], ep = [s[@"endPercent"] integerValue];
+    double mah = [s[@"batteryMah"] doubleValue];
+    double peak = [s[@"peakInputW"] doubleValue];
+    BOOL wireless = [s[@"wireless"] boolValue];
+    double inWh = [s[@"inputWh"] doubleValue], batWh = [s[@"batteryWh"] doubleValue];
+    NSInteger throttled = [s[@"throttledSeconds"] integerValue];
+
+    NSMutableString *title = [NSMutableString string];
+    [title appendFormat:@"%@ · %@ · %ld%%→%ld%%", timeStr, durStr, (long)sp, (long)ep];
+    if (wireless) [title appendString:@" · 无线"];
+    cell.textLabel.text = title;
+    cell.textLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+
+    NSMutableString *detail = [NSMutableString string];
+    if (mah >= 1) [detail appendFormat:@"充入%.0fmAh", mah];
+    if (peak > 0.5) {
+        if (detail.length) [detail appendString:@" · "];
+        [detail appendFormat:@"峰值%.1fW", peak];
+    }
+    if (inWh >= 0.001 && batWh >= 0.001) {
+        double eff = MIN(batWh / inWh * 100.0, 100.0);
+        if (detail.length) [detail appendString:@" · "];
+        [detail appendFormat:@"效率%.0f%%", eff];
+    }
+    if (throttled > 30) {
+        if (detail.length) [detail appendString:@" · "];
+        [detail appendFormat:@"热降频%@", formatSessionDurationStr(throttled)];
+    }
+    cell.detailTextLabel.text = detail;
+    cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
+    cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section == 0) return;
+    loadChargeSessionsFromDisk();
+    NSDictionary *s = gChargeSessions[indexPath.row];
+    NSMutableString *msg = [NSMutableString string];
+    [msg appendFormat:@"开始：%@（电量 %ld%%）\n", formatSessionStartTime([s[@"start"] doubleValue]), (long)[s[@"startPercent"] integerValue]];
+    [msg appendFormat:@"时长：%@\n", formatSessionDurationStr([s[@"duration"] doubleValue])];
+    [msg appendFormat:@"电量：%ld%% → %ld%%\n", (long)[s[@"startPercent"] integerValue], (long)[s[@"endPercent"] integerValue]];
+    if ([s[@"batteryMah"] doubleValue] >= 1) [msg appendFormat:@"充入：%.0f mAh（%.1f Wh）\n", [s[@"batteryMah"] doubleValue], [s[@"batteryWh"] doubleValue]];
+    if ([s[@"inputWh"] doubleValue] >= 0.001) {
+        double loss = MAX([s[@"inputWh"] doubleValue] - [s[@"batteryWh"] doubleValue], 0);
+        [msg appendFormat:@"输入能量：%.1f Wh（损耗 %.1f Wh）\n", [s[@"inputWh"] doubleValue], loss];
+    }
+    if ([s[@"peakInputW"] doubleValue] > 0.5) [msg appendFormat:@"峰值功率：%.1f W\n", [s[@"peakInputW"] doubleValue]];
+    if ([s[@"peakTemp"] isKindOfClass:[NSNumber class]]) [msg appendFormat:@"峰值温度：%.1f°C\n", [s[@"peakTemp"] doubleValue]];
+    [msg appendFormat:@"充电方式：%@\n", [s[@"wireless"] boolValue] ? @"无线 (MagSafe)" : @"有线"];
+    [msg appendFormat:@"热降频时间：%@", formatSessionDurationStr([s[@"throttledSeconds"] integerValue])];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"充电详情" message:msg preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+@end
+
 #pragma mark - 8. 进程通知与 SpringBoard 状态初始化
 
 static void onCCNotificationReceived(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
@@ -7954,7 +8277,7 @@ static void onPartRepairBundleDidLoad(CFNotificationCenterRef center, void *obse
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             createCPUWindow();
             registerV160Observers();
-            [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) { updateCPU(); }];
+            [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) { updateCPU(); chargeSessionTick(); }];
         });
     }
 }
