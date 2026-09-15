@@ -3,7 +3,7 @@ TARGET = iphone:clang:16.5:14.0
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = SBCPUFloating SBCPUThermal SBCPUPowerd SBCPUFloatingCCRegistration
+TWEAK_NAME = SBCPUFloating SBCPUThermal SBCPUPowerd SBCPUFloatingCCRegistration SBCPUForce120
 
 # 1. 桌面 UI、悬浮窗、120Hz/FPS、通知管理
 SBCPUFloating_FILES = Tweak.xm
@@ -39,9 +39,18 @@ SBCPUFloatingCCRegistration_FRAMEWORKS = Foundation CoreFoundation
 SBCPUFloatingCCRegistration_LIBRARIES = substrate
 SBCPUFloatingCCRegistration_INSTALL_TARGET_PROCESSES = SpringBoard
 
+# 5. 全局 120Hz 强制（V4.17.0）：注入所有进程，hook 每个 App 的 CADisplayLink
+SBCPUForce120_FILES = SBCPUForce120.xm
+SBCPUForce120_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -fvisibility=hidden
+SBCPUForce120_LDFLAGS += -Wl,-x -Wl,-dead_strip
+SBCPUForce120_FRAMEWORKS = Foundation QuartzCore
+SBCPUForce120_LIBRARIES = substrate
+SBCPUForce120_INSTALL_TARGET_PROCESSES = SpringBoard
+
 ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
 SBCPUThermal_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide
 SBCPUFloatingCCRegistration_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide
+SBCPUForce120_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide
 endif
 
 include $(THEOS_MAKE_PATH)/tweak.mk
@@ -67,6 +76,7 @@ include $(THEOS_MAKE_PATH)/aggregate.mk
 after-stage::
 	$(ECHO_NOTHING)mkdir -p "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries"$(ECHO_END)
 	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/SBCPUPowerd.plist" "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/SBCPUPowerd.plist"$(ECHO_END)
+	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/SBCPUForce120.plist" "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/SBCPUForce120.plist"$(ECHO_END)
 	$(ECHO_NOTHING)mkdir -p "$(THEOS_STAGING_DIR)/Library/ControlCenter/Bundles/SBCPUFloatingCC.bundle"$(ECHO_END)
 	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/ControlCenter/resources/Info.plist" "$(THEOS_STAGING_DIR)/Library/ControlCenter/Bundles/SBCPUFloatingCC.bundle/Info.plist"$(ECHO_END)
 	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/ControlCenter/resources/SettingsIcon.png" "$(THEOS_STAGING_DIR)/Library/ControlCenter/Bundles/SBCPUFloatingCC.bundle/SettingsIcon.png"$(ECHO_END)
