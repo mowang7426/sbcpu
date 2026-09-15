@@ -177,6 +177,7 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 // 实时温控状态：直接读取 SBCPUThermal 的诊断通知，不依赖设置页面缓存。
 @property (nonatomic, strong) UILabel *thermalStatusLabel;
 @property (nonatomic, strong) UILabel *timeLabel; // 游戏/横屏时显示时间 HH:mm:ss
+@property (nonatomic, strong) UILabel *signalLabel; // 📶 SIM 卡信号行（V4.18.0）
 @property (nonatomic, strong) UIView *collapsedContainerView;
 @property (nonatomic, strong) UIView *statusDot;
 @property (nonatomic, strong) UILabel *miniCpuLabel;
@@ -251,6 +252,9 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) CALayer *glassBackdrop;  // 设置中心 backdrop 模糊层（可调磨砂强度）
 @property (nonatomic, strong) CAGradientLayer *glassGradient; // 设置中心蓝紫渐变玻璃底（图二风格）
 @property (nonatomic, strong) UIView *glassDimView;    // 兼容保留
+// V4.18.1 — 分组折叠：记录被折叠的 section，支持点击标题栏展开/收起
+@property (nonatomic, strong) NSMutableSet *collapsedSections;
+- (void)toggleSection:(UITapGestureRecognizer *)gr;
 @end
 @interface SBCPUDetailViewController : UIViewController
 @property (nonatomic, strong) UIVisualEffectView *blurEffectView;
@@ -303,6 +307,7 @@ static BOOL rememberPositionEnable = YES;
 static BOOL showCpuFrequency = YES;
 static BOOL showFps = YES;                       
 static BOOL force120HzEnable = NO;               
+static BOOL showSignalStrength = YES; // 📶 浮窗底部显示 SIM 卡信号（V4.18.0）
 
 
 static BOOL chargeBoostEnable = NO;
@@ -394,6 +399,106 @@ static void openDetailView(void);
 static void openSettings(void);
 static void checkHighCPU(double cpu);
 static void updateCPU(void);
+
+// ============================================================
+// 📶 SIM 卡信号显示（V4.18.0）
+// 运营商/制式走 CoreTelephony 公开 API（KVC 动态调用，不链接框架）；
+// 信号强度读 SpringBoard 私有 SBTelephonyManager（signalStrengthBars），
+// 全部动态检测，拿不到就只显示运营商 + 制式，绝不崩溃。
+// ============================================================
+
+static NSString *shortRadioTech(NSString *tech) {
+    if (!tech.length) return nil;
+    if ([tech containsString:@"NR"]) return @"5G";
+    if ([tech containsString:@"LTE"]) return @"4G";
+    if ([tech containsString:@"UTRAN"] || [tech containsString:@"WCDMA"]) return @"3G";
+    if ([tech containsString:@"GPRS"] || [tech containsString:@"EDGE"]) return @"2G";
+    return @"?G";
+}
+
+// 信号格数字符（0-4 格）
+static NSString *barsGlyph(NSInteger bars) {
+    if (bars <= 0) return @"▂";
+    if (bars == 1) return @"▂▄";
+    if (bars == 2) return @"▂▄▆";
+    return @"▂▄▆█";
+}
+
+// 从 SpringBoard 私有 SBTelephonyManager 读信号格数（主卡），拿不到返回 -1
+static NSInteger springBoardSignalBars(void) {
+    @try {
+        Class cls = NSClassFromString(@"SBTelephonyManager");
+        if (!cls) return -1;
+        id mgr = [cls performSelector:@selector(sharedInstance)];
+        if (!mgr) return -1;
+        if ([mgr respondsToSelector:@selector(signalStrengthBars)]) {
+            NSInteger bars = (NSInteger)[mgr performSelector:@selector(signalStrengthBars)];
+            if (bars >= 0 && bars <= 4) return bars;
+        }
+    } @catch (NSException *e) {}
+    return -1;
+}
+
+// 组装浮窗底部信号行文本（单卡/双卡通吃）
+static NSString *getSignalInfoString(void) {
+    if (!showSignalStrength) return @"";
+    @try {
+        Class niCls = NSClassFromString(@"CTTelephonyNetworkInfo");
+        if (!niCls) return @"";
+        id info = [[niCls alloc] init];
+        if (!info) return @"";
+
+        NSDictionary *providers = nil;
+        NSDictionary *radio = nil;
+        @try {
+            id p = [info valueForKey:@"serviceSubscriberCellularProviders"];
+            if ([p isKindOfClass:[NSDictionary class]]) providers = p;
+            id r = [info valueForKey:@"serviceCurrentRadioAccessTechnology"];
+            if ([r isKindOfClass:[NSDictionary class]]) radio = r;
+        } @catch (NSException *e) {}
+
+        NSInteger bars = springBoardSignalBars();
+        NSString *barsStr = (bars >= 0) ? barsGlyph(bars) : nil;
+
+        if (!providers || providers.count == 0) {
+            // 单卡（老 API 兜底）
+            NSString *name = nil;
+            NSString *tech = nil;
+            @try {
+                id carrier = [info valueForKey:@"subscriberCellularProvider"];
+                name = [carrier valueForKey:@"carrierName"];
+                tech = [info valueForKey:@"currentRadioAccessTechnology"];
+            } @catch (NSException *e) {}
+            NSMutableString *s = [NSMutableString stringWithString:@"📶 "];
+            if (name.length) [s appendString:name]; else [s appendString:@"SIM"];
+            NSString *ts = shortRadioTech(tech);
+            if (ts) [s appendFormat:@" %@", ts];
+            if (barsStr) [s appendFormat:@" %@", barsStr];
+            return s;
+        }
+
+        // 双卡：按 subscription key 排序稳定显示
+        NSArray *keys = [providers.allKeys sortedArrayUsingSelector:@selector(compare:)];
+        NSMutableArray *parts = [NSMutableArray array];
+        for (NSString *key in keys) {
+            id carrier = providers[key];
+            NSString *name = [carrier valueForKey:@"carrierName"];
+            NSString *tech = radio[key];
+            NSMutableString *p = [NSMutableString string];
+            if (name.length) [p appendString:name]; else [p appendString:@"SIM"];
+            NSString *ts = shortRadioTech(tech);
+            if (ts) [p appendFormat:@" %@", ts];
+            [parts addObject:p];
+        }
+        if (parts.count == 0) return @"";
+        NSMutableString *s = [NSMutableString stringWithString:@"📶 "];
+        [s appendString:[parts componentsJoinedByString:@" · "]];
+        if (barsStr) [s appendFormat:@" %@", barsStr];
+        return s;
+    } @catch (NSException *e) {
+        return @"";
+    }
+}
 
 // 温控核心实时心跳：由 SBCPUThermal 通过 Darwin notify 每 3 秒发送。
 // 这里直接监听通知并保存最近一次心跳，避免反复 notify_register_check 导致状态读取不可靠。
@@ -538,6 +643,7 @@ static void LoadPreferences(void) {
     showCpuFrequency = getBoolPref(CFSTR("showCpuFrequency"), YES);
     showFps = getBoolPref(CFSTR("showFps"), YES);
     force120HzEnable = getBoolPref(CFSTR("force120HzEnable"), NO);
+    showSignalStrength = getBoolPref(CFSTR("showSignalStrength"), YES);
     
     showBatteryPercent = getBoolPref(CFSTR("showBatteryPercent"), YES);
     showBatteryTemperature = getBoolPref(CFSTR("showBatteryTemperature"), YES);
@@ -601,6 +707,7 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("showCpuFrequency"), showCpuFrequency);
     setBoolPref(CFSTR("showFps"), showFps);
     setBoolPref(CFSTR("force120HzEnable"), force120HzEnable);
+    setBoolPref(CFSTR("showSignalStrength"), showSignalStrength);
     setBoolPref(CFSTR("showBatteryPercent"), showBatteryPercent);
     setBoolPref(CFSTR("showBatteryTemperature"), showBatteryTemperature);
     setBoolPref(CFSTR("showBatteryCurrent"), showBatteryCurrent);
@@ -2451,6 +2558,16 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _timeLabel.minimumScaleFactor = 0.75f;
         [_performanceContainer addSubview:_timeLabel];
 
+        // SIM 卡信号行：浮窗最底部，实时显示运营商/制式/信号
+        _signalLabel = [[UILabel alloc] init];
+        _signalLabel.text = @"📶 信号检测中";
+        _signalLabel.textColor = [UIColor systemGrayColor];
+        _signalLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
+        _signalLabel.textAlignment = NSTextAlignmentCenter;
+        _signalLabel.adjustsFontSizeToFitWidth = YES;
+        _signalLabel.minimumScaleFactor = 0.6f;
+        [_performanceContainer addSubview:_signalLabel];
+
         // 超级快充启动动画：直接使用现有浮窗本体，不创建独立 UIWindow。
         // 这样插入充电器时只是把原浮窗临时变成一个紧凑的启动卡片，完成后恢复原样。
         _startupContainer = [[UIView alloc] init];
@@ -2998,6 +3115,16 @@ return self;
         currentY += 14.0f;
     } else {
         _timeLabel.hidden = YES;
+    }
+
+    // SIM 卡信号行（竖屏横屏都显示，可设置关闭）
+    if (showSignalStrength) {
+        _signalLabel.hidden = NO;
+        currentY += 2.0f;
+        _signalLabel.frame = CGRectMake(12.0f, currentY, finalW - 24.0f, 14.0f);
+        currentY += 14.0f;
+    } else {
+        _signalLabel.hidden = YES;
     }
 
     if (showCombinedMode) {
@@ -3579,6 +3706,11 @@ return self;
         sbcputhermalFloatingStatus(&thermalText, &thermalColor);
         _thermalStatusLabel.text = thermalText ?: @"温控：检测中";
         _thermalStatusLabel.textColor = thermalColor ?: [UIColor systemBlueColor];
+    }
+
+    // SIM 卡信号行（每秒刷新，跟随 updateCPU 定时器）
+    if (showSignalStrength && !fastChargeStartupAnimating) {
+        _signalLabel.text = getSignalInfoString();
     }
     
     if (!fastChargeStartupAnimating) {
@@ -4527,6 +4659,17 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
                                                      target:self
                                                      action:@selector(closeSettings)];
 
+    // V4.18.1 — 分组折叠：读取上次折叠状态（默认展开），标题栏可点击收起/展开
+    self.collapsedSections = [NSMutableSet set];
+    @try {
+        NSArray *saved = [[NSUserDefaults standardUserDefaults] objectForKey:@"sbfl_settings_collapsed_v1"];
+        if ([saved isKindOfClass:[NSArray class]]) {
+            for (id num in saved) {
+                [self.collapsedSections addObject:num];
+            }
+        }
+    } @catch (NSException *e) {}
+
     // ============================================================
     // V4.11 — 浅色原生设置中心
     // 系统 InsetGrouped 默认样式：浅灰分组背景 + 白色圆角卡片 + 黑字
@@ -4668,6 +4811,8 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     (void)tableView;
+    // V4.18.1 — 折叠的分组不显示任何行（标题栏仍在，可点击展开）
+    if (self.collapsedSections && [self.collapsedSections containsObject:@(section)]) return 0;
     if (section == 0) return 6; 
     if (section == 1) return 5; // 自动控制与防护：自动注销/CPU触发值/持续时间/锁屏清理后台/锁屏清理白名单
     if (section == 2) return 5;
@@ -4676,7 +4821,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 5) return 1;
     if (section == 6) return 10;
     if (section == 7) return 4; 
-    if (section == 8) return 8; // 位置与显示（磨砂强度/卡片不透明度已移除）
+    if (section == 8) return 9; // 位置与显示（含 📶 显示信号强度）
     if (section == 9) return 5; // 🔋 智能停充
     if (section == 10) return 0; // 📖 功能说明已移除
     if (section == 11) return 0; // 🌡️ 温控功能说明已移除
@@ -4723,6 +4868,12 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 
     UIView *header = [[UIView alloc] initWithFrame:CGRectZero];
     header.backgroundColor = UIColor.clearColor;
+    // V4.18.1 — 分组折叠：标题栏整体可点击
+    header.tag = 9000 + section;
+    header.userInteractionEnabled = YES;
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleSection:)];
+    tap.numberOfTapsRequired = 1;
+    [header addGestureRecognizer:tap];
 
     // 去掉 emoji 后面的“脏感”，保留它们作为视觉识别。
     UILabel *label = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -4733,14 +4884,57 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     label.translatesAutoresizingMaskIntoConstraints = NO;
     [header addSubview:label];
 
+    // V4.18.1 — 右侧折叠箭头（▾ 展开 / ▸ 收起）
+    BOOL collapsed = [self.collapsedSections containsObject:@(section)];
+    UILabel *arrow = [[UILabel alloc] initWithFrame:CGRectZero];
+    arrow.text = collapsed ? @"▸" : @"▾";
+    arrow.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightSemibold];
+    arrow.textColor = [UIColor systemGrayColor];
+    arrow.textAlignment = NSTextAlignmentRight;
+    arrow.translatesAutoresizingMaskIntoConstraints = NO;
+    arrow.tag = 9100;
+    [header addSubview:arrow];
+
     [NSLayoutConstraint activateConstraints:@[
         [label.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:18.0],
-        [label.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-18.0],
+        [label.trailingAnchor constraintEqualToAnchor:arrow.leadingAnchor constant:-12.0],
         [label.bottomAnchor constraintEqualToAnchor:header.bottomAnchor constant:-8.0],
-        [label.topAnchor constraintGreaterThanOrEqualToAnchor:header.topAnchor constant:4.0]
+        [label.topAnchor constraintGreaterThanOrEqualToAnchor:header.topAnchor constant:4.0],
+        [arrow.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-18.0],
+        [arrow.centerYAnchor constraintEqualToAnchor:label.centerYAnchor],
+        [arrow.widthAnchor constraintEqualToConstant:24.0]
     ]];
 
     return header;
+}
+
+// V4.18.1 — 点击分组标题：展开/收起，带动画并记忆状态
+- (void)toggleSection:(UITapGestureRecognizer *)gr {
+    if (!gr.view) return;
+    NSInteger section = gr.view.tag - 9000;
+    NSNumber *key = @(section);
+    BOOL willCollapse = ![self.collapsedSections containsObject:key];
+    if (willCollapse) {
+        [self.collapsedSections addObject:key];
+    } else {
+        [self.collapsedSections removeObject:key];
+    }
+
+    // 更新箭头
+    UILabel *arrow = [gr.view viewWithTag:9100];
+    arrow.text = willCollapse ? @"▸" : @"▾";
+
+    // 动画收起/展开行
+    [self.tableView beginUpdates];
+    [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:section]
+                  withRowAnimation:UITableViewRowAnimationAutomatic];
+    [self.tableView endUpdates];
+
+    // 记忆折叠状态（跨打开保持）
+    @try {
+        NSArray *allKeys = [self.collapsedSections.allObjects sortedArrayUsingSelector:@selector(compare:)];
+        [[NSUserDefaults standardUserDefaults] setObject:allKeys forKey:@"sbfl_settings_collapsed_v1"];
+    } @catch (NSException *e) {}
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -5629,6 +5823,14 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
             [slider addTarget:self action:@selector(changeGlassDimOpacity:) forControlEvents:UIControlEventValueChanged];
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else if (indexPath.row == 8) {
+            // 📶 显示 SIM 卡信号
+            cell.textLabel.text = @"显示 SIM 卡信号";
+            cell.detailTextLabel.text = @"浮窗底部显示运营商、网络制式和信号强度";
+            UISwitch *sw = [UISwitch new];
+            sw.on = showSignalStrength;
+            [sw addTarget:self action:@selector(changeShowSignalStrength:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
         }
     }
     applySettingsTheme(cell, indexPath);
@@ -6018,6 +6220,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 - (void)changeForce120Hz:(UISwitch *)sw { force120HzEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeShowCpuFreq:(UISwitch *)sw { showCpuFrequency = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowFps:(UISwitch *)sw { showFps = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
+- (void)changeShowSignalStrength:(UISwitch *)sw { showSignalStrength = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowBattery:(UISwitch *)sw { showBatteryPercent = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowTemp:(UISwitch *)sw { showBatteryTemperature = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowCurrent:(UISwitch *)sw { showBatteryCurrent = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
