@@ -424,148 +424,126 @@ static NSString *barsGlyph(NSInteger bars) {
     return @"▂▄▆█";
 }
 
-// 把 performSelector 结果安全转为 0-4 的格数；返回 NSNumber 或原始整数均可
-static NSInteger barsValueFromId(id val) {
-    if (!val) return -1;
-    NSInteger bars = -1;
-    if ([val isKindOfClass:[NSNumber class]]) {
-        bars = [val integerValue];
-    } else {
-        bars = (NSInteger)(intptr_t)val; // 原始 int 返回值（ARM64 低位有效）
-    }
-    if (bars >= 0 && bars <= 4) return bars;
-    return -1;
+// ============================================================
+// SIM 双卡信号读取（iOS 13+ CoreTelephonyClient XPC ObjC API）
+// 依据 iOS 17.1 classdump：
+//   CoreTelephonyClient -getSubscriptionInfoWithError:
+//       → CTXPCServiceSubscriptionInfo.subscriptions（每张卡一个 context，天然双卡）
+//   -getSignalStrengthInfo:error: → CTSignalStrengthInfo.displayBars/bars（信号格数）
+//   -getSignalStrengthMeasurements:error: → CTSignalStrengthMeasurements.rsrp/rssi（真实 dBm）
+//   -copyRadioAccessTechnology:error: → 当前制式字符串
+// 全程 ObjC 消息派发 + @try 兜底；不使用会崩溃的 _CTServerConnection C 函数。
+// tweak 注入 SpringBoard，进程本身具备 CommCenter XPC 权限（状态栏信号即由此而来）。
+// ============================================================
+#import <objc/message.h>
+
+typedef id (*SBMsgSendErr1)(id, SEL, NSError **);
+typedef id (*SBMsgSendErr2)(id, SEL, id, NSError **);
+
+// XPC 客户端复用（只创建一次）
+static id gCTClientXPC = nil;
+static id ctXPCClient(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        @try {
+            Class cls = NSClassFromString(@"CoreTelephonyClient");
+            if ([cls instancesRespondToSelector:@selector(init)]) {
+                gCTClientXPC = [[cls alloc] init];
+            }
+        } @catch (NSException *e) { gCTClientXPC = nil; }
+    });
+    return gCTClientXPC;
 }
 
-// 主卡信号格数（0-4），多来源链式读取，全部真实刷新：
-//   1) SBStatusBarStateAggregator —— iOS 11+ 状态栏数据聚合器，信号格数实时在此（iOS 17 首选）
-//   2) SBCellularManager —— iOS 13+ 蜂窝状态管理器
-//   3) SBTelephonyManager —— 旧版本兜底
-// 纯 ObjC 消息调用 + respondsToSelector 检查，不碰 CoreTelephony 私有 C API（避免 iOS 17 崩溃）。
-static NSInteger springBoardSignalBars(void) {
+// 读取全部卡的真实信号快照，每元素字典：slot(序号) / bars(格数,-1为无) / dbm(字符串,可空) / tech(制式,可空)
+static NSArray<NSDictionary *> *readAllSimSignals(void) {
+    NSMutableArray *out = [NSMutableArray array];
     @try {
-        Class aggCls = NSClassFromString(@"SBStatusBarStateAggregator");
-        if (aggCls) {
-            id agg = nil;
-            if ([aggCls respondsToSelector:@selector(sharedInstance)]) {
-                agg = [aggCls performSelector:@selector(sharedInstance)];
-            } else if ([aggCls respondsToSelector:@selector(_sharedInstance)]) {
-                agg = [aggCls performSelector:@selector(_sharedInstance)];
-            }
-            if (agg && [agg respondsToSelector:@selector(signalStrengthBars)]) {
-                NSInteger bars = barsValueFromId([agg performSelector:@selector(signalStrengthBars)]);
-                if (bars >= 0) return bars;
-            }
-        }
-        Class cellCls = NSClassFromString(@"SBCellularManager");
-        if (cellCls && [cellCls respondsToSelector:@selector(sharedInstance)]) {
-            id mgr = [cellCls performSelector:@selector(sharedInstance)];
-            if (mgr && [mgr respondsToSelector:@selector(signalStrengthBars)]) {
-                NSInteger bars = barsValueFromId([mgr performSelector:@selector(signalStrengthBars)]);
-                if (bars >= 0) return bars;
-            }
-        }
-        Class cls = NSClassFromString(@"SBTelephonyManager");
-        if (cls) {
-            id mgr = [cls performSelector:@selector(sharedInstance)];
-            if (mgr && [mgr respondsToSelector:@selector(signalStrengthBars)]) {
-                NSInteger bars = barsValueFromId([mgr performSelector:@selector(signalStrengthBars)]);
-                if (bars >= 0) return bars;
-            }
+        id client = ctXPCClient();
+        if (!client) return out;
+        SBMsgSendErr1 call1 = (SBMsgSendErr1)objc_msgSend;
+        SBMsgSendErr2 call2 = (SBMsgSendErr2)objc_msgSend;
+
+        NSError *subErr = nil;
+        id subInfo = call1(client, @selector(getSubscriptionInfoWithError:), &subErr);
+        if (!subInfo) return out;
+        NSArray *contexts = [subInfo valueForKey:@"subscriptions"];
+        if (![contexts isKindOfClass:[NSArray class]] || contexts.count == 0) return out;
+
+        Class descCls = NSClassFromString(@"CTServiceDescriptor");
+        NSInteger order = 1;
+        for (id context in contexts) {
+            @try {
+                NSInteger bars = -1;
+                NSString *dbm = nil;
+                NSString *tech = nil;
+
+                // 1) 信号格数
+                NSError *e1 = nil;
+                id sigInfo = call2(client, @selector(getSignalStrengthInfo:error:), context, &e1);
+                if (sigInfo) {
+                    NSNumber *display = [sigInfo valueForKey:@"displayBars"];
+                    NSNumber *rawBars = [sigInfo valueForKey:@"bars"];
+                    NSNumber *use = ([display isKindOfClass:[NSNumber class]]) ? display : rawBars;
+                    if ([use isKindOfClass:[NSNumber class]]) {
+                        NSInteger b = use.integerValue;
+                        if (b >= 0 && b <= 5) bars = b;
+                    }
+                }
+
+                // 2) 真实 dBm（rsrp 用于 4G/5G，rssi 用于 2G/3G）
+                if (descCls && [descCls respondsToSelector:@selector(descriptorWithSubscriptionContext:)]) {
+                    id desc = [descCls performSelector:@selector(descriptorWithSubscriptionContext:) withObject:context];
+                    if (desc) {
+                        NSError *e2 = nil;
+                        id meas = call2(client, @selector(getSignalStrengthMeasurements:error:), desc, &e2);
+                        if (meas) {
+                            NSNumber *rsrp = [meas valueForKey:@"rsrp"];
+                            NSNumber *rssi = [meas valueForKey:@"rssi"];
+                            NSNumber *use = ([rsrp isKindOfClass:[NSNumber class]] && rsrp.integerValue < 0) ? rsrp : rssi;
+                            if ([use isKindOfClass:[NSNumber class]] && use.integerValue < 0) {
+                                dbm = [NSString stringWithFormat:@"%ld", (long)use.integerValue];
+                            }
+                        }
+                    }
+                }
+
+                // 3) 当前制式
+                NSError *e3 = nil;
+                id techRaw = call2(client, @selector(copyRadioAccessTechnology:error:), context, &e3);
+                if ([techRaw isKindOfClass:[NSString class]]) {
+                    tech = shortRadioTech(techRaw);
+                }
+
+                NSMutableDictionary *d = [NSMutableDictionary dictionary];
+                d[@"slot"] = @(order);
+                d[@"bars"] = @(bars);
+                if (dbm) d[@"dbm"] = dbm;
+                if (tech) d[@"tech"] = tech;
+                [out addObject:d];
+            } @catch (NSException *e) {}
+            order++;
         }
     } @catch (NSException *e) {}
-    return -1;
+    return out;
 }
 
-// 【临时诊断】探测三个数据源每一步的状态，定位 iOS 17 读取失败点，定位后删除
-static NSString *signalProbeString(void) {
-    NSMutableArray *parts = [NSMutableArray array];
-    NSArray *srcs = @[
-        @[@"SB", @"SBStatusBarStateAggregator"],
-        @[@"SC", @"SBCellularManager"],
-        @[@"ST", @"SBTelephonyManager"]
-    ];
-    for (NSArray *src in srcs) {
-        @try {
-            NSString *tag = src[0];
-            Class cls = NSClassFromString(src[1]);
-            if (!cls) { [parts addObject:[NSString stringWithFormat:@"%@无类", tag]]; continue; }
-            id inst = nil;
-            if ([cls respondsToSelector:@selector(sharedInstance)]) {
-                inst = [cls performSelector:@selector(sharedInstance)];
-            } else if ([cls respondsToSelector:@selector(_sharedInstance)]) {
-                inst = [cls performSelector:@selector(_sharedInstance)];
-            }
-            if (!inst) { [parts addObject:[NSString stringWithFormat:@"%@无单例", tag]]; continue; }
-            if (![inst respondsToSelector:@selector(signalStrengthBars)]) {
-                [parts addObject:[NSString stringWithFormat:@"%@无bars方法", tag]]; continue;
-            }
-            id val = [inst performSelector:@selector(signalStrengthBars)];
-            if ([val isKindOfClass:[NSNumber class]]) {
-                [parts addObject:[NSString stringWithFormat:@"%@数=%@", tag, val]];
-            } else {
-                [parts addObject:[NSString stringWithFormat:@"%@指针=%p", tag, val]];
-            }
-        } @catch (NSException *e) {
-            [parts addObject:[NSString stringWithFormat:@"%@异常", src[0]]];
-        }
-    }
-    return [parts componentsJoinedByString:@" "];
-}
-
-// 组装浮窗底部信号行文本（图一样式：SIM1 格数 制式 · SIM2 制式）
-// 数据源：SBTelephonyManager（主卡格数，真实刷新）+ CoreTelephony（运营商制式，真实刷新）。
-// iOS 17 无法稳定取得真实 dBm，故不再显示 dBm 数值，避免再次崩溃。
+// 组装浮窗底部信号行（图一样式：SIM1 格数 dBm 制式 · SIM2 格数 dBm 制式），全部真实每秒刷新
 static NSString *getSignalInfoString(void) {
     if (!showSignalStrength) return @"";
     @try {
-        NSDictionary *providers = nil;
-        NSDictionary *radio = nil;
-        Class niCls = NSClassFromString(@"CTTelephonyNetworkInfo");
-        if (!niCls) return @"";
-        id info = [[niCls alloc] init];
-        if (!info) return @"";
-        @try {
-            id p = [info valueForKey:@"serviceSubscriberCellularProviders"];
-            if ([p isKindOfClass:[NSDictionary class]]) providers = p;
-            id r = [info valueForKey:@"serviceCurrentRadioAccessTechnology"];
-            if ([r isKindOfClass:[NSDictionary class]]) radio = r;
-        } @catch (NSException *e) {}
-
-        // 主卡格数：SBTelephonyManager 真实读取
-        NSInteger mainBars = springBoardSignalBars();
-        // 【临时诊断】读取失败时直接显示三个数据源的探测结果，定位后删除
-        if (mainBars < 0) return signalProbeString();
-        NSString *mainBarsStr = (mainBars >= 0) ? barsGlyph(mainBars) : @"--";
-
-        // 单卡（老 API 兜底）
-        if (!providers || providers.count == 0) {
-            NSString *tech = nil;
-            @try {
-                tech = [info valueForKey:@"currentRadioAccessTechnology"];
-            } @catch (NSException *e) {}
-            NSMutableString *s = [NSMutableString stringWithFormat:@"SIM1 %@", mainBarsStr];
-            NSString *ts = shortRadioTech(tech);
-            if (ts) [s appendFormat:@" %@", ts];
-            return s;
-        }
-
-        // 双卡：SIM1/SIM2 并排，按 subscription key 排序稳定显示
-        NSArray *keys = [providers.allKeys sortedArrayUsingSelector:@selector(compare:)];
+        NSArray *sims = readAllSimSignals();
+        if (sims.count == 0) return @""; // XPC 暂不可用时不显示，避免出现误导性的 --
         NSMutableArray *parts = [NSMutableArray array];
-        NSInteger idx = 1;
-        for (NSString *key in keys) {
-            NSString *tech = radio[key];
-            NSString *ts = shortRadioTech(tech) ?: @"?G";
-            if (idx == 1) {
-                [parts addObject:[NSString stringWithFormat:@"SIM1 %@ %@", mainBarsStr, ts]];
-            } else {
-                // 副卡：iOS 私有 API 拿不到副卡格数，只显示 SIM 标签 + 制式
-                [parts addObject:[NSString stringWithFormat:@"SIM%ld %@", (long)idx, ts]];
-            }
-            idx++;
+        for (NSDictionary *s in sims) {
+            NSInteger slot = [s[@"slot"] integerValue];
+            NSInteger bars = [s[@"bars"] integerValue];
+            NSString *barsStr = (bars >= 0) ? barsGlyph(MIN(bars, 4)) : @"--";
+            NSMutableString *seg = [NSMutableString stringWithFormat:@"SIM%ld %@", (long)slot, barsStr];
+            if (s[@"dbm"]) [seg appendFormat:@" %@", s[@"dbm"]];
+            if (s[@"tech"]) [seg appendFormat:@" %@", s[@"tech"]];
+            [parts addObject:seg];
         }
-        if (parts.count == 0) return @"";
         return [parts componentsJoinedByString:@" · "];
     } @catch (NSException *e) {
         return @"";
