@@ -788,7 +788,10 @@ static NSDictionary *getRealBatteryDetails(void) {
             if (pDict[@"AdapterDetails"]) {
                 NSDictionary *ad = pDict[@"AdapterDetails"];
                 dict[@"Watts"] = ad[@"Watts"];
-                dict[@"ChargerType"] = ad[@"Description"];
+                dict[@"ChargerType"] = ad[@"Description"] ?: ad[@"Name"];
+                dict[@"AdapterName"] = ad[@"Name"] ?: ad[@"Description"];
+                dict[@"AdapterSerial"] = ad[@"SerialString"];
+                if (ad[@"UsbHvcMenu"]) dict[@"UsbHvcMenu"] = ad[@"UsbHvcMenu"];
             }
             double volts = [dict[@"Voltage"] doubleValue] / 1000.0;
             double amps = [dict[@"Amperage"] doubleValue] / 1000.0;
@@ -799,6 +802,140 @@ static NSDictionary *getRealBatteryDetails(void) {
         IOObjectRelease(service);
     }
     return dict;
+}
+
+// ========== 充电器输入功率 & 停充验证（V4.15.0，移植 MiniWatts 数据层思路） ==========
+// HID 电源传感器（IOHIDEventSystemClient 私有 API，dlsym 运行时解析，不链接 IOKit 头）
+// 传感器命名（因机型而异）：Charger VQ0u=USB输入电压, IQ0u=USB输入电流, IQ0B=进入电池电流
+static CFTypeRef gHIDClient = NULL;
+static void (*gHIDSetMatching)(CFTypeRef, CFDictionaryRef) = NULL;
+static CFArrayRef (*gHIDCopyServices)(CFTypeRef) = NULL;
+static CFTypeRef (*gHIDCopyProperty)(CFTypeRef, CFStringRef) = NULL;
+static CFTypeRef (*gHIDCopyEvent)(CFTypeRef, int64_t, int32_t, int64_t) = NULL;
+static double (*gHIDGetFloat)(CFTypeRef, int32_t) = NULL;
+
+static void initHIDClient(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        void *h = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW);
+        if (!h) return;
+        CFTypeRef (*createFn)(CFAllocatorRef) = (CFTypeRef (*)(CFAllocatorRef))dlsym(h, "IOHIDEventSystemClientCreate");
+        gHIDSetMatching = (void (*)(CFTypeRef, CFDictionaryRef))dlsym(h, "IOHIDEventSystemClientSetMatching");
+        gHIDCopyServices = (CFArrayRef (*)(CFTypeRef))dlsym(h, "IOHIDEventSystemClientCopyServices");
+        gHIDCopyProperty = (CFTypeRef (*)(CFTypeRef, CFStringRef))dlsym(h, "IOHIDServiceClientCopyProperty");
+        gHIDCopyEvent = (CFTypeRef (*)(CFTypeRef, int64_t, int32_t, int64_t))dlsym(h, "IOHIDServiceClientCopyEvent");
+        gHIDGetFloat = (double (*)(CFTypeRef, int32_t))dlsym(h, "IOHIDEventGetFloatValue");
+        if (createFn) gHIDClient = createFn(kCFAllocatorDefault);
+    });
+}
+
+// 枚举 HID 电源传感器（usage page 0xff08），返回 {传感器名: 数值}
+static NSDictionary *getHIDPowerSensors(void) {
+    NSMutableDictionary *result = [NSMutableDictionary dictionary];
+    initHIDClient();
+    if (!gHIDClient || !gHIDSetMatching || !gHIDCopyServices || !gHIDCopyEvent || !gHIDGetFloat) return result;
+    @try {
+        NSNumber *usagePage = @(0xff08);
+        const void *keysArr[] = { CFSTR("PrimaryUsagePage") };
+        const void *valuesArr[] = { (__bridge const void *)usagePage };
+        CFDictionaryRef match = CFDictionaryCreate(kCFAllocatorDefault, keysArr, valuesArr, 1,
+            &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        if (!match) return result;
+        gHIDSetMatching(gHIDClient, match);
+        CFRelease(match);
+        CFArrayRef services = gHIDCopyServices(gHIDClient);
+        if (!services) return result;
+        for (CFIndex i = 0; i < CFArrayGetCount(services); i++) {
+            CFTypeRef service = CFArrayGetValueAtIndex(services, i);
+            if (!service) continue;
+            NSString *name = @"?";
+            CFTypeRef nameRef = gHIDCopyProperty(service, CFSTR("Product"));
+            if (nameRef) {
+                name = (__bridge NSString *)nameRef;
+                CFRelease(nameRef);
+            }
+            CFTypeRef event = gHIDCopyEvent(service, 25 /*kIOHIDEventTypePower*/, 0, 0);
+            if (!event) continue;
+            double value = gHIDGetFloat(event, 25 << 16);
+            CFRelease(event);
+            if (isnan(value) || isinf(value)) continue;
+            result[name] = @(value);
+        }
+        CFRelease(services);
+    } @catch (id e) {}
+    return result;
+}
+
+// 充电器输入功率（W）= USB 口电压 × 电流；0 表示读不到
+static double getChargerInputPower(void) {
+    NSDictionary *sensors = getHIDPowerSensors();
+    if (sensors.count == 0) return 0;
+    double voltage = 0, current = 0;
+    for (NSString *k in sensors) {
+        if ([k localizedCaseInsensitiveContainsString:@"VQ0u"]) voltage = [sensors[k] doubleValue];
+        else if ([k localizedCaseInsensitiveContainsString:@"IQ0u"]) current = [sensors[k] doubleValue];
+    }
+    if (voltage > 0.5 && current > 0) return voltage * current;
+    return 0;
+}
+
+// 进入电池的电流（A），优先 HID IQ0B，兜底 IOKit Amperage
+static double getChargerBatteryCurrentA(void) {
+    NSDictionary *sensors = getHIDPowerSensors();
+    for (NSString *k in sensors) {
+        if ([k localizedCaseInsensitiveContainsString:@"IQ0B"]) {
+            return fabs([sensors[k] doubleValue]);
+        }
+    }
+    NSDictionary *bat = getRealBatteryDetails();
+    return fabs([bat[@"Amperage"] doubleValue]) / 1000.0;
+}
+
+// 适配器信息字符串：名称 · 额定功率 · PD 档位
+static NSString *getAdapterInfoString(void) {
+    NSDictionary *bat = getRealBatteryDetails();
+    NSString *name = bat[@"AdapterName"];
+    NSNumber *watts = bat[@"Watts"];
+    NSMutableString *s = [NSMutableString string];
+    if ([name isKindOfClass:[NSString class]] && name.length > 0) [s appendString:name];
+    if ([watts isKindOfClass:[NSNumber class]] && [watts doubleValue] > 0) {
+        if (s.length) [s appendString:@" · "];
+        [s appendFormat:@"%ldW", (long)[watts integerValue]];
+    }
+    NSArray *menu = bat[@"UsbHvcMenu"];
+    if ([menu isKindOfClass:[NSArray class]] && menu.count > 0) {
+        NSDictionary *p0 = menu.firstObject;
+        NSInteger mv = [p0[@"MaxVoltage"] integerValue];
+        NSInteger ma = [p0[@"MaxCurrent"] integerValue];
+        if (mv > 0 && ma > 0) {
+            [s appendFormat:@" · PD %.1fV/%.2fA", mv / 1000.0, ma / 1000.0];
+        }
+    }
+    return s.length > 0 ? s : @"未连接充电器";
+}
+
+// 停充实测验证：外部连接 + 未在充电 + 电量 50~99% + 电池电流 < 0.3A → 判定已停充/保持
+static BOOL isChargingOnHold(void) {
+    @try {
+        BOOL external = NO;
+        io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
+        if (service) {
+            CFMutableDictionaryRef prop = NULL;
+            if (IORegistryEntryCreateCFProperties(service, &prop, kCFAllocatorDefault, 0) == KERN_SUCCESS && prop) {
+                NSDictionary *pDict = (__bridge NSDictionary *)prop;
+                external = [pDict[@"ExternalConnected"] boolValue];
+                CFRelease(prop);
+            }
+            IOObjectRelease(service);
+        }
+        if (!external) return NO;
+        BOOL charging = isChargingInternal();
+        if (charging) return NO;
+        NSInteger percent = getBatteryPercentForSmartCharge();
+        if (percent < 50 || percent >= 100) return NO;
+        double currentA = getChargerBatteryCurrentA();
+        return currentA < 0.3;
+    } @catch (id e) { return NO; }
 }
 
 static double getBatteryTemperatureInternal(void) {
@@ -3364,7 +3501,7 @@ return self;
     CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
     CGFloat screenH = [UIScreen mainScreen].bounds.size.height;
     CGFloat panelW = MIN(screenW - margin * 2, 420.0);
-    CGFloat panelH = MIN(screenH - margin * 4, 340.0);
+    CGFloat panelH = MIN(screenH - margin * 4, 392.0);
 
     UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialLight];
     _blurEffectView = [[UIVisualEffectView alloc] initWithEffect:blur];
@@ -3403,7 +3540,8 @@ return self;
 
     NSArray *leftKeys = @[
         @"电池健康程度", @"电池循环次数", @"电池预计充满", @"电池充电类型",
-        @"电池充电功率", @"电池当前电流", @"电池当前电压", @"电池当前温度",
+        @"电池充电功率", @"充电器输入功率", @"充电器信息", @"停充状态",
+        @"电池当前电流", @"电池当前电压", @"电池当前温度",
         @"电池当前电量", @"电池设计容量", @"电池实际容量", @"电池当前容量"
     ];
 
@@ -3508,6 +3646,36 @@ return self;
     double watts = [batInfo[@"CalculatedWatts"] doubleValue];
     if (watts < 0.1) watts = 0.0;
     _labelsDict[@"电池充电功率"].text = charging ? [NSString stringWithFormat:@"%.1fW%@", watts, (chargeBoostEnable || forceFastChargeEnable) ? @" · 增强" : @""] : @"0W";
+
+    // 充电器输入功率（USB 口 V×A，HID 传感器）—— 充电器实际输出，比电池侧功率高 15~25%
+    double inputW = getChargerInputPower();
+    if (inputW > 0.1) {
+        NSString *boostTag = (chargeBoostEnable || forceFastChargeEnable) ? @" · 增强" : @"";
+        NSString *effTag = @"";
+        if (watts > 0.5 && inputW > 0.5) {
+            double eff = MIN(watts / inputW * 100.0, 100.0);
+            effTag = [NSString stringWithFormat:@" · 转换%.0f%%", eff];
+        }
+        _labelsDict[@"充电器输入功率"].text = [NSString stringWithFormat:@"%.1fW%@%@", inputW, boostTag, effTag];
+    } else {
+        _labelsDict[@"充电器输入功率"].text = charging ? @"读取中..." : @"未充电";
+    }
+
+    // 充电器信息：名称 · 额定功率 · PD 档位
+    NSString *adapterInfo = getAdapterInfoString();
+    _labelsDict[@"充电器信息"].text = adapterInfo;
+
+    // 停充状态：实测验证（外部连接+未充电+电流<0.3A → 已停充/保持）
+    BOOL holding = isChargingOnHold();
+    if (smartChargeEnable) {
+        if (smartChargeStopped || holding) {
+            _labelsDict[@"停充状态"].text = @"✅ 已停充 · 实测电流≈0";
+        } else {
+            _labelsDict[@"停充状态"].text = [NSString stringWithFormat:@"待触发 · %ld%%", (long)batPercent];
+        }
+    } else {
+        _labelsDict[@"停充状态"].text = holding ? @"系统优化充电保持中" : @"未启用";
+    }
 
     double currentmA = getBatteryCurrentInternal();
     _labelsDict[@"电池当前电流"].text = [NSString stringWithFormat:@"%.0fmA", currentmA];
