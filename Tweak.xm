@@ -424,6 +424,19 @@ static NSString *barsGlyph(NSInteger bars) {
     return @"▂▄▆█";
 }
 
+// 把 performSelector 结果安全转为 0-4 的格数；返回 NSNumber 或原始整数均可
+static NSInteger barsValueFromId(id val) {
+    if (!val) return -1;
+    NSInteger bars = -1;
+    if ([val isKindOfClass:[NSNumber class]]) {
+        bars = [val integerValue];
+    } else {
+        bars = (NSInteger)(intptr_t)val; // 原始 int 返回值（ARM64 低位有效）
+    }
+    if (bars >= 0 && bars <= 4) return bars;
+    return -1;
+}
+
 // 主卡信号格数（0-4），多来源链式读取，全部真实刷新：
 //   1) SBStatusBarStateAggregator —— iOS 11+ 状态栏数据聚合器，信号格数实时在此（iOS 17 首选）
 //   2) SBCellularManager —— iOS 13+ 蜂窝状态管理器
@@ -440,28 +453,64 @@ static NSInteger springBoardSignalBars(void) {
                 agg = [aggCls performSelector:@selector(_sharedInstance)];
             }
             if (agg && [agg respondsToSelector:@selector(signalStrengthBars)]) {
-                NSInteger bars = (NSInteger)[agg performSelector:@selector(signalStrengthBars)];
-                if (bars >= 0 && bars <= 4) return bars;
+                NSInteger bars = barsValueFromId([agg performSelector:@selector(signalStrengthBars)]);
+                if (bars >= 0) return bars;
             }
         }
         Class cellCls = NSClassFromString(@"SBCellularManager");
         if (cellCls && [cellCls respondsToSelector:@selector(sharedInstance)]) {
             id mgr = [cellCls performSelector:@selector(sharedInstance)];
             if (mgr && [mgr respondsToSelector:@selector(signalStrengthBars)]) {
-                NSInteger bars = (NSInteger)[mgr performSelector:@selector(signalStrengthBars)];
-                if (bars >= 0 && bars <= 4) return bars;
+                NSInteger bars = barsValueFromId([mgr performSelector:@selector(signalStrengthBars)]);
+                if (bars >= 0) return bars;
             }
         }
         Class cls = NSClassFromString(@"SBTelephonyManager");
         if (cls) {
             id mgr = [cls performSelector:@selector(sharedInstance)];
             if (mgr && [mgr respondsToSelector:@selector(signalStrengthBars)]) {
-                NSInteger bars = (NSInteger)[mgr performSelector:@selector(signalStrengthBars)];
-                if (bars >= 0 && bars <= 4) return bars;
+                NSInteger bars = barsValueFromId([mgr performSelector:@selector(signalStrengthBars)]);
+                if (bars >= 0) return bars;
             }
         }
     } @catch (NSException *e) {}
     return -1;
+}
+
+// 【临时诊断】探测三个数据源每一步的状态，定位 iOS 17 读取失败点，定位后删除
+static NSString *signalProbeString(void) {
+    NSMutableArray *parts = [NSMutableArray array];
+    NSArray *srcs = @[
+        @[@"SB", @"SBStatusBarStateAggregator"],
+        @[@"SC", @"SBCellularManager"],
+        @[@"ST", @"SBTelephonyManager"]
+    ];
+    for (NSArray *src in srcs) {
+        @try {
+            NSString *tag = src[0];
+            Class cls = NSClassFromString(src[1]);
+            if (!cls) { [parts addObject:[NSString stringWithFormat:@"%@无类", tag]]; continue; }
+            id inst = nil;
+            if ([cls respondsToSelector:@selector(sharedInstance)]) {
+                inst = [cls performSelector:@selector(sharedInstance)];
+            } else if ([cls respondsToSelector:@selector(_sharedInstance)]) {
+                inst = [cls performSelector:@selector(_sharedInstance)];
+            }
+            if (!inst) { [parts addObject:[NSString stringWithFormat:@"%@无单例", tag]]; continue; }
+            if (![inst respondsToSelector:@selector(signalStrengthBars)]) {
+                [parts addObject:[NSString stringWithFormat:@"%@无bars方法", tag]]; continue;
+            }
+            id val = [inst performSelector:@selector(signalStrengthBars)];
+            if ([val isKindOfClass:[NSNumber class]]) {
+                [parts addObject:[NSString stringWithFormat:@"%@数=%@", tag, val]];
+            } else {
+                [parts addObject:[NSString stringWithFormat:@"%@指针=%p", tag, val]];
+            }
+        } @catch (NSException *e) {
+            [parts addObject:[NSString stringWithFormat:@"%@异常", src[0]]];
+        }
+    }
+    return [parts componentsJoinedByString:@" "];
 }
 
 // 组装浮窗底部信号行文本（图一样式：SIM1 格数 制式 · SIM2 制式）
@@ -485,6 +534,8 @@ static NSString *getSignalInfoString(void) {
 
         // 主卡格数：SBTelephonyManager 真实读取
         NSInteger mainBars = springBoardSignalBars();
+        // 【临时诊断】读取失败时直接显示三个数据源的探测结果，定位后删除
+        if (mainBars < 0) return signalProbeString();
         NSString *mainBarsStr = (mainBars >= 0) ? barsGlyph(mainBars) : @"--";
 
         // 单卡（老 API 兜底）
