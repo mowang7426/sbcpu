@@ -424,16 +424,9 @@ static NSString *barsGlyph(NSInteger bars) {
     return @"▂▄▆█";
 }
 
-// dBm → 信号格数（0-4）
-static NSInteger barsFromDbm(int dbm) {
-    if (dbm >= -70) return 4;
-    if (dbm >= -80) return 3;
-    if (dbm >= -95) return 2;
-    if (dbm >= -110) return 1;
-    return 0;
-}
-
 // 从 SpringBoard 私有 SBTelephonyManager 读信号格数（主卡），拿不到返回 -1
+// ⚠️ 安全说明：不要用 _CTServerConnectionGetSignalStrength 读 dBm —— iOS 17.0 上该私有
+//    API 已失效，实测 SIGSEGV 崩溃 SpringBoard（V4.18.5 安全模式即因此），已彻底移除。
 static NSInteger springBoardSignalBars(void) {
     @try {
         Class cls = NSClassFromString(@"SBTelephonyManager");
@@ -448,39 +441,9 @@ static NSInteger springBoardSignalBars(void) {
     return -1;
 }
 
-// 主卡信号强度 dBm（CoreTelephony 私有 _CTServerConnectionGetSignalStrength，dlopen 动态解析）。
-// 连接只创建一次并复用，每次调用都重新查询最新值 → 每秒随浮窗真实刷新，不是固定数字。
-static NSString *mainSignalDbmString(void) {
-    static void *coreTel = NULL;
-    // 私有符号签名（实际返回 CTServerConnectionRef = 非 const 对象指针）：
-    // 用 void* 表达参数与返回值，调用处显式强转，避免 const 限定符报错。
-    static void *(*createFn)(void *, int (*)(void), int *);
-    static int (*getStrengthFn)(void *, int *);
-    static void *conn = NULL;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        coreTel = dlopen("/System/Library/Frameworks/CoreTelephony.framework/CoreTelephony", RTLD_NOW);
-        if (coreTel) {
-            createFn = (void *(*)(void *, int (*)(void), int *))dlsym(coreTel, "_CTServerConnectionCreate");
-            getStrengthFn = (int (*)(void *, int *))dlsym(coreTel, "_CTServerConnectionGetSignalStrength");
-            if (createFn && getStrengthFn) {
-                conn = createFn((void *)kCFAllocatorDefault, NULL, NULL);
-            }
-        }
-    });
-    if (!conn || !getStrengthFn) return nil;
-    @try {
-        int strength = 0;
-        int ret = getStrengthFn(conn, &strength);
-        // 正常返回负 dBm（如 -81）；返回值或 0 表示读取失败 → 走 SBTelephonyManager 格数兜底
-        if (ret == 0 && strength < 0) {
-            return [NSString stringWithFormat:@"%d", strength];
-        }
-    } @catch (NSException *e) {}
-    return nil;
-}
-
-// 组装浮窗底部信号行文本（图一样式：SIM1 格数 -dBm 制式 · SIM2 格数 -dBm 制式）
+// 组装浮窗底部信号行文本（图一样式：SIM1 格数 制式 · SIM2 制式）
+// 数据源：SBTelephonyManager（主卡格数，真实刷新）+ CoreTelephony（运营商制式，真实刷新）。
+// iOS 17 无法稳定取得真实 dBm，故不再显示 dBm 数值，避免再次崩溃。
 static NSString *getSignalInfoString(void) {
     if (!showSignalStrength) return @"";
     @try {
@@ -497,16 +460,9 @@ static NSString *getSignalInfoString(void) {
             if ([r isKindOfClass:[NSDictionary class]]) radio = r;
         } @catch (NSException *e) {}
 
-        // 主卡：dBm 优先（可映射格数），SBTelephonyManager 兜底格数
-        NSString *mainDbm = mainSignalDbmString();
-        NSInteger mainBars = -1;
-        if (mainDbm) {
-            mainBars = barsFromDbm([mainDbm intValue]);
-        } else {
-            mainBars = springBoardSignalBars();
-        }
+        // 主卡格数：SBTelephonyManager 真实读取
+        NSInteger mainBars = springBoardSignalBars();
         NSString *mainBarsStr = (mainBars >= 0) ? barsGlyph(mainBars) : @"--";
-        NSString *mainDbmStr = mainDbm ?: @"--";
 
         // 单卡（老 API 兜底）
         if (!providers || providers.count == 0) {
@@ -514,7 +470,7 @@ static NSString *getSignalInfoString(void) {
             @try {
                 tech = [info valueForKey:@"currentRadioAccessTechnology"];
             } @catch (NSException *e) {}
-            NSMutableString *s = [NSMutableString stringWithFormat:@"SIM1 %@ %@", mainBarsStr, mainDbmStr];
+            NSMutableString *s = [NSMutableString stringWithFormat:@"SIM1 %@", mainBarsStr];
             NSString *ts = shortRadioTech(tech);
             if (ts) [s appendFormat:@" %@", ts];
             return s;
@@ -528,9 +484,9 @@ static NSString *getSignalInfoString(void) {
             NSString *tech = radio[key];
             NSString *ts = shortRadioTech(tech) ?: @"?G";
             if (idx == 1) {
-                [parts addObject:[NSString stringWithFormat:@"SIM1 %@ %@ %@", mainBarsStr, mainDbmStr, ts]];
+                [parts addObject:[NSString stringWithFormat:@"SIM1 %@ %@", mainBarsStr, ts]];
             } else {
-                // 副卡：iOS 私有 API 拿不到副卡 dBm/格数，只显示 SIM 标签 + 制式
+                // 副卡：iOS 私有 API 拿不到副卡格数，只显示 SIM 标签 + 制式
                 [parts addObject:[NSString stringWithFormat:@"SIM%ld %@", (long)idx, ts]];
             }
             idx++;
