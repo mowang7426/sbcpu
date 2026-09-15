@@ -33,6 +33,11 @@ static BOOL shouldForce120(void) {
     return YES;
 }
 
+// CAFrameRateRange 是 iOS 15+ 类型，而工程部署目标为 iOS 14；
+// Logos 生成的 hook 声明无法用 @available 消音，这里压掉该警告（运行时仍由 @available 保护）。
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+
 %hook CADisplayLink
 
 // 新建 display link 后立即强制
@@ -65,6 +70,8 @@ static BOOL shouldForce120(void) {
 }
 
 %end
+
+#pragma clang diagnostic pop
 
 %ctor {
     updateForce120Pref();
