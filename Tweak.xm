@@ -894,12 +894,9 @@ static double getChargerBatteryCurrentA(void) {
 // 适配器信息字符串：名称 · 额定功率 · PD 档位
 static NSString *getAdapterInfoString(void) {
     NSDictionary *bat = getRealBatteryDetails();
-    NSString *name = bat[@"AdapterName"];
     NSNumber *watts = bat[@"Watts"];
     NSMutableString *s = [NSMutableString string];
-    if ([name isKindOfClass:[NSString class]] && name.length > 0) [s appendString:name];
     if ([watts isKindOfClass:[NSNumber class]] && [watts doubleValue] > 0) {
-        if (s.length) [s appendString:@" · "];
         [s appendFormat:@"%ldW", (long)[watts integerValue]];
     }
     NSArray *menu = bat[@"UsbHvcMenu"];
@@ -908,10 +905,24 @@ static NSString *getAdapterInfoString(void) {
         NSInteger mv = [p0[@"MaxVoltage"] integerValue];
         NSInteger ma = [p0[@"MaxCurrent"] integerValue];
         if (mv > 0 && ma > 0) {
-            [s appendFormat:@" · PD %.1fV/%.2fA", mv / 1000.0, ma / 1000.0];
+            if (s.length) [s appendString:@" · "];
+            [s appendFormat:@"PD %.1fV/%.2fA", mv / 1000.0, ma / 1000.0];
         }
     }
+    // 名称由"电池充电类型"行显示，避免与 PD 档位挤在一行被截断
     return s.length > 0 ? s : @"未连接充电器";
+}
+
+// 充电器功率利用率：实际输入功率 ÷ 额定功率（0~100，-1 表示数据不足）
+static double getChargerUtilisationPercent(void) {
+    NSDictionary *bat = getRealBatteryDetails();
+    NSNumber *watts = bat[@"Watts"];
+    if (![watts isKindOfClass:[NSNumber class]] || [watts doubleValue] <= 0) return -1;
+    double inputW = getChargerInputPower();
+    if (inputW <= 0.1) return -1;
+    double rated = [watts doubleValue];
+    if (rated <= 0) return -1;
+    return MIN(inputW / rated * 100.0, 100.0);
 }
 
 // 停充实测验证：外部连接 + 未在充电 + 电量 50~99% + 电池电流 < 0.3A → 判定已停充/保持
@@ -3576,7 +3587,7 @@ return self;
     valLbl.textColor = [UIColor blackColor];
     valLbl.font = [UIFont monospacedDigitSystemFontOfSize:10.5 weight:UIFontWeightBold];
     valLbl.adjustsFontSizeToFitWidth = YES;
-    valLbl.minimumScaleFactor = 0.5;
+    valLbl.minimumScaleFactor = 0.4;
     [parent addSubview:valLbl];
 
     return valLbl;
@@ -3641,7 +3652,12 @@ return self;
         _labelsDict[@"电池预计充满"].text = charging ? @"计算中..." : @"未在充电";
     }
 
-    _labelsDict[@"电池充电类型"].text = charging ? (batInfo[@"ChargerType"] ?: @"PD 快充") : @"未充电";
+    NSNumber *ratedWatts = batInfo[@"Watts"];
+    NSString *chargerTypeStr = batInfo[@"ChargerType"] ?: @"PD 快充";
+    if ([ratedWatts isKindOfClass:[NSNumber class]] && [ratedWatts doubleValue] > 0) {
+        chargerTypeStr = [NSString stringWithFormat:@"%@ · %ldW", chargerTypeStr, (long)[ratedWatts integerValue]];
+    }
+    _labelsDict[@"电池充电类型"].text = charging ? chargerTypeStr : @"未充电";
 
     double watts = [batInfo[@"CalculatedWatts"] doubleValue];
     if (watts < 0.1) watts = 0.0;
@@ -3651,12 +3667,15 @@ return self;
     double inputW = getChargerInputPower();
     if (inputW > 0.1) {
         NSString *boostTag = (chargeBoostEnable || forceFastChargeEnable) ? @" · 增强" : @"";
+        NSString *utilTag = @"";
+        double util = getChargerUtilisationPercent();
+        if (util >= 0) utilTag = [NSString stringWithFormat:@" · 利用率%.0f%%", util];
         NSString *effTag = @"";
         if (watts > 0.5 && inputW > 0.5) {
             double eff = MIN(watts / inputW * 100.0, 100.0);
             effTag = [NSString stringWithFormat:@" · 转换%.0f%%", eff];
         }
-        _labelsDict[@"充电器输入功率"].text = [NSString stringWithFormat:@"%.1fW%@%@", inputW, boostTag, effTag];
+        _labelsDict[@"充电器输入功率"].text = [NSString stringWithFormat:@"%.1fW%@%@%@", inputW, boostTag, utilTag, effTag];
     } else {
         _labelsDict[@"充电器输入功率"].text = charging ? @"读取中..." : @"未充电";
     }
