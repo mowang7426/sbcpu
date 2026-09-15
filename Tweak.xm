@@ -452,14 +452,14 @@ static NSInteger springBoardSignalBars(void) {
 // 连接只创建一次并复用，每次调用都重新查询最新值 → 每秒随浮窗真实刷新，不是固定数字。
 static NSString *mainSignalDbmString(void) {
     static void *coreTel = NULL;
-    static void *(*createFn)(void *, int (*)(void), int *);
+    static CFAllocatorRef (*createFn)(CFAllocatorRef, int (*)(void), int *);
     static int (*getStrengthFn)(void *, int *);
     static void *conn = NULL;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         coreTel = dlopen("/System/Library/Frameworks/CoreTelephony.framework/CoreTelephony", RTLD_NOW);
         if (coreTel) {
-            createFn = (void *(*)(void *, int (*)(void), int *))dlsym(coreTel, "_CTServerConnectionCreate");
+            createFn = (CFAllocatorRef (*)(CFAllocatorRef, int (*)(void), int *))dlsym(coreTel, "_CTServerConnectionCreate");
             getStrengthFn = (int (*)(void *, int *))dlsym(coreTel, "_CTServerConnectionGetSignalStrength");
             if (createFn && getStrengthFn) {
                 conn = createFn(kCFAllocatorDefault, NULL, NULL);
