@@ -21,6 +21,7 @@ extern "C" {
 #define SB_PREF_FILE            "/var/mobile/Library/Preferences/com.yourname.sbcpufloating.plist"
 
 #define SB_MAGIC                0x53424350 // 'SBCP'
+#define SB_DAEMON_VERSION       2          // V4.23：修复 roothide 部署 + 诊断上报
 
 // ---------- 命令（V1 扩展） ----------
 enum {
@@ -87,8 +88,9 @@ typedef struct {
     uint8_t  upperLimit;
     uint8_t  lowerLimit;
     uint8_t  obcTaken;            // 当前是否 OBC 托管
-    uint8_t  pad;
-} sb_status_t; // 12 字节
+    uint8_t  version;             // daemon 协议版本（SB_DAEMON_VERSION）
+    int32_t  lastSMCError;        // 最近一次 SMC 调用的原始 IOReturn（0=无错误）
+} sb_status_t; // 16 字节
 
 #ifdef __cplusplus
 }
