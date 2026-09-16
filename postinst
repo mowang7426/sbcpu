@@ -11,6 +11,18 @@ fi
 DAEMON_PATH="${JBROOT}/usr/libexec/SBCPUChargeDaemon"
 PLIST_PATH="${JBROOT}/Library/LaunchDaemons/com.sbcpu.charged.plist"
 
+# 探测 launchctl（roothide 下不在标准 PATH）
+LAUNCHCTL=""
+for c in "${JBROOT}/usr/bin/launchctl" "/usr/bin/launchctl" "/bin/launchctl"; do
+    if [ -x "$c" ]; then
+        LAUNCHCTL="$c"
+        break
+    fi
+done
+if [ -z "$LAUNCHCTL" ]; then
+    LAUNCHCTL="launchctl"
+fi
+
 # roothide：plist 里的 ProgramArguments 写的是 /usr/libexec/...，改成实际路径
 if [ -f "$PLIST_PATH" ] && [ -n "$JBROOT" ]; then
     sed -i '' "s|/usr/libexec/SBCPUChargeDaemon|${JBROOT}/usr/libexec/SBCPUChargeDaemon|g" "$PLIST_PATH" 2>/dev/null \
@@ -24,12 +36,11 @@ fi
 
 # 加载/重载 LaunchDaemon
 if [ -f "$PLIST_PATH" ]; then
-    # 先卸载旧的（忽略错误）
-    launchctl unload "$PLIST_PATH" >/dev/null 2>&1 || true
-    launchctl load -w "$PLIST_PATH" >/dev/null 2>&1 || true
+    "$LAUNCHCTL" unload "$PLIST_PATH" >/dev/null 2>&1 || true
+    "$LAUNCHCTL" load -w "$PLIST_PATH" >/dev/null 2>&1 || true
 fi
 
-# 立即启动 daemon（若 launchd 未拉起）
+# 立即启动 daemon（若 launchd 未拉起）；日志写到 /var/mobile 便于诊断
 if [ -x "$DAEMON_PATH" ]; then
     "$DAEMON_PATH" >/dev/null 2>&1 &
 fi

@@ -207,10 +207,25 @@ enum {
     SB_CMD_PING       = 5
 };
 
-#define SB_SOCKET_PATH "/var/run/sbcpu_charge.sock"
+#define SB_SOCKET_PATH "/var/mobile/Library/Preferences/sbcpu_charge.sock"
 
 static void sb_log(NSString *msg) {
     NSLog(@"[SBCPUChargeDaemon] %@", msg);
+    // 同时写文件，便于用户诊断（/var/mobile 对 mobile/root 都可写）
+    @try {
+        NSString *line = [NSString stringWithFormat:@"[%@] %@\n",
+            [NSDate date], msg];
+        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:@"/var/mobile/Library/Preferences/sbcpu_charge.log"];
+        if (!fh) {
+            [[NSFileManager defaultManager] createFileAtPath:@"/var/mobile/Library/Preferences/sbcpu_charge.log" contents:nil attributes:nil];
+            fh = [NSFileHandle fileHandleForWritingAtPath:@"/var/mobile/Library/Preferences/sbcpu_charge.log"];
+        }
+        if (fh) {
+            [fh seekToEndOfFile];
+            [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+            [fh closeFile];
+        }
+    } @catch (NSException *e) {}
 }
 
 static void handle_client(int fd) {

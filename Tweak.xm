@@ -14,6 +14,8 @@
 #import <sys/socket.h>
 #import <sys/un.h>
 #import <sys/stat.h>
+#import <sys/wait.h>
+#import <spawn.h>
 #import <sys/mount.h>
 #import <ifaddrs.h>
 #import <net/if.h>
@@ -1224,7 +1226,7 @@ enum {
     kSBCmdPing      = 5
 };
 
-#define SB_SOCKET_PATH "/var/run/sbcpu_charge.sock"
+#define SB_SOCKET_PATH "/var/mobile/Library/Preferences/sbcpu_charge.sock"
 #define SB_MAGIC 0x53424350
 
 typedef struct {
@@ -1240,6 +1242,62 @@ typedef struct {
     uint8_t  value;
     uint8_t  pad[3];
 } sb_resp_t;
+
+// 尝试拉起 SBCPUChargeDaemon（兼容 roothide /var/jb 与 rootful 路径）
+// daemon 以 root 运行才有 AppleSMC 权限；这里通过 launchctl 拉起
+static void sbSMCLoadDaemon(void) {
+    @try {
+        NSArray *daemonPaths = @[
+            @"/var/jb/usr/libexec/SBCPUChargeDaemon",
+            @"/usr/libexec/SBCPUChargeDaemon"
+        ];
+        NSString *daemonPath = nil;
+        for (NSString *p in daemonPaths) {
+            if ([[NSFileManager defaultManager] isExecutableFileAtPath:p]) {
+                daemonPath = p;
+                break;
+            }
+        }
+        if (!daemonPath) return;
+
+        NSArray *plistPaths = @[
+            @"/var/jb/Library/LaunchDaemons/com.sbcpu.charged.plist",
+            @"/Library/LaunchDaemons/com.sbcpu.charged.plist"
+        ];
+        NSString *plistPath = nil;
+        for (NSString *p in plistPaths) {
+            if ([[NSFileManager defaultManager] fileExistsAtPath:p]) {
+                plistPath = p;
+                break;
+            }
+        }
+        if (!plistPath) return;
+
+        // 用 launchctl 加载（rootful: /bin/launchctl；roothide: /var/jb/usr/bin/launchctl）
+        NSArray *launchctls = @[
+            @"/var/jb/usr/bin/launchctl",
+            @"/usr/bin/launchctl",
+            @"/bin/launchctl"
+        ];
+        NSString *launchctl = nil;
+        for (NSString *p in launchctls) {
+            if ([[NSFileManager defaultManager] isExecutableFileAtPath:p]) {
+                launchctl = p;
+                break;
+            }
+        }
+        if (!launchctl) return;
+
+        // 用 posix_spawn 调 launchctl 卸载旧实例并加载（比 NSTask 稳定）
+        char *argv1[] = {(char *)launchctl.UTF8String, (char *)"unload", (char *)plistPath.UTF8String, NULL};
+        pid_t pid1 = 0;
+        posix_spawn(&pid1, argv1[0], NULL, NULL, argv1, NULL);
+        if (pid1 > 0) { int st = 0; waitpid(pid1, &st, 0); }
+        char *argv2[] = {(char *)launchctl.UTF8String, (char *)"load", (char *)"-w", (char *)plistPath.UTF8String, NULL};
+        pid_t pid2 = 0;
+        posix_spawn(&pid2, argv2[0], NULL, NULL, argv2, NULL);
+    } @catch (NSException *e) {}
+}
 
 static int sbSMCConnect(void) {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -1277,11 +1335,21 @@ static IOReturn sbSMCRequest(uint8_t cmd, uint8_t value, uint8_t *outValue) {
 }
 
 static IOReturn sbSMCInit(void) {
-    if (gSMCChecked) return gSMCAvailable ? kIOReturnSuccess : kIOReturnNotOpen;
-    gSMCChecked = YES;
+    if (gSMCChecked && gSMCAvailable) return kIOReturnSuccess;
     int fd = sbSMCConnect();
-    if (fd < 0) return kIOReturnNotOpen;
+    if (fd < 0) {
+        // daemon 未运行：尝试拉起一次，等待后重试
+        sbSMCLoadDaemon();
+        usleep(600 * 1000);
+        fd = sbSMCConnect();
+    }
+    if (fd < 0) {
+        gSMCChecked = YES;
+        gSMCAvailable = NO;
+        return kIOReturnNotOpen;
+    }
     close(fd);
+    gSMCChecked = YES;
     gSMCAvailable = YES;
     return kIOReturnSuccess;
 }
