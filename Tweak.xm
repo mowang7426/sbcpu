@@ -34,6 +34,14 @@
 #define kPrefAppID CFSTR("com.yourname.sbcpufloating")
 #define kPrefChangedNotification CFSTR("com.yourname.sbcpufloating.prefschanged")
 
+// V4.19 — AppleSMC 直写层前向声明（实现在"充电器输入功率"区之前）
+static IOReturn sbSMCInit(void);
+static IOReturn sbSMCSetChargeBlock(BOOL inhibit, BOOL overrideOBC);
+static IOReturn sbSMCSetPowerBlock(BOOL inhibit, BOOL overrideOBC);
+static BOOL sbSMCGetChargeBlocked(void);
+static BOOL sbSMCGetPowerBlocked(void);
+static NSString *sbSMCAvailableString(void);
+
 #pragma mark - 1. 👑 幽灵代理类 (欺骗 Objective-C++ 编译器)
 
 // 插件冲突检测 - 全局变量（移到文件开头，所有方法可访问）
@@ -340,6 +348,9 @@ static NSInteger smartChargeUpperLimit = 80;  // 停充上限
 static NSInteger smartChargeLowerLimit = 70;  // 回充下限
 static NSInteger smartChargeMode = 0;          // 0=日常80%, 1=出行100%, 2=保养60%
 static BOOL smartChargeStopped = NO;           // 当前是否处于停充状态
+// V4.19 — Battman 充电管理：SMC CH0C/CH0I 直写
+static BOOL blockChargingEnable = NO;          // 阻止充电（CH0C=1，保留AC供电）
+static BOOL blockPowerEnable = NO;             // 阻止外部供电（CH0I=1，完全断电）
 
 static CGRect keyboardBeforeFrame;
 static BOOL keyboardMoved = NO;
@@ -959,6 +970,8 @@ static void LoadPreferences(void) {
     chargeBoostEnable = getBoolPref(CFSTR("chargeBoostEnable"), NO);
     forceFastChargeEnable = getBoolPref(CFSTR("forceFastChargeEnable"), NO);
     suppressPartRepairEnabled = getBoolPref(CFSTR("suppressPartRepair"), NO);
+    blockChargingEnable = getBoolPref(CFSTR("blockChargingEnable"), NO);
+    blockPowerEnable = getBoolPref(CFSTR("blockPowerEnable"), NO);
     
     notificationEnable = getBoolPref(CFSTR("notificationEnable"), YES);
     wechatEnable = getBoolPref(CFSTR("wechatEnable"), YES);
@@ -973,6 +986,13 @@ static void LoadPreferences(void) {
 
     if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
         applyVisibility();
+        // V4.19 — 启动时恢复 SMC 充电控制状态（阻止充电/阻止外部供电），延迟执行避免刚启动时 SMC 忙
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (blockChargingEnable && sbSMCInit() == kIOReturnSuccess)
+                sbSMCSetChargeBlock(YES, NO);
+            if (blockPowerEnable && sbSMCInit() == kIOReturnSuccess)
+                sbSMCSetPowerBlock(YES, NO);
+        });
         if (showFps || force120HzEnable || collapsedDisplayMode == 1) {
             [[SBCPUFPSHelper sharedInstance] startMonitoring];
         } else {
@@ -1020,6 +1040,8 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("chargeBoostEnable"), chargeBoostEnable);
     setBoolPref(CFSTR("forceFastChargeEnable"), forceFastChargeEnable);
     setBoolPref(CFSTR("suppressPartRepair"), suppressPartRepairEnabled);
+    setBoolPref(CFSTR("blockChargingEnable"), blockChargingEnable);
+    setBoolPref(CFSTR("blockPowerEnable"), blockPowerEnable);
     setBoolPref(CFSTR("notificationEnable"), notificationEnable);
     setBoolPref(CFSTR("wechatEnable"), wechatEnable);
     setBoolPref(CFSTR("qqEnable"), qqEnable);
@@ -1115,14 +1137,55 @@ static NSInteger getBatteryPercentForSmartCharge(void) {
     return -1;
 }
 
-// 智能停充：停充逻辑由 SBCPUPowerd.xm（powerd 进程）执行
-// 这里只从偏好读取 powerd 写入的停充状态，用于浮窗显示
+// 智能停充（V4.19 改造）：由 SBCPUPowerd.xm 的“属性拦截”升级为 AppleSMC CH0C 直写
+// SpringBoard 以 root+platform 运行，可打开 AppleSMC；写 CH0C bit0=1 停充（保留AC），=0 恢复
+// 若 SMC 不可用则回退读取 powerd 状态（兼容旧逻辑，浮窗仍能显示）
 static void updateSmartCharge(void) {
     if (!smartChargeEnable || !floatingView) {
-        smartChargeStopped = NO;
+        if (smartChargeStopped) {
+            smartChargeStopped = NO;
+            // 关闭开关时若 SMC 可用且当前处于停充，立即恢复充电
+            if (sbSMCInit() == kIOReturnSuccess && sbSMCGetChargeBlocked()) {
+                sbSMCSetChargeBlock(NO, NO);
+            }
+            CFPreferencesAppSynchronize(kPrefAppID);
+            CFPreferencesSetValue(CFSTR("smartChargeStopped"), kCFBooleanFalse,
+                                  kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+            CFPreferencesSynchronize(kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        }
         return;
     }
-    // 从偏好读取 powerd 写入的停充状态
+
+    NSInteger pct = getBatteryPercentForSmartCharge();
+    if (pct < 0) return;
+
+    BOOL smcOK = (sbSMCInit() == kIOReturnSuccess);
+    if (smcOK) {
+        // SMC 直写路径：≥上限停充，≤下限恢复（迟滞）
+        BOOL blocked = sbSMCGetChargeBlocked();
+        if (!blocked && pct >= smartChargeUpperLimit) {
+            IOReturn r = sbSMCSetChargeBlock(YES, NO);
+            if (r == kIOReturnSuccess || r == kIOReturnCannotLock) {
+                blocked = YES;
+                smartChargeStopped = YES;
+            }
+        } else if (blocked && pct <= smartChargeLowerLimit) {
+            IOReturn r = sbSMCSetChargeBlock(NO, NO);
+            if (r == kIOReturnSuccess || r == kIOReturnCannotLock) {
+                blocked = NO;
+                smartChargeStopped = NO;
+            }
+        }
+        // 同步到偏好，供浮窗/详情页回显
+        CFPreferencesAppSynchronize(kPrefAppID);
+        CFPreferencesSetValue(CFSTR("smartChargeStopped"),
+                              blocked ? kCFBooleanTrue : kCFBooleanFalse,
+                              kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        CFPreferencesSynchronize(kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        return;
+    }
+
+    // 回退：从偏好读取 powerd 写入的停充状态（仅当 SMC 不可用时）
     CFPreferencesAppSynchronize(CFSTR("com.yourname.sbcpufloating"));
     CFPropertyListRef v = CFPreferencesCopyValue(CFSTR("smartChargeStopped"),
                                                     CFSTR("com.yourname.sbcpufloating"),
@@ -1209,6 +1272,202 @@ static NSDictionary *getRealBatteryDetails(void) {
         IOObjectRelease(service);
     }
     return dict;
+}
+
+// ==========================================================
+// 🔌 AppleSMC 直写层（V4.19，移植 Battman 思路：SMC CH0C/CH0I 硬件级停充）
+// 与之前 powerd 属性拦截不同：直接写 AppleSMC，BMS 必须遵守，iOS17 实测有效
+// ==========================================================
+typedef struct SMCKeyInfoData {
+    uint32_t dataSize;
+    uint32_t dataType;
+    uint8_t dataAttributes;
+} SMCKeyInfoData;
+
+typedef struct SMCParamStruct {
+    uint32_t key;
+    struct SMCParam {
+        uint8_t vers;
+        uint8_t pLimitData[16];
+        SMCKeyInfoData keyInfo;
+        uint8_t result;
+        uint8_t status;
+        uint8_t data8;
+        uint32_t data32;
+        unsigned char bytes[120];
+    } param;
+} SMCParamStruct;
+
+static io_connect_t gSBConn = 0;
+static BOOL gSMCAvailable = NO;
+static BOOL gSMCChecked = NO;
+
+enum {
+    kSMCUserClientOpen,
+    kSMCUserClientClose,
+    kSMCHandleYPCEvent,
+    kSMCReadKey = 5,
+    kSMCWriteKey = 6,
+    kSMCGetKeyInfo = 9
+};
+
+static IOReturn sbSMCInit(void) {
+    if (gSMCChecked) return gSMCAvailable ? kIOReturnSuccess : kIOReturnNotOpen;
+    gSMCChecked = YES;
+    @try {
+        mach_port_t masterPort = 0;
+        if (IOMasterPort(MACH_PORT_NULL, &masterPort) != kIOReturnSuccess)
+            return kIOReturnNotOpen;
+        io_service_t service = IOServiceGetMatchingService(masterPort, IOServiceMatching("AppleSMC"));
+        if (service == IO_OBJECT_NULL)
+            return kIOReturnNotFound;
+        IOReturn result = IOServiceOpen(service, mach_task_self(), 0, &gSBConn);
+        IOObjectRelease(service);
+        if (result != kIOReturnSuccess) {
+            gSBConn = 0;
+            return result;
+        }
+        gSMCAvailable = YES;
+        return kIOReturnSuccess;
+    } @catch (id e) {
+        return kIOReturnNotOpen;
+    }
+}
+
+static IOReturn sbSMCCall(int index, SMCParamStruct *input, SMCParamStruct *output) {
+    if (gSBConn == 0) {
+        IOReturn r = sbSMCInit();
+        if (r != kIOReturnSuccess) return r;
+    }
+    size_t inSize = sizeof(SMCParamStruct);
+    size_t outSize = sizeof(SMCParamStruct);
+    return IOConnectCallStructMethod(gSBConn, index, input, inSize, output, &outSize);
+}
+
+static IOReturn sbSMCGetKeyInfo(uint32_t key, SMCKeyInfoData *keyInfo) {
+    SMCParamStruct in = {0};
+    SMCParamStruct out = {0};
+    in.key = key;
+    in.param.data8 = kSMCGetKeyInfo;
+    IOReturn r = sbSMCCall(kSMCHandleYPCEvent, &in, &out);
+    if (r == kIOReturnSuccess && out.param.keyInfo.dataSize == 0)
+        r = kIOReturnError;
+    if (r == kIOReturnSuccess && keyInfo)
+        *keyInfo = out.param.keyInfo;
+    return r;
+}
+
+static IOReturn sbSMCRead(uint32_t key, void *bytes, int32_t *size) {
+    SMCParamStruct in = {0};
+    SMCParamStruct out = {0};
+    in.key = key;
+    IOReturn r = sbSMCGetKeyInfo(key, &in.param.keyInfo);
+    if (r != kIOReturnSuccess) return r;
+    if (*size < (int32_t)in.param.keyInfo.dataSize)
+        *size = (int32_t)in.param.keyInfo.dataSize;
+    in.param.data8 = kSMCReadKey;
+    r = sbSMCCall(kSMCHandleYPCEvent, &in, &out);
+    if (r != kIOReturnSuccess) return r;
+    memcpy(bytes, out.param.bytes, *size);
+    return kIOReturnSuccess;
+}
+
+static IOReturn sbSMCWrite(uint32_t key, void *bytes, uint32_t size) {
+    SMCParamStruct in = {0};
+    SMCParamStruct out = {0};
+    IOReturn r = sbSMCGetKeyInfo(key, &in.param.keyInfo);
+    if (r != kIOReturnSuccess) return r;
+    if (in.param.keyInfo.dataSize > size) return -1;
+    in.param.data8 = kSMCWriteKey;
+    in.key = key;
+    memcpy(in.param.bytes, bytes, in.param.keyInfo.dataSize);
+    return sbSMCCall(kSMCHandleYPCEvent, &in, &out);
+}
+
+// CH0C=停充(保留AC供电), CH0I=阻止外部供电。写前安全检查：外部连接 + 有VBUS
+static IOReturn sbSMCSetChargeBlock(BOOL inhibit, BOOL overrideOBC) {
+    @try {
+        uint8_t chce = 0;
+        int32_t sz = 1;
+        if (sbSMCRead('CHCE', &chce, &sz) != kIOReturnSuccess) return kIOReturnIOError;
+        if (!chce) return kIOReturnNotReady; // 未接适配器
+
+        uint32_t ch0r = 0;
+        int32_t sz4 = 4;
+        if (sbSMCRead('CH0R', &ch0r, &sz4) == kIOReturnSuccess && (ch0r & (1 << 1)))
+            return kIOReturnNotReady; // No VBUS
+
+        uint8_t cur = 0;
+        int32_t sz1 = 1;
+        if (sbSMCRead('CH0C', &cur, &sz1) != kIOReturnSuccess) return kIOReturnIOError;
+        BOOL obcTaken = NO;
+        if (cur & (1 << 1)) { // OBC 或 no VBUS 标记
+            if (overrideOBC) {
+                sbSMCWrite('CH0B', &inhibit, 1);
+            } else {
+                obcTaken = YES;
+            }
+        }
+        if (inhibit != (cur & 1)) {
+            IOReturn r = sbSMCWrite('CH0C', &inhibit, 1);
+            if (r != kIOReturnSuccess) return r;
+        }
+        return obcTaken ? kIOReturnCannotLock : kIOReturnSuccess;
+    } @catch (id e) {
+        return kIOReturnIOError;
+    }
+}
+
+static IOReturn sbSMCSetPowerBlock(BOOL inhibit, BOOL overrideOBC) {
+    @try {
+        uint8_t chce = 0;
+        int32_t sz = 1;
+        if (sbSMCRead('CHCE', &chce, &sz) != kIOReturnSuccess) return kIOReturnIOError;
+        if (!chce) return kIOReturnNotReady;
+
+        uint32_t ch0r = 0;
+        int32_t sz4 = 4;
+        if (sbSMCRead('CH0R', &ch0r, &sz4) == kIOReturnSuccess && (ch0r & (1 << 1)))
+            return kIOReturnNotReady;
+
+        uint8_t cur = 0;
+        int32_t sz1 = 1;
+        if (sbSMCRead('CH0I', &cur, &sz1) != kIOReturnSuccess) return kIOReturnIOError;
+        if (cur & (1 << 1)) {
+            if (!overrideOBC) return kIOReturnCannotLock;
+        }
+        if (inhibit != (cur & 1)) {
+            IOReturn r = sbSMCWrite('CH0I', &inhibit, 1);
+            if (r != kIOReturnSuccess) return r;
+        }
+        return kIOReturnSuccess;
+    } @catch (id e) {
+        return kIOReturnIOError;
+    }
+}
+
+// 读取当前停充/断供状态（供 UI 回显）
+static BOOL sbSMCGetChargeBlocked(void) {
+    uint8_t v = 0;
+    int32_t sz = 1;
+    if (sbSMCRead('CH0C', &v, &sz) == kIOReturnSuccess)
+        return (v & 1) != 0;
+    return NO;
+}
+
+static BOOL sbSMCGetPowerBlocked(void) {
+    uint8_t v = 0;
+    int32_t sz = 1;
+    if (sbSMCRead('CH0I', &v, &sz) == kIOReturnSuccess)
+        return (v & 1) != 0;
+    return NO;
+}
+
+static NSString *sbSMCAvailableString(void) __attribute__((unused));
+static NSString *sbSMCAvailableString(void) {
+    if (sbSMCInit() != kIOReturnSuccess)
+        return @"SMC 不可用（当前进程无 AppleSMC 权限）";
+    return @"SMC 正常（硬件级控制可用）";
 }
 
 // ========== 充电器输入功率 & 停充验证（V4.15.0，移植 MiniWatts 数据层思路） ==========
@@ -5694,7 +5953,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 4) return 3;
     if (section == 5) return 1;
     if (section == 6) return 10;
-    if (section == 7) return 4; 
+    if (section == 7) return 6; // 充电增强（+V4.19 阻止充电/阻止外部供电）
     if (section == 8) return 9; // 位置与显示（含 📶 显示信号强度）
     if (section == 9) return 5; // 🔋 智能停充
     if (section == 10) return 0; // 📖 功能说明已移除
@@ -6676,6 +6935,36 @@ static NSString *stripLeadingEmoji(NSString *s) {
             cell.detailTextLabel.text = cnt > 0 ? [NSString stringWithFormat:@"%ld 条记录", (long)cnt] : @"暂无记录";
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+        } else if (indexPath.row == 4) {
+            // V4.19 — Battman 充电管理：阻止充电（SMC CH0C 直写，硬件级生效）
+            cell.textLabel.text = @"⛔ 阻止充电";
+            BOOL smcOK = (sbSMCInit() == kIOReturnSuccess);
+            if (smcOK) {
+                BOOL cur = sbSMCGetChargeBlocked();
+                if (cur != blockChargingEnable) blockChargingEnable = cur; // 同步真实硬件状态
+                cell.detailTextLabel.text = @"写 AppleSMC CH0C，保留 AC 供电，BMS 硬件级停充";
+            } else {
+                cell.detailTextLabel.text = @"当前进程无 AppleSMC 权限，此功能不可用";
+            }
+            UISwitch *sw = [UISwitch new];
+            sw.on = blockChargingEnable;
+            [sw addTarget:self action:@selector(changeBlockCharging:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
+        } else if (indexPath.row == 5) {
+            // V4.19 — Battman 充电管理：阻止外部供电（SMC CH0I 直写）
+            cell.textLabel.text = @"🚫 阻止外部供电";
+            BOOL smcOK = (sbSMCInit() == kIOReturnSuccess);
+            if (smcOK) {
+                BOOL cur = sbSMCGetPowerBlocked();
+                if (cur != blockPowerEnable) blockPowerEnable = cur;
+                cell.detailTextLabel.text = @"写 AppleSMC CH0I，完全切断外部供电，只靠电池";
+            } else {
+                cell.detailTextLabel.text = @"当前进程无 AppleSMC 权限，此功能不可用";
+            }
+            UISwitch *sw = [UISwitch new];
+            sw.on = blockPowerEnable;
+            [sw addTarget:self action:@selector(changeBlockPower:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
         }
     } else if (indexPath.section == 8) {
         CGFloat cw = self.tableView.bounds.size.width - 32.0; // 滑块行布局需要（稳定口径）
@@ -7303,6 +7592,64 @@ static NSString *stripLeadingEmoji(NSString *s) {
     chargeBoostVerified = NO;
     applyExperimentalChargeLimit100(chargeBoostEnable);
     SavePreferencesAndNotify();
+}
+
+// V4.19 — Battman 充电管理：阻止充电（SMC CH0C 直写，失败弹窗提示原因）
+- (void)changeBlockCharging:(UISwitch *)sw {
+    BOOL target = sw.isOn;
+    IOReturn r = sbSMCSetChargeBlock(target, NO);
+    if (r != kIOReturnSuccess && r != kIOReturnCannotLock) {
+        // 回写开关状态并提示
+        sw.on = !target;
+        blockChargingEnable = !target;
+        NSString *msg = @"写入 AppleSMC CH0C 失败";
+        if (r == kIOReturnNotReady) msg = @"未检测到充电器连接或 VBUS 无供电，无法操作";
+        else if (r == kIOReturnIOError || r == kIOReturnNotOpen) msg = @"当前进程无 AppleSMC 权限，无法写入";
+        else if (r == kIOReturnCannotLock) msg = @"系统优化充电(OBC)接管中，无法写入";
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"阻止充电失败"
+                                                                       message:msg
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        SavePreferencesAndNotify();
+        return;
+    }
+    blockChargingEnable = target;
+    if (target) {
+        // 阻止充电与智能停充互斥：开启后停用智能停充自动管理
+        if (smartChargeEnable) {
+            smartChargeEnable = NO;
+        }
+    }
+    SavePreferencesAndNotify();
+    [self.tableView reloadData];
+}
+
+// V4.19 — Battman 充电管理：阻止外部供电（SMC CH0I 直写）
+- (void)changeBlockPower:(UISwitch *)sw {
+    BOOL target = sw.isOn;
+    IOReturn r = sbSMCSetPowerBlock(target, NO);
+    if (r != kIOReturnSuccess && r != kIOReturnCannotLock) {
+        sw.on = !target;
+        blockPowerEnable = !target;
+        NSString *msg = @"写入 AppleSMC CH0I 失败";
+        if (r == kIOReturnNotReady) msg = @"未检测到充电器连接或 VBUS 无供电，无法操作";
+        else if (r == kIOReturnIOError || r == kIOReturnNotOpen) msg = @"当前进程无 AppleSMC 权限，无法写入";
+        else if (r == kIOReturnCannotLock) msg = @"系统优化充电(OBC)接管中，无法写入";
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"阻止外部供电失败"
+                                                                       message:msg
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        SavePreferencesAndNotify();
+        return;
+    }
+    blockPowerEnable = target;
+    if (target) {
+        if (smartChargeEnable) smartChargeEnable = NO;
+    }
+    SavePreferencesAndNotify();
+    [self.tableView reloadData];
 }
 
 #pragma mark - 🔍 插件冲突检测核心逻辑

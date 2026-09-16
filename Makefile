@@ -8,6 +8,7 @@ TWEAK_NAME = SBCPUFloating SBCPUThermal SBCPUPowerd SBCPUFloatingCCRegistration 
 # 1. 桌面 UI、悬浮窗、120Hz/FPS、通知管理
 SBCPUFloating_FILES = Tweak.xm
 SBCPUFloating_CFLAGS = -fobjc-arc -Iinclude
+SBCPUFloating_LDFLAGS = -Wl,-U,___isOSVersionAtLeast
 SBCPUFloating_FRAMEWORKS = UIKit Foundation QuartzCore CoreMotion
 SBCPUFloating_PRIVATE_FRAMEWORKS = PowerUI IOKit FrontBoardServices
 SBCPUFloating_INSTALL_TARGET_PROCESSES = SpringBoard
@@ -44,7 +45,7 @@ SBCPUFloatingCCRegistration_INSTALL_TARGET_PROCESSES = SpringBoard
 # 编译期压掉 unguarded-availability 警告（Logos 生成的声明无法消音，-Werror 会转 error）
 SBCPUForce120_FILES = SBCPUForce120.xm
 SBCPUForce120_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -fvisibility=hidden -Wno-error=unguarded-availability-new
-SBCPUForce120_LDFLAGS += -Wl,-x -Wl,-dead_strip
+SBCPUForce120_LDFLAGS += -Wl,-x -Wl,-dead_strip -Wl,-U,___isOSVersionAtLeast
 SBCPUForce120_FRAMEWORKS = Foundation QuartzCore
 SBCPUForce120_LIBRARIES = substrate
 SBCPUForce120_INSTALL_TARGET_PROCESSES = SpringBoard
