@@ -1,0 +1,37 @@
+#!/bin/bash
+# SBCPUFloating postinst — 安装后加载充电控制 daemon
+# 兼容 roothide（/var/jb）与 rootful 环境
+set -e
+
+JBROOT=""
+if [ -d "/var/jb" ]; then
+    JBROOT="/var/jb"
+fi
+
+DAEMON_PATH="${JBROOT}/usr/libexec/SBCPUChargeDaemon"
+PLIST_PATH="${JBROOT}/Library/LaunchDaemons/com.sbcpu.charged.plist"
+
+# roothide：plist 里的 ProgramArguments 写的是 /usr/libexec/...，改成实际路径
+if [ -f "$PLIST_PATH" ] && [ -n "$JBROOT" ]; then
+    sed -i '' "s|/usr/libexec/SBCPUChargeDaemon|${JBROOT}/usr/libexec/SBCPUChargeDaemon|g" "$PLIST_PATH" 2>/dev/null \
+        || sed -i "s|/usr/libexec/SBCPUChargeDaemon|${JBROOT}/usr/libexec/SBCPUChargeDaemon|g" "$PLIST_PATH" 2>/dev/null || true
+fi
+
+# 确保 daemon 可执行
+if [ -f "$DAEMON_PATH" ]; then
+    chmod 0755 "$DAEMON_PATH"
+fi
+
+# 加载/重载 LaunchDaemon
+if [ -f "$PLIST_PATH" ]; then
+    # 先卸载旧的（忽略错误）
+    launchctl unload "$PLIST_PATH" >/dev/null 2>&1 || true
+    launchctl load -w "$PLIST_PATH" >/dev/null 2>&1 || true
+fi
+
+# 立即启动 daemon（若 launchd 未拉起）
+if [ -x "$DAEMON_PATH" ]; then
+    "$DAEMON_PATH" >/dev/null 2>&1 &
+fi
+
+exit 0

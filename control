@@ -4,6 +4,6 @@ Version: 4.21.0
 Architecture: iphoneos-arm64
 Maintainer: MoWang
 Author: MoWang
-Description:新增网络频段锁定(Beta)：长按详情-蜂窝详情-网络工具进入，按卡勾选5G NR/4G LTE/3G/2G频段并真实下发基带(setActiveBandInfo)，支持全选/全不选、保存应用、恢复默认，无基带SPI权限时明示错误；另含浮窗信号行增强(运营商+dBm+频段+SA/NSA)与蜂窝详情页(信号质量/基站参数/IMEI)
+Description:修复阻止充电/阻止外部供电无效问题：新增 SBCPUChargeDaemon root 守护进程（launchd 启动 + AppleSMC entitlements 签名），SpringBoard 开关经 unix socket 转由 daemon 写 SMC CH0C/CH0I，硬件级停充真正生效；智能停充同步走 daemon SMC 通道
 Section: Tweaks
 Depends: mobilesubstrate, preferenceloader

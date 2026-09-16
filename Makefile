@@ -50,13 +50,26 @@ SBCPUForce120_FRAMEWORKS = Foundation QuartzCore
 SBCPUForce120_LIBRARIES = substrate
 SBCPUForce120_INSTALL_TARGET_PROCESSES = SpringBoard
 
+# 6. 充电控制 root daemon（V4.21）：SpringBoard 无 AppleSMC entitlement，
+# 由 launchd 以 root 拉起本 daemon，ldid 签名带 com.apple.private.applesmc.user-access，
+# 监听 unix socket 替 SpringBoard 写 CH0C(停充)/CH0I(断外部供电)。
+TOOL_NAME = SBCPUChargeDaemon
+SBCPUChargeDaemon_FILES = SBCPUChargeDaemon.m
+SBCPUChargeDaemon_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
+SBCPUChargeDaemon_FRAMEWORKS = Foundation IOKit
+SBCPUChargeDaemon_CODESIGN_FLAGS = -S$(THEOS_PROJECT_DIR)/SBCPUChargeDaemon.entitlements
+SBCPUChargeDaemon_INSTALL_PATH = /usr/libexec
+
 ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
 SBCPUThermal_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide
 SBCPUFloatingCCRegistration_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide
 SBCPUForce120_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide
+SBCPUChargeDaemon_CFLAGS += -I$(THEOS_VENDOR_INCLUDE_PATH)/roothide
+SBCPUChargeDaemon_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide
 endif
 
 include $(THEOS_MAKE_PATH)/tweak.mk
+include $(THEOS_MAKE_PATH)/tool.mk
 
 # PreferenceBundle
 SUBPROJECTS += sbcpuprefs
@@ -85,3 +98,8 @@ after-stage::
 	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/ControlCenter/resources/SettingsIcon.png" "$(THEOS_STAGING_DIR)/Library/ControlCenter/Bundles/SBCPUFloatingCC.bundle/SettingsIcon.png"$(ECHO_END)
 	$(ECHO_NOTHING)mkdir -p "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries"$(ECHO_END)
 	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/SBCPUFloatingCCRegistration.plist" "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/SBCPUFloatingCCRegistration.plist"$(ECHO_END)
+	$(ECHO_NOTHING)mkdir -p "$(THEOS_STAGING_DIR)/Library/LaunchDaemons"$(ECHO_END)
+	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/com.sbcpu.charged.plist" "$(THEOS_STAGING_DIR)/Library/LaunchDaemons/com.sbcpu.charged.plist"$(ECHO_END)
+	$(ECHO_NOTHING)mkdir -p "$(THEOS_STAGING_DIR)/DEBIAN"$(ECHO_END)
+	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/postinst" "$(THEOS_STAGING_DIR)/DEBIAN/postinst"$(ECHO_END)
+	$(ECHO_NOTHING)chmod 0755 "$(THEOS_STAGING_DIR)/DEBIAN/postinst"$(ECHO_END)
