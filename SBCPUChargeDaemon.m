@@ -16,6 +16,7 @@
 #import <unistd.h>
 #import <fcntl.h>
 #import <pthread.h>
+#import <CoreFoundation/CoreFoundation.h>
 #include "SBCPUChargeProtocol.h"
 #include "SBCPUChargeSMC.h"
 #include "SBCPUChargePowerSource.h"
@@ -178,6 +179,8 @@ static void handle_client(int fd) {
                 st.lowerLimit = cfg.lowerLimit;
             }
             st.obcTaken = sb_engine_obc_taken();
+            st.version = SB_DAEMON_VERSION;
+            st.lastSMCError = smc_last_error();
             resp.result = SB_RESULT_OK;
             resp.value = st.engineState;
             write(fd, &resp, sizeof(resp));
@@ -250,16 +253,30 @@ static void *socket_server(void *arg) {
     return NULL;
 }
 
+// SIGTERM/SIGINT：停止主 runloop，回到 main 做优雅复位（CH0C/CH0I 写回允许）后正常退出
+static volatile sig_atomic_t gShouldExit = 0;
+static void sbcpu_on_term(int sig) {
+    (void)sig;
+    gShouldExit = 1;
+    CFRunLoopStop(CFRunLoopGetMain());
+}
+
 int main(int argc, char *argv[]) {
-    (void)argc; (void)argv;
     signal(SIGPIPE, SIG_IGN);
     signal(SIGCHLD, SIG_IGN);
+    signal(SIGTERM, sbcpu_on_term);
+    signal(SIGINT, sbcpu_on_term);
+
+    // 最早期诊断（不依赖锁/目录）：确认 launchd 是否真的拉起了本进程、身份与版本
+    NSLog(@"[SBCPUChargeDaemon] launched uid=%d euid=%d ver=%d argv=%s",
+          (int)getuid(), (int)geteuid(), SB_DAEMON_VERSION, argc > 0 ? argv[0] : "(null)");
 
     @autoreleasepool {
-        if (!acquire_singleton()) return 0;
-        sb_log(@"===== SBCPUChargeDaemon starting =====");
+        if (!acquire_singleton()) return 0; // 已有实例：成功退出，KeepAlive 不重启
+        sb_log([NSString stringWithFormat:@"===== daemon starting uid=%d euid=%d ver=%d argv=%s =====",
+                (int)getuid(), (int)geteuid(), SB_DAEMON_VERSION, argc > 0 ? argv[0] : "?"]);
 
-        // 引擎初始化：打开 SMC + 读配置 + 启动即决策
+        // 引擎初始化：打开 SMC + 读配置 + 启动即决策（SMC 失败也继续，保持 socket 存活）
         sb_engine_init();
 
         // 事件驱动：订阅电池变化，通知源挂主 run loop
@@ -278,7 +295,15 @@ int main(int argc, char *argv[]) {
             CFRunLoopAddSource(CFRunLoopGetMain(), src, kCFRunLoopCommonModes);
         }
         CFRunLoopRun(); // 常驻（launchd KeepAlive 兜底）
+
+        // runloop 被信号停止：优雅复位充电状态后正常退出（卸载/升级场景）
+        if (gShouldExit) {
+            sb_log(@"SIGTERM received; resetting CH0C/CH0I then exit");
+            sb_engine_shutdown();
+            unlink(SB_SOCKET_PATH);
+            if (gLockFD >= 0) { flock(gLockFD, LOCK_UN); close(gLockFD); gLockFD = -1; }
+            return 0; // 成功退出，KeepAlive(SuccessfulExit=false) 不重启
+        }
         return 1; // 不可达：异常退出让 launchd 重启
     }
-    return 0;
 }

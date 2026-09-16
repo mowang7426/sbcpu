@@ -46,23 +46,28 @@ static io_connect_t gSMCConn = 0;
 // 写缓存：只有状态真正变化才写 SMC（Battman CH0CCache/CH0ICache 思路）
 static int gChargeCache = -1;
 static int gPowerCache = -1;
+// 最近一次 SMC 调用的原始 IOReturn（诊断用，0=成功）
+static int32_t gLastSMCError = 0;
+
+int32_t smc_last_error(void) { return gLastSMCError; }
 
 IOReturn smc_open(void) {
     if (gSMCConn != 0) return kIOReturnSuccess;
     mach_port_t masterPort = 0;
-    if (IOMasterPort(MACH_PORT_NULL, &masterPort) != kIOReturnSuccess)
-        return kIOReturnNotOpen;
+    IOReturn mr = IOMasterPort(MACH_PORT_NULL, &masterPort);
+    if (mr != kIOReturnSuccess) { gLastSMCError = mr; return mr; }
     io_service_t service = IOServiceGetMatchingService(masterPort, IOServiceMatching("AppleSMC"));
-    if (service == IO_OBJECT_NULL)
-        return kIOReturnNotFound;
+    if (service == IO_OBJECT_NULL) { gLastSMCError = kIOReturnNotFound; return kIOReturnNotFound; }
     IOReturn result = IOServiceOpen(service, mach_task_self(), 0, &gSMCConn);
     IOObjectRelease(service);
     if (result != kIOReturnSuccess) {
         gSMCConn = 0;
+        gLastSMCError = result;   // 关键：权限不足时这里通常是 kIOReturnNotPermitted
         return result;
     }
     gChargeCache = -1;
     gPowerCache = -1;
+    gLastSMCError = 0;
     return kIOReturnSuccess;
 }
 
@@ -80,11 +85,13 @@ bool smc_is_open(void) {
 static IOReturn smc_call(int index, SMCParamStruct *input, SMCParamStruct *output) {
     if (gSMCConn == 0) {
         IOReturn r = smc_open();
-        if (r != kIOReturnSuccess) return r;
+        if (r != kIOReturnSuccess) { gLastSMCError = r; return r; }
     }
     size_t inSize = sizeof(SMCParamStruct);
     size_t outSize = sizeof(SMCParamStruct);
-    return IOConnectCallStructMethod(gSMCConn, index, input, inSize, output, &outSize);
+    IOReturn r = IOConnectCallStructMethod(gSMCConn, index, input, inSize, output, &outSize);
+    if (r != kIOReturnSuccess) gLastSMCError = r;
+    return r;
 }
 
 static IOReturn smc_get_keyinfo(uint32_t key, SMCKeyInfoData *keyInfo) {
@@ -170,8 +177,10 @@ int smc_set_charge_block(bool inhibit, bool overrideOBC) {
     // 安全 1：外部必须已连接
     uint8_t chce = 0;
     int32_t sz = 1;
-    if (smc_read_key('CHCE', &chce, &sz) != kIOReturnSuccess)
+    if (smc_read_key('CHCE', &chce, &sz) != kIOReturnSuccess) {
+        NSLog(@"[SBCPUChargeSMC] read CHCE failed 0x%08x", smc_last_error());
         return SB_RESULT_IO_ERROR;
+    }
     if (!chce) return SB_RESULT_NO_EXTERNAL_POWER;
 
     // 安全 2：CH0R bit1 = No VBUS 时禁止写
@@ -181,8 +190,10 @@ int smc_set_charge_block(bool inhibit, bool overrideOBC) {
         return SB_RESULT_NO_EXTERNAL_POWER;
 
     uint8_t cur = 0;
-    if (smc_read_key('CH0C', &cur, &sz) != kIOReturnSuccess)
+    if (smc_read_key('CH0C', &cur, &sz) != kIOReturnSuccess) {
+        NSLog(@"[SBCPUChargeSMC] read CH0C failed 0x%08x", smc_last_error());
         return SB_RESULT_IO_ERROR;
+    }
 
     // OBC 已接管充电：不强制则标记 OBC 托管；强制则关 OBC 再写 CH0B
     if (cur & (1 << 1)) {
@@ -195,7 +206,10 @@ int smc_set_charge_block(bool inhibit, bool overrideOBC) {
     int target = inhibit ? 1 : 0;
     if (target != gChargeCache) {
         IOReturn r = smc_write_key('CH0C', &inhibit, 1);
-        if (r != kIOReturnSuccess) return SB_RESULT_IO_ERROR;
+        if (r != kIOReturnSuccess) {
+            NSLog(@"[SBCPUChargeSMC] write CH0C=%d failed 0x%08x", inhibit, smc_last_error());
+            return SB_RESULT_IO_ERROR;
+        }
         gChargeCache = target;
     }
     return SB_RESULT_OK;
@@ -204,8 +218,10 @@ int smc_set_charge_block(bool inhibit, bool overrideOBC) {
 int smc_set_power_block(bool inhibit, bool overrideOBC) {
     uint8_t chce = 0;
     int32_t sz = 1;
-    if (smc_read_key('CHCE', &chce, &sz) != kIOReturnSuccess)
+    if (smc_read_key('CHCE', &chce, &sz) != kIOReturnSuccess) {
+        NSLog(@"[SBCPUChargeSMC] read CHCE failed 0x%08x", smc_last_error());
         return SB_RESULT_IO_ERROR;
+    }
     if (!chce) return SB_RESULT_NO_EXTERNAL_POWER;
 
     uint32_t ch0r = 0;
@@ -214,8 +230,10 @@ int smc_set_power_block(bool inhibit, bool overrideOBC) {
         return SB_RESULT_NO_EXTERNAL_POWER;
 
     uint8_t cur = 0;
-    if (smc_read_key('CH0I', &cur, &sz) != kIOReturnSuccess)
+    if (smc_read_key('CH0I', &cur, &sz) != kIOReturnSuccess) {
+        NSLog(@"[SBCPUChargeSMC] read CH0I failed 0x%08x", smc_last_error());
         return SB_RESULT_IO_ERROR;
+    }
 
     if (cur & (1 << 1)) {
         if (!overrideOBC) return SB_RESULT_OBC_TAKEN;
@@ -225,7 +243,10 @@ int smc_set_power_block(bool inhibit, bool overrideOBC) {
     int target = inhibit ? 1 : 0;
     if (target != gPowerCache) {
         IOReturn r = smc_write_key('CH0I', &inhibit, 1);
-        if (r != kIOReturnSuccess) return SB_RESULT_IO_ERROR;
+        if (r != kIOReturnSuccess) {
+            NSLog(@"[SBCPUChargeSMC] write CH0I=%d failed 0x%08x", inhibit, smc_last_error());
+            return SB_RESULT_IO_ERROR;
+        }
         gPowerCache = target;
     }
     return SB_RESULT_OK;

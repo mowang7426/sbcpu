@@ -1159,11 +1159,11 @@ static BOOL gSMCAvailable = NO;
 static BOOL gSMCChecked = NO;
 
 enum {
-    kSBCmdSetCharge = 1,
-    kSBCmdSetPower  = 2,
-    kSBCmdGetCharge = 3,
-    kSBCmdGetPower  = 4,
-    kSBCmdPing      = 5,
+    kSBCmdPing      = 1,
+    kSBCmdSetCharge = 2,
+    kSBCmdSetPower  = 3,
+    kSBCmdGetCharge = 4,
+    kSBCmdGetPower  = 5,
     kSBCmdSetLimits = 6,
     kSBCmdGetLimits = 7,
     kSBCmdRedecide  = 8,
@@ -1173,6 +1173,18 @@ enum {
 
 #define SB_SOCKET_PATH "/var/mobile/Library/Preferences/sbcpu_charge.sock"
 #define SB_MAGIC 0x53424350
+#define SB_DAEMON_VERSION 2
+
+// daemon 返回的 result 语义（与 SBCPUChargeProtocol.h SB_RESULT_* 对齐）
+enum {
+    kSBResultOK                = 0,
+    kSBResultBusy              = 1,
+    kSBResultOBCTaken          = 2,
+    kSBResultSMCUnavailable    = 3,
+    kSBResultNoExternalPower   = 4,
+    kSBResultUnsupported       = 5,
+    kSBResultIOError           = 6
+};
 
 typedef struct {
     uint32_t magic;
@@ -1241,6 +1253,7 @@ static void sbSMCLoadDaemon(void) {
         char *argv2[] = {(char *)launchctl.UTF8String, (char *)"load", (char *)"-w", (char *)plistPath.UTF8String, NULL};
         pid_t pid2 = 0;
         posix_spawn(&pid2, argv2[0], NULL, NULL, argv2, NULL);
+        if (pid2 > 0) { int st2 = 0; waitpid(pid2, &st2, 0); }
     } @catch (NSException *e) {}
 }
 
@@ -1323,7 +1336,8 @@ typedef struct {
     uint8_t  upperLimit;
     uint8_t  lowerLimit;
     uint8_t  obcTaken;
-    uint8_t  pad;
+    uint8_t  version;          // daemon 协议版本（SB_DAEMON_VERSION）
+    int32_t  lastSMCError;     // 最近一次 SMC 调用原始 IOReturn（0=无错误）
 } sb_status_t;
 
 // 下发智能充电配置给 daemon（保存到偏好 + 立即 REDECIDE）
@@ -1403,6 +1417,44 @@ static BOOL sbSMCGetPowerBlocked(void) {
     if (sbSMCRequest(kSBCmdGetPower, 0, &v) == kIOReturnSuccess)
         return v != 0;
     return NO;
+}
+
+// V4.23 — 充电操作失败的统一诊断文案：区分 daemon 未运行 / 旧版未加载 / SMC 不可用 / 真实 IOKit 错误码
+static NSString *sbChargeErrorMessage(IOReturn r) {
+    sb_status_t st;
+    BOOL alive = sbSMCGetStatus(&st);
+    if (!alive) {
+        return @"充电守护进程未运行。请注销(Respring)或重启手机；若反复出现，请在 NewTerm(root) 运行随附的诊断命令。";
+    }
+    if (st.version == 0 || st.version < SB_DAEMON_VERSION) {
+        return [NSString stringWithFormat:@"充电守护进程仍是旧版本(v%d)，新版尚未加载。请注销(Respring)或重启手机后再试。",
+                st.version ? (int)st.version : 1];
+    }
+    if (!st.smcAvailable) {
+        if (st.lastSMCError != 0)
+            return [NSString stringWithFormat:@"AppleSMC 无法打开（IOKit 0x%08x）。守护进程可能未以 root 被 launchd 托管，请重启手机。",
+                    (unsigned)st.lastSMCError];
+        return @"AppleSMC 不可用，守护进程未能访问电源管理，请重启手机。";
+    }
+    switch (r) {
+        case kSBResultNoExternalPower:
+            return @"未检测到外部电源，请先连接有线充电器后再操作。";
+        case kSBResultOBCTaken:
+            return @"系统「优化电池充电」正在接管(OBC)，当前未强制覆盖。请关闭系统优化充电，或开启「覆盖 OBC」后再试。";
+        case kSBResultUnsupported:
+            return @"当前充电方式（可能为无线充电）暂不支持，请使用有线充电器。";
+        case kSBResultBusy:
+            return @"电源管理正忙，请稍后再试。";
+        case kSBResultSMCUnavailable:
+            return st.lastSMCError
+                ? [NSString stringWithFormat:@"AppleSMC 不可用（IOKit 0x%08x），请重启手机。", (unsigned)st.lastSMCError]
+                : @"AppleSMC 不可用，请重启手机。";
+        default:
+            if (st.lastSMCError != 0)
+                return [NSString stringWithFormat:@"SMC 写入失败（IOKit 0x%08x）。请确认连接的是有线充电器；若反复出现请重启手机。",
+                        (unsigned)st.lastSMCError];
+            return [NSString stringWithFormat:@"操作失败（代码 %d），请确认充电器已连接后重试。", (int)r];
+    }
 }
 
 static NSString *sbSMCAvailableString(void) __attribute__((unused));
@@ -4289,6 +4341,8 @@ return self;
             static uint8_t gCachedEngineState = 0;
             static uint8_t gCachedChargeBlocked = 0;
             static uint8_t gCachedDaemonOK = 0;
+            static uint8_t gCachedSmcAvailable = 1;
+            static uint8_t gCachedVersion = 0;
             double now = [NSDate timeIntervalSinceReferenceDate];
             if (now - gLastStatusFetch > 3.0) {
                 sb_status_t st;
@@ -4296,6 +4350,8 @@ return self;
                     gCachedEngineState = st.engineState;
                     gCachedChargeBlocked = st.chargeBlocked;
                     gCachedDaemonOK = 1;
+                    gCachedSmcAvailable = st.smcAvailable;
+                    gCachedVersion = st.version;
                     smartChargeStopped = (st.chargeBlocked != 0);
                 } else {
                     gCachedDaemonOK = 0;
@@ -4305,6 +4361,13 @@ return self;
             NSInteger scPercent = getBatteryPercentForSmartCharge();
             if (!gCachedDaemonOK) {
                 _statusLabel.text = [NSString stringWithFormat:@"⚠️ 充电守护进程未运行 · %ld%%", (long)scPercent];
+                _statusLabel.textColor = [UIColor systemRedColor];
+            } else if (gCachedVersion != 0 && gCachedVersion < SB_DAEMON_VERSION) {
+                _statusLabel.text = [NSString stringWithFormat:@"⚠️ 守护进程是旧版(v%d)，请注销/重启", (int)gCachedVersion];
+                _statusLabel.textColor = [UIColor systemRedColor];
+            } else if (!gCachedSmcAvailable || gCachedEngineState == 6) {
+                // Error：daemon 在跑但 AppleSMC 打不开（通常未以 root 被 launchd 托管）
+                _statusLabel.text = @"❌ AppleSMC 不可用，请重启手机";
                 _statusLabel.textColor = [UIColor systemRedColor];
             } else if (gCachedEngineState == 2 || gCachedChargeBlocked) {
                 // SBCPUChargeStateBlocked：手动停充/断供 或 智能停充已触发
@@ -4318,10 +4381,6 @@ return self;
                 // Unsupported：无线充电暂不支持限制
                 _statusLabel.text = @"⚠️ 无线充电暂不支持限制";
                 _statusLabel.textColor = [UIColor systemYellowColor];
-            } else if (gCachedEngineState == 6) {
-                // Error：AppleSMC 不可用
-                _statusLabel.text = @"❌ AppleSMC 不可用";
-                _statusLabel.textColor = [UIColor systemRedColor];
             } else if (isCharging) {
                 _statusLabel.text = [NSString stringWithFormat:@"🔋 智能停充待触发 · %ld%%→%ld%%", (long)scPercent, (long)smartChargeUpperLimit];
                 _statusLabel.textColor = [UIColor systemBlueColor];
@@ -7501,7 +7560,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
             IOReturn r = sbSMCSetChargeBlock(NO, NO);
             if (r != kIOReturnSuccess) {
                 UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复充电失败"
-                    message:[NSString stringWithFormat:@"SMC 写入失败（0x%x），请确认充电器已连接", r]
+                    message:sbChargeErrorMessage(r)
                     preferredStyle:UIAlertControllerStyleAlert];
                 [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
                 [self presentViewController:alert animated:YES completion:nil];
@@ -7518,7 +7577,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
     // 开启：先检查 SMC 可用
     if (sbSMCInit() != kIOReturnSuccess) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"阻止充电失败"
-            message:@"SMC 守护进程未运行，请确认已安装新版后注销重试"
+            message:sbChargeErrorMessage(kIOReturnNotOpen)
             preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
@@ -7533,7 +7592,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
     IOReturn r = sbSMCSetChargeBlock(YES, NO);
     if (r != kIOReturnSuccess) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"阻止充电失败"
-            message:[NSString stringWithFormat:@"SMC 写入失败（0x%x），请确认充电器已连接", r]
+            message:sbChargeErrorMessage(r)
             preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
@@ -7553,7 +7612,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
             IOReturn r = sbSMCSetPowerBlock(NO, NO);
             if (r != kIOReturnSuccess) {
                 UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复外部供电失败"
-                    message:[NSString stringWithFormat:@"SMC 写入失败（0x%x），请确认充电器已连接", r]
+                    message:sbChargeErrorMessage(r)
                     preferredStyle:UIAlertControllerStyleAlert];
                 [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
                 [self presentViewController:alert animated:YES completion:nil];
@@ -7569,7 +7628,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
     }
     if (sbSMCInit() != kIOReturnSuccess) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"阻止外部供电失败"
-            message:@"SMC 守护进程未运行，请确认已安装新版后注销重试"
+            message:sbChargeErrorMessage(kIOReturnNotOpen)
             preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
@@ -7579,7 +7638,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
     IOReturn r = sbSMCSetPowerBlock(YES, NO);
     if (r != kIOReturnSuccess) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"阻止外部供电失败"
-            message:[NSString stringWithFormat:@"SMC 写入失败（0x%x），请确认充电器已连接", r]
+            message:sbChargeErrorMessage(r)
             preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];

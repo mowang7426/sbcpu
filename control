@@ -1,9 +1,9 @@
 Package: com.sbcpu.floating
 Name: SB CPU Floating
-Version: 4.22
+Version: 4.23
 Architecture: iphoneos-arm64
 Maintainer: MoWang
 Author: MoWang
-Description: Charge Engine V1 重构：充电控制收口为独立事件驱动的 root 守护进程（SBCPUChargeDaemon 分层 SMC/PowerSource/Engine），迟滞停充(上限/回充下限)、手动阻止充电/断供、OBC 处理、启动即决策、防多开、无线充电不支持提示；Tweak 只做 UI/配置，powerd 只做快充，CH0C/CH0I 统一由 daemon 写；浮窗关闭或 respring 后限制仍生效
+Description: V4.23 修复充电守护在 roothide 下不被 launchd 拉起：plist 固定 /var/jb 路径、postinst 动态探测 jbroot 并用 bootout/bootstrap 托管、日志移到 jbroot 内；修复 Tweak↔daemon 命令枚举错位（点阻止充电误发 PING、阻止外部供电误写成停充）；daemon 上报协议版本与真实 IOKit 错误码、SIGTERM 优雅复位 CH0C/CH0I、新增 prerm 卸载复位。Charge Engine：独立事件驱动 root 守护进程，迟滞停充、手动阻止充电/断供、OBC、启动即决策、防多开；浮窗关闭或 respring 后限制仍生效
 Section: Tweaks
 Depends: mobilesubstrate, preferenceloader

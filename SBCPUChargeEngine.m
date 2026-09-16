@@ -10,6 +10,7 @@
 
 #import <Foundation/Foundation.h>
 #import <notify.h>
+#import <unistd.h>
 #include <stdarg.h>
 #include "SBCPUChargeEngine.h"
 #include "SBCPUChargeSMC.h"
@@ -89,13 +90,14 @@ bool sb_engine_load_config(SBCPUChargeConfig *cfg) {
 }
 
 void sb_engine_init(void) {
-    gSmcAvailable = (smc_open() == kIOReturnSuccess);
+    IOReturn oret = smc_open();
+    gSmcAvailable = (oret == kIOReturnSuccess);
     if (!gSmcAvailable) {
-        engine_log(@"AppleSMC open failed; engine disabled");
+        engine_log(@"AppleSMC open failed: 0x%08x (uid=%d); engine disabled", (unsigned)oret, (int)getuid());
         gState = SBCPUChargeStateError;
         return;
     }
-    engine_log(@"AppleSMC opened OK");
+    engine_log(@"AppleSMC opened OK (uid=%d)", (int)getuid());
     if (!sb_engine_load_config(&gCfg)) {
         engine_log(@"No preferences yet; engine idle");
         gState = SBCPUChargeStateUnknown;
@@ -115,9 +117,22 @@ void sb_engine_shutdown(void) {
     gState = SBCPUChargeStateUnknown;
 }
 
+// 按需确保 SMC 已打开：启动时若临时失败，后续命令/事件到来时自动重连（自愈）
+static bool engine_ensure_smc(void) {
+    if (gSmcAvailable && smc_is_open()) return true;
+    IOReturn r = smc_open();
+    if (r == kIOReturnSuccess) {
+        gSmcAvailable = true;
+        engine_log(@"AppleSMC (re)opened OK (uid=%d)", (int)getuid());
+        return true;
+    }
+    gSmcAvailable = false;
+    return false;
+}
+
 int sb_engine_manual_charge_block(bool block) {
     gManualChargeBlock = block;
-    if (!gSmcAvailable) return SB_RESULT_SMC_UNAVAILABLE;
+    if (!engine_ensure_smc()) return SB_RESULT_SMC_UNAVAILABLE;
     int r = smc_set_charge_block(block, gCfg.overrideOBC);
     if (r == SB_RESULT_OK) {
         gCfg.manualChargeBlock = block;
@@ -135,7 +150,7 @@ int sb_engine_manual_charge_block(bool block) {
 
 int sb_engine_manual_power_block(bool block) {
     gManualPowerBlock = block;
-    if (!gSmcAvailable) return SB_RESULT_SMC_UNAVAILABLE;
+    if (!engine_ensure_smc()) return SB_RESULT_SMC_UNAVAILABLE;
     int r = smc_set_power_block(block, gCfg.overrideOBC);
     if (r == SB_RESULT_OK) {
         gCfg.manualPowerBlock = block;
@@ -154,7 +169,7 @@ int sb_engine_manual_power_block(bool block) {
 void sb_engine_decide(int pct, bool charging, bool wireless) {
     if (pct >= 0) gBatteryPercent = pct;
     gWireless = wireless;
-    if (!gSmcAvailable) {
+    if (!engine_ensure_smc()) {
         gState = SBCPUChargeStateError;
         return;
     }
@@ -264,6 +279,6 @@ SBCPUChargeState sb_engine_state(void) { return gState; }
 uint8_t sb_engine_battery_percent(void) { return (uint8_t)(gBatteryPercent < 0 ? 0 : gBatteryPercent); }
 bool sb_engine_charge_blocked(void) { return smc_get_charge_blocked(); }
 bool sb_engine_power_blocked(void) { return smc_get_power_blocked(); }
-bool sb_engine_smc_available(void) { return gSmcAvailable; }
+bool sb_engine_smc_available(void) { return engine_ensure_smc(); }
 bool sb_engine_obc_taken(void) { return gOBC; }
 bool sb_engine_wireless(void) { return gWireless; }

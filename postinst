@@ -1,48 +1,77 @@
 #!/bin/bash
-# SBCPUFloating postinst — 安装后加载充电控制 daemon
-# 兼容 roothide（/var/jb）与 rootful 环境
-set -e
+# SBCPUFloating postinst — 加载/重载充电守护进程
+# 兼容 rootless(/var/jb 固定) 与 roothide(随机 jbroot，可能 chroot 视图)
+# 注意：plist 内 ProgramArguments 已固定写 /var/jb/usr/libexec/...（rootless 标准，
+#       roothide 通过 /var/jb 符号链接解析），本脚本不再 sed 改路径。
+# 不使用 set -e：任何单步失败都不阻断后续，结尾始终 exit 0。
 
-JBROOT=""
-if [ -d "/var/jb" ]; then
-    JBROOT="/var/jb"
-fi
+LABEL=com.sbcpu.charged
+PLIST_NAME=com.sbcpu.charged.plist
+DAEMON_NAME=SBCPUChargeDaemon
+INSTLOG=/var/mobile/Library/Preferences/sbcpu_charge_install.log
 
-DAEMON_PATH="${JBROOT}/usr/libexec/SBCPUChargeDaemon"
-PLIST_PATH="${JBROOT}/Library/LaunchDaemons/com.sbcpu.charged.plist"
+ilog() { echo "[$(date '+%H:%M:%S')] $*" >> "$INSTLOG" 2>/dev/null; }
+ilog "===== postinst begin ====="
 
-# 探测 launchctl（roothide 下不在标准 PATH）
-LAUNCHCTL=""
-for c in "${JBROOT}/usr/bin/launchctl" "/usr/bin/launchctl" "/bin/launchctl"; do
-    if [ -x "$c" ]; then
-        LAUNCHCTL="$c"
-        break
-    fi
+# 1) 探测越狱根 JB（"" 表示当前 shell 根即 jbroot 的 chroot 视图）
+JB=""
+for c in "$JBROOT" "/var/jb" "/.jbroot"; do
+    if [ -n "$c" ] && [ -x "$c/usr/libexec/$DAEMON_NAME" ]; then JB="$c"; break; fi
 done
-if [ -z "$LAUNCHCTL" ]; then
-    LAUNCHCTL="launchctl"
+if [ -z "$JB" ]; then
+    if [ -x "/usr/libexec/$DAEMON_NAME" ]; then
+        JB=""
+    else
+        for d in /var/containers/Bundle/Application/.jbroot-*; do
+            [ -x "$d/usr/libexec/$DAEMON_NAME" ] && { JB="$d"; break; }
+        done
+    fi
+fi
+ilog "JBROOT=[$JB]"
+
+DAEMON="$JB/usr/libexec/$DAEMON_NAME"
+PLIST="$JB/Library/LaunchDaemons/$PLIST_NAME"
+
+# 2) launchd 日志重定向目录（必须在加载前存在）
+mkdir -p "$JB/var/log" 2>/dev/null
+
+# 3) 权限
+[ -f "$DAEMON" ] && chmod 0755 "$DAEMON"
+[ -f "$PLIST" ] && chmod 0644 "$PLIST"
+
+# 4) 探测 launchctl（优先越狱自带）
+LC=""
+for c in "$JB/usr/bin/launchctl" "/var/jb/usr/bin/launchctl" "/.jbroot/usr/bin/launchctl" "/usr/bin/launchctl" "/bin/launchctl"; do
+    if [ -x "$c" ]; then LC="$c"; break; fi
+done
+[ -z "$LC" ] && command -v launchctl >/dev/null 2>&1 && LC="launchctl"
+ilog "launchctl=[$LC] plist=[$PLIST] daemon=[$DAEMON]"
+
+# 5) 先彻底卸载旧 job（不写 -w，避免被持久 disable），再加载
+if [ -n "$LC" ] && [ -f "$PLIST" ]; then
+    "$LC" bootout system "$PLIST" >>"$INSTLOG" 2>&1
+    "$LC" unload      "$PLIST" >>"$INSTLOG" 2>&1
+    sleep 1
+    if "$LC" bootstrap system "$PLIST" >>"$INSTLOG" 2>&1; then
+        ilog "bootstrap OK"
+    else
+        "$LC" load -w "$PLIST" >>"$INSTLOG" 2>&1 && ilog "load OK" || ilog "load FAILED"
+    fi
+    sleep 2
 fi
 
-# roothide：plist 里的 ProgramArguments 写的是 /usr/libexec/...，改成实际路径
-if [ -f "$PLIST_PATH" ] && [ -n "$JBROOT" ]; then
-    sed -i '' "s|/usr/libexec/SBCPUChargeDaemon|${JBROOT}/usr/libexec/SBCPUChargeDaemon|g" "$PLIST_PATH" 2>/dev/null \
-        || sed -i "s|/usr/libexec/SBCPUChargeDaemon|${JBROOT}/usr/libexec/SBCPUChargeDaemon|g" "$PLIST_PATH" 2>/dev/null || true
+# 6) 校验 launchd 是否真的托管；未托管则兜底手动起一个（flock 保证全局单实例）
+RUNNING=0
+if [ -n "$LC" ] && "$LC" list 2>/dev/null | grep -q "$LABEL"; then RUNNING=1; fi
+if [ "$RUNNING" != "1" ] && [ -x "$DAEMON" ]; then
+    ilog "launchd 未托管，兜底启动(nohup)"
+    ( nohup "$DAEMON" >/dev/null 2>&1 & ) 2>/dev/null || ( "$DAEMON" >/dev/null 2>&1 & )
+    sleep 2
 fi
 
-# 确保 daemon 可执行
-if [ -f "$DAEMON_PATH" ]; then
-    chmod 0755 "$DAEMON_PATH"
-fi
-
-# 加载/重载 LaunchDaemon
-if [ -f "$PLIST_PATH" ]; then
-    "$LAUNCHCTL" unload "$PLIST_PATH" >/dev/null 2>&1 || true
-    "$LAUNCHCTL" load -w "$PLIST_PATH" >/dev/null 2>&1 || true
-fi
-
-# 立即启动 daemon（若 launchd 未拉起）；日志写到 /var/mobile 便于诊断
-if [ -x "$DAEMON_PATH" ]; then
-    "$DAEMON_PATH" >/dev/null 2>&1 &
-fi
+# 7) 记录最终状态，便于排查
+"$LC" list 2>/dev/null | grep "$LABEL" >>"$INSTLOG" 2>&1
+ps ax 2>/dev/null | grep -i "$DAEMON_NAME" | grep -v grep >>"$INSTLOG" 2>&1
+ilog "===== postinst end ====="
 
 exit 0

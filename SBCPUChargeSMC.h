@@ -18,6 +18,9 @@ IOReturn smc_open(void);
 void     smc_close(void);
 bool     smc_is_open(void);
 
+// 最近一次 SMC 调用的原始 IOReturn（0=成功），用于诊断/上报真实错误码
+int32_t  smc_last_error(void);
+
 // 底层读写（size 为实际字节数；CH0C/CH0I 为 1 字节，CH0R 为 4 字节）
 IOReturn smc_read_key(uint32_t key, void *bytes, int32_t *size);
 IOReturn smc_write_key(uint32_t key, const void *bytes, uint32_t size);

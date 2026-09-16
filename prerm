@@ -1,0 +1,35 @@
+#!/bin/bash
+# SBCPUFloating prerm — 卸载/升级前停止充电守护进程并复位充电开关
+# daemon 收到 SIGTERM 会在主线程执行 sb_engine_shutdown()：把 CH0C/CH0I 写回 0（恢复正常充电）。
+
+LABEL=com.sbcpu.charged
+PLIST_NAME=com.sbcpu.charged.plist
+DAEMON_NAME=SBCPUChargeDaemon
+
+JB=""
+for c in "$JBROOT" "/var/jb" "/.jbroot"; do
+    [ -x "$c/usr/libexec/$DAEMON_NAME" ] && { JB="$c"; break; }
+done
+[ -z "$JB" ] && [ -x "/usr/libexec/$DAEMON_NAME" ] && JB=""
+
+LC=""
+for c in "$JB/usr/bin/launchctl" "/var/jb/usr/bin/launchctl" "/.jbroot/usr/bin/launchctl" "/usr/bin/launchctl" "/bin/launchctl"; do
+    [ -x "$c" ] && { LC="$c"; break; }
+done
+[ -z "$LC" ] && command -v launchctl >/dev/null 2>&1 && LC="launchctl"
+
+PLIST="$JB/Library/LaunchDaemons/$PLIST_NAME"
+
+# 先停止 launchd 托管（停止 KeepAlive 拉起）
+if [ -n "$LC" ] && [ -f "$PLIST" ]; then
+    "$LC" bootout system "$PLIST" 2>/dev/null || "$LC" unload "$PLIST" 2>/dev/null
+fi
+sleep 1
+# 兜底：向残留（含手动启动）实例发 SIGTERM，触发其复位 SMC 后正常退出
+pkill -TERM -f "$DAEMON_NAME" 2>/dev/null
+sleep 1
+# 清理 socket / lock（日志保留以便排查）
+rm -f /var/mobile/Library/Preferences/sbcpu_charge.sock 2>/dev/null
+rm -f /var/mobile/Library/Preferences/sbcpu_charge.lock 2>/dev/null
+
+exit 0
