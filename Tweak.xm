@@ -434,6 +434,7 @@ static NSString *shortRadioTech(NSString *tech) {
 
 typedef id (*SBMsgSendErr1)(id, SEL, NSError **);
 typedef id (*SBMsgSendErr2)(id, SEL, id, NSError **);
+typedef void (*SBMsgSendErr3Obj)(id, SEL, id, id, NSError **);
 typedef void (*SBMsgSendAsyncCell)(id, SEL, id, void (^)(id info, NSError *error));
 
 // XPC 客户端复用（只创建一次）
@@ -684,6 +685,83 @@ static NSArray<NSDictionary *> *readMobileEquipmentInfo(void) {
         }
     } @catch (NSException *e) {}
     return out;
+}
+
+// ============================================================
+// 网络频段锁定（Band Selection）— iOS14+ CTBandInfo / setActiveBandInfo
+// 写操作需 com.apple.CommCenter.fine-grained 的 spi 授权；注入 SpringBoard
+// 时权限随宿主进程，失败时返回 NSError 由 UI 明示，不做“点了没反应”的假动作。
+// ============================================================
+
+// 取第 slot 张卡（1-based）的 subscription context
+static id ctContextForSlot(NSInteger slot) {
+    @try {
+        id client = ctXPCClient();
+        if (!client) return nil;
+        SBMsgSendErr1 call1 = (SBMsgSendErr1)objc_msgSend;
+        NSError *subErr = nil;
+        id subInfo = call1(client, @selector(getSubscriptionInfoWithError:), &subErr);
+        if (!subInfo) return nil;
+        NSArray *contexts = [subInfo valueForKey:@"subscriptions"];
+        if (![contexts isKindOfClass:[NSArray class]] || contexts.count == 0) return nil;
+        NSInteger idx = slot - 1;
+        if (idx < 0 || idx >= (NSInteger)contexts.count) return nil;
+        return contexts[idx];
+    } @catch (NSException *e) { return nil; }
+}
+
+// 读取某卡 CTBandInfo（fSupportedBands 设备支持 / fActiveBands 当前启用）
+static id readBandInfoForSlot(NSInteger slot, NSError **outErr) {
+    @try {
+        id client = ctXPCClient();
+        id context = ctContextForSlot(slot);
+        if (!client || !context) {
+            if (outErr) *outErr = [NSError errorWithDomain:@"SBCPU" code:-100
+                userInfo:@{NSLocalizedDescriptionKey:@"无法获取该卡槽基带上下文（无 SIM 卡？）"}];
+            return nil;
+        }
+        if (![client respondsToSelector:@selector(getBandInfo:error:)]) {
+            if (outErr) *outErr = [NSError errorWithDomain:@"SBCPU" code:-101
+                userInfo:@{NSLocalizedDescriptionKey:@"当前系统不支持频段读取接口（需 iOS 14+）"}];
+            return nil;
+        }
+        SBMsgSendErr2 call2 = (SBMsgSendErr2)objc_msgSend;
+        NSError *err = nil;
+        id bandInfo = call2(client, @selector(getBandInfo:error:), context, &err);
+        if (outErr) *outErr = err;
+        return bandInfo;
+    } @catch (NSException *e) {
+        if (outErr) *outErr = [NSError errorWithDomain:@"SBCPU" code:-102
+            userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"读取频段异常: %@", e.name]}];
+        return nil;
+    }
+}
+
+// 下发活动频段（锁定）。bandInfo 须为读取对象修改 fActiveBands 后的同一实例
+static BOOL writeActiveBandInfoForSlot(NSInteger slot, id bandInfo, NSError **outErr) {
+    @try {
+        id client = ctXPCClient();
+        id context = ctContextForSlot(slot);
+        if (!client || !context || !bandInfo) {
+            if (outErr) *outErr = [NSError errorWithDomain:@"SBCPU" code:-200
+                userInfo:@{NSLocalizedDescriptionKey:@"下发失败：上下文或频段数据缺失"}];
+            return NO;
+        }
+        if (![client respondsToSelector:@selector(setActiveBandInfo:bands:error:)]) {
+            if (outErr) *outErr = [NSError errorWithDomain:@"SBCPU" code:-201
+                userInfo:@{NSLocalizedDescriptionKey:@"当前系统不支持频段设置接口"}];
+            return NO;
+        }
+        SBMsgSendErr3Obj call3 = (SBMsgSendErr3Obj)objc_msgSend;
+        NSError *err = nil;
+        call3(client, @selector(setActiveBandInfo:bands:error:), context, bandInfo, &err);
+        if (outErr) *outErr = err;
+        return (err == nil);
+    } @catch (NSException *e) {
+        if (outErr) *outErr = [NSError errorWithDomain:@"SBCPU" code:-202
+            userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"下发异常: %@ - %@", e.name, e.reason ?: @""]}];
+        return NO;
+    }
 }
 
 // 组装浮窗底部信号行：运营商 dBm 频段 制式（双卡，去格画），全部真实每秒刷新
@@ -4140,6 +4218,10 @@ return self;
         }
         if (drows.count > 1) [secs addObject:@{@"title": @"设备基带信息", @"rows": drows}];
 
+        // 网络工具入口
+        [secs addObject:@{@"title": @"网络工具",
+                          @"rows": @[@{@"k": @"设置网络频段 (Beta)", @"v": @"锁定 5G/4G/3G/2G 频段"}]}];
+
         self.sections = secs;
         [self.tableView reloadData];
     } @catch (NSException *e) {}
@@ -4159,6 +4241,7 @@ return self;
     UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:@"SBCell"];
     if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"SBCell"];
     NSDictionary *row = self.sections[ip.section][@"rows"][ip.row];
+    cell.accessoryType = UITableViewCellAccessoryNone;
     cell.textLabel.text = row[@"k"];
     cell.detailTextLabel.text = row[@"v"];
     cell.textLabel.font = [UIFont systemFontOfSize:14];
@@ -4170,7 +4253,395 @@ return self;
     cell.detailTextLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     cell.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+
+    // 网络工具入口行
+    if ([self.sections[ip.section][@"title"] isEqual:@"网络工具"]) {
+        cell.textLabel.textColor = [UIColor labelColor];
+        cell.textLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+        cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+        cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+    }
     return cell;
+}
+
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    if (![self.sections[ip.section][@"title"] isEqual:@"网络工具"]) return;
+    @try {
+        Class cls = NSClassFromString(@"SBCPUBandSelectController");
+        if (!cls) return;
+        UIViewController *vc = [[cls alloc] init];
+        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
+        nav.modalPresentationStyle = UIModalPresentationPageSheet;
+        [self presentViewController:nav animated:YES completion:nil];
+    } @catch (NSException *e) {}
+}
+
+@end
+
+#pragma mark - 网络频段锁定（Beta）
+
+// RAT 分组（判定顺序与参考源码一致；返回值同时是 UI 排序：NR0 LTE1 WCDMA2 TD3 CDMA4 GSM5）
+static NSInteger bandRatGroup(NSString *key) {
+    NSString *k = key.uppercaseString;
+    if ([k containsString:@"LTE"]) return 1;
+    if ([k containsString:@"NR"]) return 0;
+    if ([k containsString:@"GSM"]) return 5;
+    if ([k containsString:@"UTRAN"]) return 2;
+    if ([k containsString:@"TDSCDMA"]) return 3;
+    if ([k containsString:@"CDMA"]) return 4;
+    return 6;
+}
+static NSString *bandRatDisplayName(NSInteger g) {
+    switch (g) {
+        case 0: return @"5G (NR)";
+        case 1: return @"4G (LTE)";
+        case 2: return @"3G (UMTS/WCDMA)";
+        case 3: return @"3G (TD-SCDMA)";
+        case 4: return @"3G (CDMA)";
+        case 5: return @"2G (GSM)";
+        default: return @"其它";
+    }
+}
+static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
+    switch (g) {
+        case 0: return [NSString stringWithFormat:@"n%ld", (long)v];
+        case 1: return [NSString stringWithFormat:@"B%ld", (long)v];
+        case 3: return [NSString stringWithFormat:@"TD %ld", (long)v];
+        case 4: return [NSString stringWithFormat:@"BC%ld", (long)v];
+        default: return [NSString stringWithFormat:@"%ld", (long)v];
+    }
+}
+
+@interface SBCPUBandSelectController : UITableViewController
+@property (nonatomic, assign) NSInteger currentSlot;
+@property (nonatomic, assign) NSInteger slotCount;
+@property (nonatomic, strong) id originalBandInfo;
+@property (nonatomic, strong) NSMutableArray<NSString *> *ratKeys;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSArray<NSNumber *> *> *supportedMap;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableSet<NSNumber *> *> *activeMap;
+@property (nonatomic, copy) NSString *loadError;
+@property (nonatomic, strong) UISegmentedControl *slotSeg;
+@end
+
+@implementation SBCPUBandSelectController
+
+- (instancetype)init {
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
+    if (self) {
+        _currentSlot = 1;
+        _ratKeys = [NSMutableArray array];
+        _supportedMap = [NSMutableDictionary dictionary];
+        _activeMap = [NSMutableDictionary dictionary];
+    }
+    return self;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"网络频段锁定";
+    self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeBand)];
+
+    _slotCount = (NSInteger)readAllSimSignals().count;
+    if (_slotCount < 1) _slotCount = 1;
+    NSMutableArray *items = [NSMutableArray array];
+    for (NSInteger i = 1; i <= _slotCount; i++) [items addObject:[NSString stringWithFormat:@"卡%ld", (long)i]];
+    _slotSeg = [[UISegmentedControl alloc] initWithItems:items];
+    _slotSeg.selectedSegmentIndex = 0;
+    [_slotSeg addTarget:self action:@selector(slotChanged:) forControlEvents:UIControlEventValueChanged];
+    _slotSeg.frame = CGRectMake(0, 0, 150, 32);
+    self.navigationItem.titleView = _slotSeg;
+
+    [self loadSlotData];
+}
+
+- (void)closeBand { [self dismissViewControllerAnimated:YES completion:nil]; }
+
+- (void)slotChanged:(UISegmentedControl *)seg {
+    _currentSlot = seg.selectedSegmentIndex + 1;
+    [self loadSlotData];
+}
+
+- (void)loadSlotData {
+    _loadError = nil;
+    [_ratKeys removeAllObjects];
+    [_supportedMap removeAllObjects];
+    [_activeMap removeAllObjects];
+    _originalBandInfo = nil;
+
+    NSError *err = nil;
+    id info = readBandInfoForSlot(_currentSlot, &err);
+    if (!info) {
+        _loadError = err.localizedDescription ?: @"读取频段失败（可能无基带控制权限）";
+        [self showErrorEmpty];
+        [self.tableView reloadData];
+        return;
+    }
+    _originalBandInfo = info;
+
+    NSDictionary *supported = [info valueForKey:@"fSupportedBands"];
+    NSDictionary *active = [info valueForKey:@"fActiveBands"];
+
+    // 仅展示设备支持、且属于已知制式的 RAT
+    NSMutableArray *keys = [NSMutableArray array];
+    if ([supported isKindOfClass:[NSDictionary class]]) {
+        for (NSString *key in supported.allKeys) {
+            NSArray *vals = supported[key];
+            if (![vals isKindOfClass:[NSArray class]] || vals.count == 0) continue;
+            if (bandRatGroup(key) >= 6) continue; // 未知制式不展示，保存时原样保留
+            [keys addObject:key];
+        }
+    }
+    [keys sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+        NSInteger ga = bandRatGroup(a), gb = bandRatGroup(b);
+        if (ga != gb) return ga < gb ? NSOrderedAscending : NSOrderedDescending;
+        return [a compare:b];
+    }];
+    [_ratKeys setArray:keys];
+
+    for (NSString *key in keys) {
+        NSArray *raw = supported[key];
+        NSMutableArray<NSNumber *> *nums = [NSMutableArray array];
+        for (id v in raw) if ([v isKindOfClass:[NSNumber class]]) [nums addObject:v];
+        [nums sortUsingSelector:@selector(compare:)];
+        _supportedMap[key] = nums;
+
+        NSMutableSet<NSNumber *> *sel = [NSMutableSet set];
+        NSArray *act = [active isKindOfClass:[NSDictionary class]] ? active[key] : nil;
+        if ([act isKindOfClass:[NSArray class]]) {
+            for (id v in act) if ([v isKindOfClass:[NSNumber class]]) [sel addObject:v];
+        }
+        _activeMap[key] = sel;
+    }
+    self.tableView.backgroundView = nil;
+    [self.tableView reloadData];
+}
+
+- (void)showErrorEmpty {
+    UILabel *lab = [[UILabel alloc] initWithFrame:CGRectMake(24, 120, self.view.bounds.size.width - 48, 200)];
+    lab.numberOfLines = 0;
+    lab.textAlignment = NSTextAlignmentCenter;
+    lab.font = [UIFont systemFontOfSize:15];
+    lab.textColor = [UIColor secondaryLabelColor];
+    lab.text = [NSString stringWithFormat:@"无法读取/设置网络频段\n\n%@\n\n若提示权限错误，说明当前注入环境缺少\nCommCenter 基带控制授权（SPI）。", _loadError ?: @""];
+    self.tableView.backgroundView = lab;
+}
+
+#pragma mark - Table
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return _loadError ? 0 : _ratKeys.count + 1; }
+
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
+    if (section < (NSInteger)_ratKeys.count) return 1;
+    return 2; // 保存 / 恢复默认
+}
+
+- (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
+    if (section < (NSInteger)_ratKeys.count) return bandRatDisplayName(bandRatGroup(_ratKeys[section]));
+    return nil;
+}
+
+- (CGFloat)tableView:(UITableView *)tv heightForRowAtIndexPath:(NSIndexPath *)ip {
+    if (ip.section < (NSInteger)_ratKeys.count) {
+        NSArray *bands = _supportedMap[_ratKeys[ip.section]];
+        NSInteger cols = 4;
+        NSInteger rows = (bands.count + cols - 1) / cols;
+        return rows * 46.0 + 14;
+    }
+    return 50;
+}
+
+- (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)section {
+    if (section >= (NSInteger)_ratKeys.count) return nil;
+    UIView *hv = [[UIView alloc] initWithFrame:CGRectMake(0, 0, tv.bounds.size.width, 36)];
+    UILabel *t = [[UILabel alloc] initWithFrame:CGRectMake(16, 6, 200, 24)];
+    t.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    t.textColor = [UIColor secondaryLabelColor];
+    t.text = bandRatDisplayName(bandRatGroup(_ratKeys[section]));
+    [hv addSubview:t];
+    UIButton *all = [UIButton buttonWithType:UIButtonTypeSystem];
+    all.frame = CGRectMake(tv.bounds.size.width - 150, 6, 60, 24);
+    [all setTitle:@"全选" forState:UIControlStateNormal];
+    all.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    all.tag = section;
+    [all addTarget:self action:@selector(selectAllBands:) forControlEvents:UIControlEventTouchUpInside];
+    [hv addSubview:all];
+    UIButton *none = [UIButton buttonWithType:UIButtonTypeSystem];
+    none.frame = CGRectMake(tv.bounds.size.width - 86, 6, 70, 24);
+    [none setTitle:@"全不选" forState:UIControlStateNormal];
+    none.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    none.tag = section;
+    [none addTarget:self action:@selector(selectNoBands:) forControlEvents:UIControlEventTouchUpInside];
+    [hv addSubview:none];
+    return hv;
+}
+
+- (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)section {
+    return (section < (NSInteger)_ratKeys.count) ? 38 : 18;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    if (ip.section < (NSInteger)_ratKeys.count) {
+        UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:@"bandgrid"];
+        if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"bandgrid"];
+        for (UIView *v in cell.contentView.subviews.copy) [v removeFromSuperview];
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        cell.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+
+        NSString *key = _ratKeys[ip.section];
+        NSInteger g = bandRatGroup(key);
+        NSArray<NSNumber *> *bands = _supportedMap[key];
+        NSSet<NSNumber *> *sel = _activeMap[key];
+        NSInteger cols = 4;
+        CGFloat w = cell.contentView.bounds.size.width;
+        if (w < 10) w = tv.bounds.size.width - 32;
+        CGFloat colW = w / cols;
+        NSInteger idx = 0;
+        for (NSNumber *b in bands) {
+            NSInteger r = idx / cols, c = idx % cols;
+            UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+            btn.frame = CGRectMake(c * colW, 7 + r * 46, colW, 40);
+            btn.tag = ip.section * 10000 + b.integerValue;
+            BOOL on = [sel containsObject:b];
+            [btn setTitle:bandItemDisplayName(g, b.integerValue) forState:UIControlStateNormal];
+            [btn setImage:[UIImage systemImageNamed:on ? @"checkmark.circle.fill" : @"circle"] forState:UIControlStateNormal];
+            btn.tintColor = on ? [UIColor systemBlueColor] : [UIColor tertiaryLabelColor];
+            [btn setTitleColor:on ? [UIColor labelColor] : [UIColor secondaryLabelColor] forState:UIControlStateNormal];
+            btn.titleLabel.font = [UIFont monospacedDigitSystemFontOfSize:14 weight:on ? UIFontWeightSemibold : UIFontWeightRegular];
+            btn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
+            btn.semanticContentAttribute = UISemanticContentAttributeForceLeftToRight;
+            [btn addTarget:self action:@selector(toggleBand:) forControlEvents:UIControlEventTouchUpInside];
+            [cell.contentView addSubview:btn];
+            idx++;
+        }
+        return cell;
+    }
+
+    // 操作区
+    UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:@"bandaction"];
+    if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"bandaction"];
+    cell.textLabel.textAlignment = NSTextAlignmentCenter;
+    if (ip.row == 0) {
+        cell.textLabel.text = @"保存并应用频段锁定";
+        cell.textLabel.textColor = [UIColor systemBlueColor];
+    } else {
+        cell.textLabel.text = @"恢复默认（启用全部支持频段）";
+        cell.textLabel.textColor = [UIColor systemRedColor];
+    }
+    cell.textLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    cell.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    if (ip.section == (NSInteger)_ratKeys.count) {
+        if (ip.row == 0) [self saveBands];
+        else [self confirmRestore];
+    }
+}
+
+#pragma mark - 勾选
+
+- (void)toggleBand:(UIButton *)btn {
+    NSInteger section = btn.tag / 10000;
+    NSInteger band = btn.tag % 10000;
+    if (section >= (NSInteger)_ratKeys.count) return;
+    NSString *key = _ratKeys[section];
+    NSMutableSet *set = _activeMap[key];
+    NSNumber *b = @(band);
+    if ([set containsObject:b]) [set removeObject:b]; else [set addObject:b];
+    BOOL on = [set containsObject:b];
+    [btn setImage:[UIImage systemImageNamed:on ? @"checkmark.circle.fill" : @"circle"] forState:UIControlStateNormal];
+    btn.tintColor = on ? [UIColor systemBlueColor] : [UIColor tertiaryLabelColor];
+    [btn setTitleColor:on ? [UIColor labelColor] : [UIColor secondaryLabelColor] forState:UIControlStateNormal];
+    btn.titleLabel.font = [UIFont monospacedDigitSystemFontOfSize:14 weight:on ? UIFontWeightSemibold : UIFontWeightRegular];
+}
+
+- (void)selectAllBands:(UIButton *)btn {
+    NSString *key = _ratKeys[btn.tag];
+    [_activeMap[key] addObjectsFromArray:_supportedMap[key]];
+    [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:btn.tag] withRowAnimation:UITableViewRowAnimationNone];
+}
+- (void)selectNoBands:(UIButton *)btn {
+    NSString *key = _ratKeys[btn.tag];
+    [_activeMap[key] removeAllObjects];
+    [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:btn.tag] withRowAnimation:UITableViewRowAnimationNone];
+}
+
+#pragma mark - 下发
+
+- (void)saveBands {
+    if (!_originalBandInfo) { [self alertTitle:@"无法保存" msg:@"频段数据未加载"]; return; }
+    @try {
+        NSMutableDictionary *updated = nil;
+        id origActive = [_originalBandInfo valueForKey:@"fActiveBands"];
+        if ([origActive respondsToSelector:@selector(mutableCopy)]) {
+            updated = [origActive mutableCopy];
+        }
+        if (!updated) updated = [NSMutableDictionary dictionary];
+        // 仅覆盖设备支持的 RAT；其它/未知制式原样保留，避免误删
+        for (NSString *key in _supportedMap.allKeys) {
+            NSSet *sel = _activeMap[key];
+            NSMutableArray *vals = [NSMutableArray arrayWithArray:sel.allObjects];
+            [vals sortUsingSelector:@selector(compare:)];
+            updated[key] = vals;
+        }
+        [_originalBandInfo setValue:updated forKey:@"fActiveBands"];
+        NSError *err = nil;
+        BOOL ok = writeActiveBandInfoForSlot(_currentSlot, _originalBandInfo, &err);
+        if (ok) {
+            [self alertTitle:@"已应用" msg:@"频段锁定已下发到基带。若信号异常可点“恢复默认”。"];
+            [self performSelector:@selector(loadSlotData) withObject:nil afterDelay:0.6];
+        } else {
+            [self alertTitle:@"下发失败" msg:[NSString stringWithFormat:@"%@（错误码 %ld）",
+                err.localizedDescription ?: @"基带拒绝了该设置", (long)err.code]];
+        }
+    } @catch (NSException *e) {
+        [self alertTitle:@"异常" msg:e.reason ?: e.name];
+    }
+}
+
+- (void)confirmRestore {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"恢复默认频段"
+        message:@"将启用本机支持的全部频段（解除锁定），确定？" preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"恢复" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *_) {
+        [self restoreDefault];
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+- (void)restoreDefault {
+    if (!_originalBandInfo) { [self alertTitle:@"无法恢复" msg:@"频段数据未加载"]; return; }
+    @try {
+        id supported = [_originalBandInfo valueForKey:@"fSupportedBands"];
+        NSMutableDictionary *copy = [supported respondsToSelector:@selector(mutableCopy)] ? [supported mutableCopy] : nil;
+        [_originalBandInfo setValue:(copy ?: supported) forKey:@"fActiveBands"];
+        NSError *err = nil;
+        BOOL ok = writeActiveBandInfoForSlot(_currentSlot, _originalBandInfo, &err);
+        if (ok) {
+            [self alertTitle:@"已恢复" msg:@"已启用全部支持频段。"];
+            [self performSelector:@selector(loadSlotData) withObject:nil afterDelay:0.6];
+        } else {
+            [self alertTitle:@"恢复失败" msg:[NSString stringWithFormat:@"%@（错误码 %ld）",
+                err.localizedDescription ?: @"基带拒绝", (long)err.code]];
+        }
+    } @catch (NSException *e) {
+        [self alertTitle:@"异常" msg:e.reason ?: e.name];
+    }
+}
+
+- (void)alertTitle:(NSString *)title msg:(NSString *)msg {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:title message:msg
+                                                        preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 @end

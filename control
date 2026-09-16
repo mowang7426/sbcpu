@@ -1,9 +1,9 @@
 Package: com.sbcpu.floating
 Name: SB CPU Floating
-Version: 4.19.0
+Version: 4.20.0
 Architecture: iphoneos-arm64
 Maintainer: MoWang
 Author: MoWang
-Description:浮窗信号行升级：去掉格数字符画，改为运营商简称+dBm+频段(n78/B3)+5G SA/NSA+漫游标记，数据卡打点；长按详情新增蜂窝详情页，含信号质量RSRQ/SNR、基站频段/频宽/ARFCN/PCI/小区ID/TAC/MCC-MNC、双卡网络状态及IMEI/MEID/EID基带信息，全部真实XPC读取
+Description:新增网络频段锁定(Beta)：长按详情-蜂窝详情-网络工具进入，按卡勾选5G NR/4G LTE/3G/2G频段并真实下发基带(setActiveBandInfo)，支持全选/全不选、保存应用、恢复默认，无基带SPI权限时明示错误；另含浮窗信号行增强(运营商+dBm+频段+SA/NSA)与蜂窝详情页(信号质量/基站参数/IMEI)
 Section: Tweaks
 Depends: mobilesubstrate, preferenceloader
