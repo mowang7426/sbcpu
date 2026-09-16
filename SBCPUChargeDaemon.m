@@ -1,226 +1,37 @@
-// SBCPUChargeDaemon — SBCPUFloating 充电控制 root daemon
-// 以 root 运行（launchd + ldid 签名带 AppleSMC entitlements），
-// 监听 unix socket，替 SpringBoard 执行 AppleSMC CH0C/CH0I 写入。
-// 架构参照 Battman：独立 daemon 才有权打开 AppleSMC。
+// SBCPUChargeDaemon.m — SBCPU 充电控制 root daemon（Charge Engine V1）
+// 架构：launchd 以 root 拉起 → AppleSMC(带 entitlements) + IOPMPowerSource 事件
+//       → SBCPUChargeEngine 状态机 → 写 CH0C/CH0I。
+// 监听 unix socket 供 SpringBoard(Tweak) 下发配置/手动控制/查询。
+// 防多开：flock 锁文件。事件驱动，不做每秒轮询。
 
 #import <Foundation/Foundation.h>
 #import <IOKit/IOKitLib.h>
 #import <sys/socket.h>
 #import <sys/un.h>
 #import <sys/stat.h>
+#import <sys/file.h>
+#import <pwd.h>
 #import <errno.h>
 #import <signal.h>
 #import <unistd.h>
 #import <fcntl.h>
 #import <pthread.h>
+#include "SBCPUChargeProtocol.h"
+#include "SBCPUChargeSMC.h"
+#include "SBCPUChargePowerSource.h"
+#include "SBCPUChargeEngine.h"
 
-// ================= SMC 层（与 Tweak.xm 同构） =================
-typedef struct SMCKeyInfoData {
-    uint32_t dataSize;
-    uint32_t dataType;
-    uint8_t dataAttributes;
-} SMCKeyInfoData;
-
-typedef struct SMCParamStruct {
-    uint32_t key;
-    struct SMCParam {
-        uint8_t vers;
-        uint8_t pLimitData[16];
-        SMCKeyInfoData keyInfo;
-        uint8_t result;
-        uint8_t status;
-        uint8_t data8;
-        uint32_t data32;
-        unsigned char bytes[120];
-    } param;
-} SMCParamStruct;
-
-static io_connect_t gSMCConn = 0;
-
-enum {
-    kSMCUserClientOpen,
-    kSMCUserClientClose,
-    kSMCHandleYPCEvent,
-    kSMCReadKey = 5,
-    kSMCWriteKey = 6,
-    kSMCGetKeyInfo = 9
-};
-
-static IOReturn smc_init(void) {
-    if (gSMCConn != 0) return kIOReturnSuccess;
-    mach_port_t masterPort = 0;
-    if (IOMasterPort(MACH_PORT_NULL, &masterPort) != kIOReturnSuccess)
-        return kIOReturnNotOpen;
-    io_service_t service = IOServiceGetMatchingService(masterPort, IOServiceMatching("AppleSMC"));
-    if (service == IO_OBJECT_NULL)
-        return kIOReturnNotFound;
-    IOReturn result = IOServiceOpen(service, mach_task_self(), 0, &gSMCConn);
-    IOObjectRelease(service);
-    if (result != kIOReturnSuccess) {
-        gSMCConn = 0;
-        return result;
-    }
-    return kIOReturnSuccess;
-}
-
-static IOReturn smc_call(int index, SMCParamStruct *input, SMCParamStruct *output) {
-    if (gSMCConn == 0) {
-        IOReturn r = smc_init();
-        if (r != kIOReturnSuccess) return r;
-    }
-    size_t inSize = sizeof(SMCParamStruct);
-    size_t outSize = sizeof(SMCParamStruct);
-    return IOConnectCallStructMethod(gSMCConn, index, input, inSize, output, &outSize);
-}
-
-static IOReturn smc_get_keyinfo(uint32_t key, SMCKeyInfoData *keyInfo) {
-    SMCParamStruct in = {0};
-    SMCParamStruct out = {0};
-    in.key = key;
-    in.param.data8 = kSMCGetKeyInfo;
-    IOReturn r = smc_call(kSMCHandleYPCEvent, &in, &out);
-    if (r == kIOReturnSuccess && out.param.keyInfo.dataSize == 0)
-        r = kIOReturnError;
-    if (r == kIOReturnSuccess && keyInfo)
-        *keyInfo = out.param.keyInfo;
-    return r;
-}
-
-static IOReturn smc_read(uint32_t key, void *bytes, int32_t *size) {
-    SMCParamStruct in = {0};
-    SMCParamStruct out = {0};
-    in.key = key;
-    IOReturn r = smc_get_keyinfo(key, &in.param.keyInfo);
-    if (r != kIOReturnSuccess) return r;
-    if (*size < (int32_t)in.param.keyInfo.dataSize)
-        *size = (int32_t)in.param.keyInfo.dataSize;
-    in.param.data8 = kSMCReadKey;
-    r = smc_call(kSMCHandleYPCEvent, &in, &out);
-    if (r != kIOReturnSuccess) return r;
-    memcpy(bytes, out.param.bytes, *size);
-    return kIOReturnSuccess;
-}
-
-static IOReturn smc_write(uint32_t key, void *bytes, uint32_t size) {
-    SMCParamStruct in = {0};
-    SMCParamStruct out = {0};
-    IOReturn r = smc_get_keyinfo(key, &in.param.keyInfo);
-    if (r != kIOReturnSuccess) return r;
-    if (in.param.keyInfo.dataSize > size) return -1;
-    in.param.data8 = kSMCWriteKey;
-    in.key = key;
-    memcpy(in.param.bytes, bytes, in.param.keyInfo.dataSize);
-    return smc_call(kSMCHandleYPCEvent, &in, &out);
-}
-
-// CH0C=停充(保留AC), CH0I=阻止外部供电；写前安全检查（外部连接 + VBUS）
-static IOReturn set_charge_block(BOOL inhibit, BOOL overrideOBC) {
-    uint8_t chce = 0;
-    int32_t sz = 1;
-    if (smc_read('CHCE', &chce, &sz) != kIOReturnSuccess) return kIOReturnIOError;
-    if (!chce) return kIOReturnNotReady;
-
-    uint32_t ch0r = 0;
-    int32_t sz4 = 4;
-    if (smc_read('CH0R', &ch0r, &sz4) == kIOReturnSuccess && (ch0r & (1 << 1)))
-        return kIOReturnNotReady;
-
-    uint8_t cur = 0;
-    int32_t sz1 = 1;
-    if (smc_read('CH0C', &cur, &sz1) != kIOReturnSuccess) return kIOReturnIOError;
-    BOOL obcTaken = NO;
-    if (cur & (1 << 1)) {
-        if (overrideOBC) {
-            smc_write('CH0B', &inhibit, 1);
-        } else {
-            obcTaken = YES;
-        }
-    }
-    if (inhibit != (cur & 1)) {
-        IOReturn r = smc_write('CH0C', &inhibit, 1);
-        if (r != kIOReturnSuccess) return r;
-    }
-    return obcTaken ? kIOReturnCannotLock : kIOReturnSuccess;
-}
-
-static IOReturn set_power_block(BOOL inhibit, BOOL overrideOBC) {
-    uint8_t chce = 0;
-    int32_t sz = 1;
-    if (smc_read('CHCE', &chce, &sz) != kIOReturnSuccess) return kIOReturnIOError;
-    if (!chce) return kIOReturnNotReady;
-
-    uint32_t ch0r = 0;
-    int32_t sz4 = 4;
-    if (smc_read('CH0R', &ch0r, &sz4) == kIOReturnSuccess && (ch0r & (1 << 1)))
-        return kIOReturnNotReady;
-
-    uint8_t cur = 0;
-    int32_t sz1 = 1;
-    if (smc_read('CH0I', &cur, &sz1) != kIOReturnSuccess) return kIOReturnIOError;
-    if (cur & (1 << 1)) {
-        if (!overrideOBC) return kIOReturnCannotLock;
-    }
-    if (inhibit != (cur & 1)) {
-        IOReturn r = smc_write('CH0I', &inhibit, 1);
-        if (r != kIOReturnSuccess) return r;
-    }
-    return kIOReturnSuccess;
-}
-
-static BOOL get_charge_blocked(void) {
-    uint8_t v = 0;
-    int32_t sz = 1;
-    if (smc_read('CH0C', &v, &sz) == kIOReturnSuccess)
-        return (v & 1) != 0;
-    return NO;
-}
-
-static BOOL get_power_blocked(void) {
-    uint8_t v = 0;
-    int32_t sz = 1;
-    if (smc_read('CH0I', &v, &sz) == kIOReturnSuccess)
-        return (v & 1) != 0;
-    return NO;
-}
-
-// ================= Socket 协议 =================
-#define SB_MAGIC 0x53424350 // 'SBCP'
-typedef struct {
-    uint32_t magic;
-    uint8_t  cmd;    // 1=setCharge 2=setPower 3=getCharge 4=getPower 5=ping
-    uint8_t  value;  // set 时 0/1
-    uint16_t pad;
-} sb_cmd_t;
-
-typedef struct {
-    uint32_t magic;
-    int32_t  result; // 0 成功，否则 IOReturn 负值/错误码
-    uint8_t  value;  // get 时返回状态
-    uint8_t  pad[3];
-} sb_resp_t;
-
-enum {
-    SB_CMD_SET_CHARGE = 1,
-    SB_CMD_SET_POWER  = 2,
-    SB_CMD_GET_CHARGE = 3,
-    SB_CMD_GET_POWER  = 4,
-    SB_CMD_PING       = 5
-};
-
-#define SB_SOCKET_PATH "/var/mobile/Library/Preferences/sbcpu_charge.sock"
-
+// ================= 日志（写文件便于用户诊断） =================
 static void sb_log(NSString *msg) {
     NSLog(@"[SBCPUChargeDaemon] %@", msg);
-    // 同时写文件，便于用户诊断（/var/mobile 对 mobile/root 都可写）
     @try {
-        NSString *line = [NSString stringWithFormat:@"[%@] %@\n",
-            [NSDate date], msg];
-        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:@"/var/mobile/Library/Preferences/sbcpu_charge.log"];
+        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:@SB_DAEMON_LOG_PATH];
         if (!fh) {
-            [[NSFileManager defaultManager] createFileAtPath:@"/var/mobile/Library/Preferences/sbcpu_charge.log" contents:nil attributes:nil];
-            fh = [NSFileHandle fileHandleForWritingAtPath:@"/var/mobile/Library/Preferences/sbcpu_charge.log"];
+            [[NSFileManager defaultManager] createFileAtPath:@SB_DAEMON_LOG_PATH contents:nil attributes:nil];
+            fh = [NSFileHandle fileHandleForWritingAtPath:@SB_DAEMON_LOG_PATH];
         }
         if (fh) {
+            NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], msg];
             [fh seekToEndOfFile];
             [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
             [fh closeFile];
@@ -228,6 +39,33 @@ static void sb_log(NSString *msg) {
     } @catch (NSException *e) {}
 }
 
+// ================= 防多开：flock 锁 =================
+static int gLockFD = -1;
+static bool acquire_singleton(void) {
+    // 确保目录存在
+    [[NSFileManager defaultManager] createDirectoryAtPath:@"/var/mobile/Library/Preferences"
+                              withIntermediateDirectories:YES attributes:nil error:nil];
+    int fd = open(SB_DAEMON_LOCK_PATH, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        sb_log([NSString stringWithFormat:@"open lock failed: %s", strerror(errno)]);
+        return false;
+    }
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        sb_log(@"another daemon instance is running; exiting");
+        close(fd);
+        return false;
+    }
+    gLockFD = fd;
+    return true;
+}
+
+// ================= 电池事件 → 引擎 =================
+static void power_event_cb(int pct, bool charging, bool wireless) {
+    // 事件到达即决策（不依赖浮窗/SpringBoard）
+    sb_engine_decide(pct, charging, wireless);
+}
+
+// ================= Socket 命令处理 =================
 static void handle_client(int fd) {
     sb_cmd_t cmd;
     ssize_t n = read(fd, &cmd, sizeof(cmd));
@@ -235,42 +73,133 @@ static void handle_client(int fd) {
 
     sb_resp_t resp = {0};
     resp.magic = SB_MAGIC;
-    resp.result = -1;
+    resp.result = SB_RESULT_IO_ERROR;
     resp.value = 0;
 
     if (cmd.magic != SB_MAGIC) {
-        resp.result = kIOReturnBadArgument;
-    } else {
-        switch (cmd.cmd) {
-            case SB_CMD_SET_CHARGE: {
-                resp.result = set_charge_block(cmd.value != 0, NO);
-                resp.value = (uint8_t)get_charge_blocked();
-                break;
-            }
-            case SB_CMD_SET_POWER: {
-                resp.result = set_power_block(cmd.value != 0, NO);
-                resp.value = (uint8_t)get_power_blocked();
-                break;
-            }
-            case SB_CMD_GET_CHARGE: {
-                resp.result = 0;
-                resp.value = (uint8_t)get_charge_blocked();
-                break;
-            }
-            case SB_CMD_GET_POWER: {
-                resp.result = 0;
-                resp.value = (uint8_t)get_power_blocked();
-                break;
-            }
-            case SB_CMD_PING: {
-                resp.result = 0;
-                resp.value = (gSMCConn != 0);
-                break;
-            }
-            default:
-                resp.result = kIOReturnBadArgument;
-                break;
+        resp.result = SB_RESULT_IO_ERROR;
+        write(fd, &resp, sizeof(resp));
+        return;
+    }
+
+    switch (cmd.cmd) {
+        case SB_CMD_PING: {
+            resp.result = SB_RESULT_OK;
+            resp.value = sb_engine_smc_available() ? 1 : 0;
+            break;
         }
+        case SB_CMD_SET_CHARGE: { // 手动阻止充电
+            int r = sb_engine_manual_charge_block(cmd.value != 0);
+            resp.result = r;
+            resp.value = sb_engine_charge_blocked() ? 1 : 0;
+            break;
+        }
+        case SB_CMD_SET_POWER: { // 手动阻止外部供电
+            int r = sb_engine_manual_power_block(cmd.value != 0);
+            resp.result = r;
+            resp.value = sb_engine_power_blocked() ? 1 : 0;
+            break;
+        }
+        case SB_CMD_GET_CHARGE: {
+            resp.result = SB_RESULT_OK;
+            resp.value = sb_engine_charge_blocked() ? 1 : 0;
+            break;
+        }
+        case SB_CMD_GET_POWER: {
+            resp.result = SB_RESULT_OK;
+            resp.value = sb_engine_power_blocked() ? 1 : 0;
+            break;
+        }
+        case SB_CMD_SET_LIMITS: {
+            // 读取载荷并写入偏好（engine 下次决策自动生效）
+            sb_limits_t lim;
+            ssize_t rn = read(fd, &lim, sizeof(lim));
+            if (rn != (ssize_t)sizeof(lim)) {
+                resp.result = SB_RESULT_IO_ERROR;
+                break;
+            }
+            NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:@SB_PREF_FILE];
+            if (!d) d = [NSMutableDictionary dictionary];
+            d[@"smartChargeEnable"] = @(lim.smartChargeEnabled ? YES : NO);
+            d[@"chargeLimitEnabled"] = @(lim.chargeLimitEnabled ? YES : NO);
+            d[@"smartChargeUpperLimit"] = @(lim.upperLimit);
+            d[@"smartChargeLowerLimit"] = @(lim.lowerLimit);
+            d[@"chargeKeepAC"] = @((lim.drainMode & 1) ? YES : NO);
+            d[@"chargeOverrideOBC"] = @((lim.drainMode & 2) ? YES : NO);
+            d[@"blockChargingEnable"] = @(lim.manualChargeBlock ? YES : NO);
+            d[@"blockPowerEnable"] = @(lim.manualPowerBlock ? YES : NO);
+            d[@"chargeScheduleEnabled"] = @(lim.scheduleEnabled ? YES : NO);
+            [d writeToFile:@SB_PREF_FILE atomically:YES];
+            sb_log([NSString stringWithFormat:@"limits set: smart=%d upper=%d lower=%d keepAC=%d obc=%d",
+                lim.smartChargeEnabled, lim.upperLimit, lim.lowerLimit,
+                (lim.drainMode & 1) != 0, (lim.drainMode & 2) != 0]);
+            // 立即重新决策
+            sb_engine_redecide();
+            resp.result = SB_RESULT_OK;
+            break;
+        }
+        case SB_CMD_GET_LIMITS: {
+            SBCPUChargeConfig cfg;
+            bool ok = sb_engine_load_config(&cfg);
+            resp.result = ok ? SB_RESULT_OK : SB_RESULT_IO_ERROR;
+            write(fd, &resp, sizeof(resp));
+            if (ok) {
+                sb_limits_t lim = {0};
+                lim.smartChargeEnabled = cfg.smartChargeEnabled;
+                lim.chargeLimitEnabled = cfg.chargeLimitEnabled;
+                lim.upperLimit = cfg.upperLimit;
+                lim.lowerLimit = cfg.lowerLimit;
+                lim.drainMode = (cfg.keepAC ? 1 : 0) | (cfg.overrideOBC ? 2 : 0);
+                lim.manualChargeBlock = cfg.manualChargeBlock;
+                lim.manualPowerBlock = cfg.manualPowerBlock;
+                lim.scheduleEnabled = cfg.scheduleEnabled;
+                write(fd, &lim, sizeof(lim));
+            }
+            return; // 已写 resp
+        }
+        case SB_CMD_REDECIDE: {
+            sb_engine_redecide();
+            resp.result = SB_RESULT_OK;
+            break;
+        }
+        case SB_CMD_GET_STATUS: {
+            sb_status_t st = {0};
+            st.engineState = (uint8_t)sb_engine_state();
+            st.batteryPercent = sb_engine_battery_percent();
+            st.chargeBlocked = sb_engine_charge_blocked();
+            st.powerBlocked = sb_engine_power_blocked();
+            st.daemonRunning = 1;
+            st.smcAvailable = sb_engine_smc_available();
+            st.charging = smc_external_connected();
+            st.wireless = sb_engine_wireless();
+            SBCPUChargeConfig cfg;
+            if (sb_engine_load_config(&cfg)) {
+                st.upperLimit = cfg.upperLimit;
+                st.lowerLimit = cfg.lowerLimit;
+            }
+            st.obcTaken = sb_engine_obc_taken();
+            resp.result = SB_RESULT_OK;
+            resp.value = st.engineState;
+            write(fd, &resp, sizeof(resp));
+            write(fd, &st, sizeof(st));
+            return;
+        }
+        case SB_CMD_STOP: {
+            sb_log(@"STOP requested; reset SMC and exit");
+            sb_engine_shutdown();
+            resp.result = SB_RESULT_OK;
+            write(fd, &resp, sizeof(resp));
+            // 清锁后退出
+            if (gLockFD >= 0) {
+                flock(gLockFD, LOCK_UN);
+                close(gLockFD);
+                gLockFD = -1;
+            }
+            exit(0);
+        }
+        default:
+            resp.result = SB_RESULT_IO_ERROR;
+            break;
     }
     write(fd, &resp, sizeof(resp));
 }
@@ -295,8 +224,11 @@ static void *socket_server(void *arg) {
         close(sfd);
         return NULL;
     }
-    // SpringBoard(mobile) 需要能连接
-    chmod(SB_SOCKET_PATH, 0666);
+    // root:mobile 0660；SpringBoard(mobile) 在 mobile 组，可连可读写
+    chmod(SB_SOCKET_PATH, 0660);
+    // 保险：确保 mobile 能连（0660 + mobile 组）
+    struct passwd *pw = getpwnam("mobile");
+    if (pw) chown(SB_SOCKET_PATH, 0, pw->pw_gid);
 
     if (listen(sfd, 8) < 0) {
         sb_log([NSString stringWithFormat:@"listen() failed: %s", strerror(errno)]);
@@ -324,26 +256,29 @@ int main(int argc, char *argv[]) {
     signal(SIGCHLD, SIG_IGN);
 
     @autoreleasepool {
-        sb_log(@"starting...");
+        if (!acquire_singleton()) return 0;
+        sb_log(@"===== SBCPUChargeDaemon starting =====");
 
-        IOReturn r = smc_init();
-        if (r != kIOReturnSuccess) {
-            sb_log([NSString stringWithFormat:@"AppleSMC open failed: 0x%x", r]);
-        } else {
-            sb_log(@"AppleSMC opened OK");
-        }
+        // 引擎初始化：打开 SMC + 读配置 + 启动即决策
+        sb_engine_init();
 
-        // 保持 SMC 连接常驻，同时开 socket 服务线程
+        // 事件驱动：订阅电池变化，通知源挂主 run loop
+        sb_power_subscribe(power_event_cb);
+
+        // socket 服务线程
         pthread_t tid;
         if (pthread_create(&tid, NULL, socket_server, NULL) != 0) {
             sb_log(@"failed to create socket thread");
         }
         pthread_detach(tid);
 
-        // 主线程常驻
-        for (;;) {
-            sleep(3600);
+        // 主线程跑 CFRunLoop：电源事件在此派发（iOS 无 IONotificationPortSetDispatchQueue）
+        CFRunLoopSourceRef src = sb_power_runloop_source();
+        if (src) {
+            CFRunLoopAddSource(CFRunLoopGetMain(), src, kCFRunLoopCommonModes);
         }
+        CFRunLoopRun(); // 常驻（launchd KeepAlive 兜底）
+        return 1; // 不可达：异常退出让 launchd 重启
     }
     return 0;
 }

@@ -1,0 +1,260 @@
+// SBCPUChargeSMC.m — AppleSMC 读写层实现（daemon 专用，root 运行）
+// 关键语义（Battman daemon.c 注释）：
+//   CH0C bit0: 电池充电开关（不影响 AC）；bit1: OBC 已接管充电
+//   CH0I bit0: 外部供电流入开关；bit1: OBC/无 VBUS
+//   CH0B: OBC managed charging；CH0J/CH0K: OBC managed AC
+//   CH0R bit1: No VBUS（无外部供电时禁止写）
+//   CHCE: ExternalConnected（也反映流入状态）
+// 写前安全检查 + 只在实际状态变化时写入（缓存），避免无谓 SMC 写入。
+
+#import <Foundation/Foundation.h>
+#import <IOKit/IOKitLib.h>
+#import <notify.h>
+#include "SBCPUChargeSMC.h"
+#include "SBCPUChargeProtocol.h"
+
+typedef struct SMCKeyInfoData {
+    uint32_t dataSize;
+    uint32_t dataType;
+    uint8_t  dataAttributes;
+} SMCKeyInfoData;
+
+typedef struct SMCParamStruct {
+    uint32_t key;
+    struct SMCParam {
+        uint8_t  vers;
+        uint8_t  pLimitData[16];
+        SMCKeyInfoData keyInfo;
+        uint8_t  result;
+        uint8_t  status;
+        uint8_t  data8;
+        uint32_t data32;
+        unsigned char bytes[120];
+    } param;
+} SMCParamStruct;
+
+enum {
+    kSMCUserClientOpen,
+    kSMCUserClientClose,
+    kSMCHandleYPCEvent,
+    kSMCReadKey = 5,
+    kSMCWriteKey = 6,
+    kSMCGetKeyInfo = 9
+};
+
+static io_connect_t gSMCConn = 0;
+// 写缓存：只有状态真正变化才写 SMC（Battman CH0CCache/CH0ICache 思路）
+static int gChargeCache = -1;
+static int gPowerCache = -1;
+
+IOReturn smc_open(void) {
+    if (gSMCConn != 0) return kIOReturnSuccess;
+    mach_port_t masterPort = 0;
+    if (IOMasterPort(MACH_PORT_NULL, &masterPort) != kIOReturnSuccess)
+        return kIOReturnNotOpen;
+    io_service_t service = IOServiceGetMatchingService(masterPort, IOServiceMatching("AppleSMC"));
+    if (service == IO_OBJECT_NULL)
+        return kIOReturnNotFound;
+    IOReturn result = IOServiceOpen(service, mach_task_self(), 0, &gSMCConn);
+    IOObjectRelease(service);
+    if (result != kIOReturnSuccess) {
+        gSMCConn = 0;
+        return result;
+    }
+    gChargeCache = -1;
+    gPowerCache = -1;
+    return kIOReturnSuccess;
+}
+
+void smc_close(void) {
+    if (gSMCConn != 0) {
+        IOServiceClose(gSMCConn);
+        gSMCConn = 0;
+    }
+}
+
+bool smc_is_open(void) {
+    return gSMCConn != 0;
+}
+
+static IOReturn smc_call(int index, SMCParamStruct *input, SMCParamStruct *output) {
+    if (gSMCConn == 0) {
+        IOReturn r = smc_open();
+        if (r != kIOReturnSuccess) return r;
+    }
+    size_t inSize = sizeof(SMCParamStruct);
+    size_t outSize = sizeof(SMCParamStruct);
+    return IOConnectCallStructMethod(gSMCConn, index, input, inSize, output, &outSize);
+}
+
+static IOReturn smc_get_keyinfo(uint32_t key, SMCKeyInfoData *keyInfo) {
+    SMCParamStruct in = {0};
+    SMCParamStruct out = {0};
+    in.key = key;
+    in.param.data8 = kSMCGetKeyInfo;
+    IOReturn r = smc_call(kSMCHandleYPCEvent, &in, &out);
+    if (r == kIOReturnSuccess && out.param.keyInfo.dataSize == 0)
+        r = kIOReturnError;
+    if (r == kIOReturnSuccess && keyInfo)
+        *keyInfo = out.param.keyInfo;
+    return r;
+}
+
+IOReturn smc_read_key(uint32_t key, void *bytes, int32_t *size) {
+    SMCParamStruct in = {0};
+    SMCParamStruct out = {0};
+    in.key = key;
+    IOReturn r = smc_get_keyinfo(key, &in.param.keyInfo);
+    if (r != kIOReturnSuccess) return r;
+    if (*size < (int32_t)in.param.keyInfo.dataSize)
+        *size = (int32_t)in.param.keyInfo.dataSize;
+    in.param.data8 = kSMCReadKey;
+    r = smc_call(kSMCHandleYPCEvent, &in, &out);
+    if (r != kIOReturnSuccess) return r;
+    if (bytes) memcpy(bytes, out.param.bytes, *size);
+    return kIOReturnSuccess;
+}
+
+IOReturn smc_write_key(uint32_t key, const void *bytes, uint32_t size) {
+    SMCParamStruct in = {0};
+    SMCParamStruct out = {0};
+    IOReturn r = smc_get_keyinfo(key, &in.param.keyInfo);
+    if (r != kIOReturnSuccess) return r;
+    if (in.param.keyInfo.dataSize > size) return kIOReturnIOError;
+    in.param.data8 = kSMCWriteKey;
+    in.key = key;
+    if (bytes) memcpy(in.param.bytes, bytes, in.param.keyInfo.dataSize);
+    return smc_call(kSMCHandleYPCEvent, &in, &out);
+}
+
+bool smc_external_connected(void) {
+    uint8_t chce = 0;
+    int32_t sz = 1;
+    if (smc_read_key('CHCE', &chce, &sz) != kIOReturnSuccess) return false;
+    return chce != 0;
+}
+
+bool smc_obc_taken_charge(void) {
+    uint8_t v = 0;
+    int32_t sz = 1;
+    if (smc_read_key('CH0C', &v, &sz) == kIOReturnSuccess)
+        return (v & (1 << 1)) != 0;
+    return false;
+}
+
+bool smc_obc_taken_power(void) {
+    uint8_t v = 0;
+    int32_t sz = 1;
+    if (smc_read_key('CH0I', &v, &sz) == kIOReturnSuccess)
+        return (v & (1 << 1)) != 0;
+    return false;
+}
+
+// 关闭 iOS 优化电池充电（OBC topoff protection），让 CH0C 写不被系统抢回
+static bool obc_switch(bool on) {
+    // 以 mobile 身份写偏好（root 写会落到 root 域，mobile 的 SpringBoard 读不到）
+    // 简化：直接写文件 /var/mobile/Library/Preferences/com.apple.smartcharging.topoffprotection.plist
+    NSString *path = @"/var/mobile/Library/Preferences/com.apple.smartcharging.topoffprotection.plist";
+    NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:path];
+    if (!d) d = [NSMutableDictionary dictionary];
+    d[@"enabled"] = @(on ? 1 : 0);
+    BOOL ok = [d writeToFile:path atomically:YES];
+    if (ok) {
+        // 通知 powerui/coreduet 刷新
+        notify_post("com.apple.smartcharging.defaultschanged");
+    }
+    return ok;
+}
+
+int smc_set_charge_block(bool inhibit, bool overrideOBC) {
+    // 安全 1：外部必须已连接
+    uint8_t chce = 0;
+    int32_t sz = 1;
+    if (smc_read_key('CHCE', &chce, &sz) != kIOReturnSuccess)
+        return SB_RESULT_IO_ERROR;
+    if (!chce) return SB_RESULT_NO_EXTERNAL_POWER;
+
+    // 安全 2：CH0R bit1 = No VBUS 时禁止写
+    uint32_t ch0r = 0;
+    int32_t sz4 = 4;
+    if (smc_read_key('CH0R', &ch0r, &sz4) == kIOReturnSuccess && (ch0r & (1 << 1)))
+        return SB_RESULT_NO_EXTERNAL_POWER;
+
+    uint8_t cur = 0;
+    if (smc_read_key('CH0C', &cur, &sz) != kIOReturnSuccess)
+        return SB_RESULT_IO_ERROR;
+
+    // OBC 已接管充电：不强制则标记 OBC 托管；强制则关 OBC 再写 CH0B
+    if (cur & (1 << 1)) {
+        if (!overrideOBC) return SB_RESULT_OBC_TAKEN;
+        obc_switch(false);
+        (void)smc_write_key('CH0B', &inhibit, 1);
+    }
+
+    // 只在实际状态变化时写
+    int target = inhibit ? 1 : 0;
+    if (target != gChargeCache) {
+        IOReturn r = smc_write_key('CH0C', &inhibit, 1);
+        if (r != kIOReturnSuccess) return SB_RESULT_IO_ERROR;
+        gChargeCache = target;
+    }
+    return SB_RESULT_OK;
+}
+
+int smc_set_power_block(bool inhibit, bool overrideOBC) {
+    uint8_t chce = 0;
+    int32_t sz = 1;
+    if (smc_read_key('CHCE', &chce, &sz) != kIOReturnSuccess)
+        return SB_RESULT_IO_ERROR;
+    if (!chce) return SB_RESULT_NO_EXTERNAL_POWER;
+
+    uint32_t ch0r = 0;
+    int32_t sz4 = 4;
+    if (smc_read_key('CH0R', &ch0r, &sz4) == kIOReturnSuccess && (ch0r & (1 << 1)))
+        return SB_RESULT_NO_EXTERNAL_POWER;
+
+    uint8_t cur = 0;
+    if (smc_read_key('CH0I', &cur, &sz) != kIOReturnSuccess)
+        return SB_RESULT_IO_ERROR;
+
+    if (cur & (1 << 1)) {
+        if (!overrideOBC) return SB_RESULT_OBC_TAKEN;
+        obc_switch(false);
+    }
+
+    int target = inhibit ? 1 : 0;
+    if (target != gPowerCache) {
+        IOReturn r = smc_write_key('CH0I', &inhibit, 1);
+        if (r != kIOReturnSuccess) return SB_RESULT_IO_ERROR;
+        gPowerCache = target;
+    }
+    return SB_RESULT_OK;
+}
+
+bool smc_get_charge_blocked(void) {
+    uint8_t v = 0;
+    int32_t sz = 1;
+    if (smc_read_key('CH0C', &v, &sz) == kIOReturnSuccess)
+        return (v & 1) != 0;
+    return false;
+}
+
+bool smc_get_power_blocked(void) {
+    uint8_t v = 0;
+    int32_t sz = 1;
+    if (smc_read_key('CH0I', &v, &sz) == kIOReturnSuccess)
+        return (v & 1) != 0;
+    return false;
+}
+
+IOReturn smc_reset_all(void) {
+    IOReturn r1 = kIOReturnSuccess, r2 = kIOReturnSuccess;
+    uint8_t zero = 0;
+    if (smc_external_connected()) {
+        r1 = smc_write_key('CH0C', &zero, 1);
+        r2 = smc_write_key('CH0I', &zero, 1);
+    }
+    gChargeCache = 0;
+    gPowerCache = 0;
+    return (r1 == kIOReturnSuccess && r2 == kIOReturnSuccess) ? kIOReturnSuccess : kIOReturnError;
+}

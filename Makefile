@@ -50,13 +50,14 @@ SBCPUForce120_FRAMEWORKS = Foundation QuartzCore
 SBCPUForce120_LIBRARIES = substrate
 SBCPUForce120_INSTALL_TARGET_PROCESSES = SpringBoard
 
-# 6. 充电控制 root daemon（V4.21）：SpringBoard 无 AppleSMC entitlement，
-# 由 launchd 以 root 拉起本 daemon，ldid 签名带 com.apple.private.applesmc.user-access，
-# 监听 unix socket 替 SpringBoard 写 CH0C(停充)/CH0I(断外部供电)。
+# 6. 充电控制 root daemon（V4.22 Charge Engine V1）：SpringBoard 无 AppleSMC entitlement，
+# 由 launchd 以 root 拉起本 daemon，ldid 签名带 com.apple.private.applesmc.user-access。
+# 分层：SBCPUChargeSMC(AppleSMC读写) + SBCPUChargePowerSource(IOPMPowerSource事件)
+#       + SBCPUChargeEngine(迟滞状态机) + 本文件(socket服务/防多开)。
 TOOL_NAME = SBCPUChargeDaemon
-SBCPUChargeDaemon_FILES = SBCPUChargeDaemon.m
-SBCPUChargeDaemon_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
-SBCPUChargeDaemon_FRAMEWORKS = Foundation IOKit
+SBCPUChargeDaemon_FILES = SBCPUChargeDaemon.m SBCPUChargeSMC.m SBCPUChargePowerSource.m SBCPUChargeEngine.m
+SBCPUChargeDaemon_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Iinclude
+SBCPUChargeDaemon_FRAMEWORKS = Foundation IOKit CoreFoundation
 SBCPUChargeDaemon_CODESIGN_FLAGS = -S$(THEOS_PROJECT_DIR)/SBCPUChargeDaemon.entitlements
 SBCPUChargeDaemon_INSTALL_PATH = /usr/libexec
 

@@ -1,9 +1,9 @@
 Package: com.sbcpu.floating
 Name: SB CPU Floating
-Version: 4.21.1
+Version: 4.22
 Architecture: iphoneos-arm64
 Maintainer: MoWang
 Author: MoWang
-Description:修复阻止充电/阻止外部供电无效问题：新增 SBCPUChargeDaemon root 守护进程（launchd 启动 + AppleSMC entitlements 签名），SpringBoard 开关经 unix socket 转由 daemon 写 SMC CH0C/CH0I，硬件级停充真正生效；智能停充同步走 daemon SMC 通道
+Description: Charge Engine V1 重构：充电控制收口为独立事件驱动的 root 守护进程（SBCPUChargeDaemon 分层 SMC/PowerSource/Engine），迟滞停充(上限/回充下限)、手动阻止充电/断供、OBC 处理、启动即决策、防多开、无线充电不支持提示；Tweak 只做 UI/配置，powerd 只做快充，CH0C/CH0I 统一由 daemon 写；浮窗关闭或 respring 后限制仍生效
 Section: Tweaks
 Depends: mobilesubstrate, preferenceloader

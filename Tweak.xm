@@ -38,7 +38,7 @@
 #define kPrefAppID CFSTR("com.yourname.sbcpufloating")
 #define kPrefChangedNotification CFSTR("com.yourname.sbcpufloating.prefschanged")
 
-// V4.21 — AppleSMC 控制层前向声明（实现在"充电器输入功率"区之前）
+// V4.22 — AppleSMC 控制层前向声明（实现在"充电器输入功率"区之前）
 // SpringBoard 无 AppleSMC entitlement，经 SBCPUChargeDaemon(root daemon) socket 转发
 static IOReturn sbSMCInit(void);
 static IOReturn sbSMCSetChargeBlock(BOOL inhibit, BOOL overrideOBC);
@@ -46,6 +46,9 @@ static IOReturn sbSMCSetPowerBlock(BOOL inhibit, BOOL overrideOBC);
 static BOOL sbSMCGetChargeBlocked(void);
 static BOOL sbSMCGetPowerBlocked(void);
 static NSString *sbSMCAvailableString(void);
+static IOReturn sbSMCSendLimits(void);
+static IOReturn sbSMCRedecide(void);
+static void updateSmartCharge(void);
 
 #pragma mark - 1. 👑 幽灵代理类 (欺骗 Objective-C++ 编译器)
 
@@ -1060,14 +1063,9 @@ static void SavePreferencesAndNotify(void) {
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), kPrefChangedNotification, NULL, NULL, YES);
     
     if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
-        // V4.21 — 开机/注销后延迟恢复 SMC 停充/断供状态（等 daemon socket 就绪）
+        // V4.22 — 开机/注销后：把配置下发给 daemon 并重判（Charge Engine 自己执行 SMC）
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (blockChargingEnable && sbSMCInit() == kIOReturnSuccess) {
-                sbSMCSetChargeBlock(YES, NO);
-            }
-            if (blockPowerEnable && sbSMCInit() == kIOReturnSuccess) {
-                sbSMCSetPowerBlock(YES, NO);
-            }
+            updateSmartCharge();
         });
     }
 }
@@ -1143,71 +1141,13 @@ static NSInteger getBatteryPercentForSmartCharge(void) {
     return -1;
 }
 
-// 智能停充（V4.21 改造）：由 powerd 属性拦截 + 偏好状态回退，升级为 AppleSMC CH0C 直写
-// SMC 写入经 SBCPUChargeDaemon(root daemon) 执行；daemon 不可用时回退旧逻辑（读偏好显示状态）
+// 智能停充（V4.22 重构）：本函数不再执行任何 SMC 决策/写入。
+// 充电控制全部收口到 SBCPUChargeDaemon（root, 事件驱动, 独立于浮窗）。
+// 这里只在设置变化/启动时把配置下发给 daemon，并读取 daemon 状态用于回显。
 static void updateSmartCharge(void) {
-    if (!smartChargeEnable || !floatingView) {
-        if (smartChargeStopped) {
-            smartChargeStopped = NO;
-            // 关闭开关时若 SMC 可用且当前处于停充，立即恢复充电
-            if (sbSMCInit() == kIOReturnSuccess && sbSMCGetChargeBlocked()) {
-                sbSMCSetChargeBlock(NO, NO);
-            }
-            CFPreferencesAppSynchronize(kPrefAppID);
-            CFPreferencesSetValue(CFSTR("smartChargeStopped"), kCFBooleanFalse,
-                                  kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-            CFPreferencesSynchronize(kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-        }
-        return;
-    }
-
-    NSInteger pct = getBatteryPercentForSmartCharge();
-    if (pct < 0) return;
-
-    BOOL smcOK = (sbSMCInit() == kIOReturnSuccess);
-    if (smcOK) {
-        // SMC 直写路径：≥上限停充，≤下限恢复（迟滞）
-        BOOL blocked = sbSMCGetChargeBlocked();
-        if (!blocked && pct >= smartChargeUpperLimit) {
-            IOReturn r = sbSMCSetChargeBlock(YES, NO);
-            if (r == kIOReturnSuccess || r == kIOReturnCannotLock) {
-                blocked = YES;
-                smartChargeStopped = YES;
-            }
-        } else if (blocked && pct <= smartChargeLowerLimit) {
-            IOReturn r = sbSMCSetChargeBlock(NO, NO);
-            if (r == kIOReturnSuccess || r == kIOReturnCannotLock) {
-                blocked = NO;
-                smartChargeStopped = NO;
-            }
-        }
-        // 同步到偏好，供浮窗/详情页回显
-        CFPreferencesAppSynchronize(kPrefAppID);
-        CFPreferencesSetValue(CFSTR("smartChargeStopped"),
-                              blocked ? kCFBooleanTrue : kCFBooleanFalse,
-                              kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-        CFPreferencesSynchronize(kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-        return;
-    }
-
-    // 回退：从偏好读取 powerd 写入的停充状态（仅当 SMC 不可用时）
-    CFPreferencesAppSynchronize(kPrefAppID);
-    CFPropertyListRef v = CFPreferencesCopyValue(CFSTR("smartChargeStopped"),
-                                                    kPrefAppID,
-                                                    kCFPreferencesCurrentUser,
-                                                    kCFPreferencesAnyHost);
-    BOOL stopped = NO;
-    if (v) {
-        if (CFGetTypeID(v) == CFBooleanGetTypeID()) {
-            stopped = CFBooleanGetValue((CFBooleanRef)v);
-        } else if (CFGetTypeID(v) == CFNumberGetTypeID()) {
-            int n = 0;
-            CFNumberGetValue((CFNumberRef)v, kCFNumberIntType, &n);
-            stopped = (n != 0);
-        }
-        CFRelease(v);
-    }
-    smartChargeStopped = stopped;
+    // 配置有变化 → 下发 daemon 并立即重新决策
+    sbSMCSendLimits();
+    sbSMCRedecide();
 }
 
 // ==========================================================
@@ -1223,7 +1163,12 @@ enum {
     kSBCmdSetPower  = 2,
     kSBCmdGetCharge = 3,
     kSBCmdGetPower  = 4,
-    kSBCmdPing      = 5
+    kSBCmdPing      = 5,
+    kSBCmdSetLimits = 6,
+    kSBCmdGetLimits = 7,
+    kSBCmdRedecide  = 8,
+    kSBCmdGetStatus = 9,
+    kSBCmdStop      = 10
 };
 
 #define SB_SOCKET_PATH "/var/mobile/Library/Preferences/sbcpu_charge.sock"
@@ -1352,6 +1297,86 @@ static IOReturn sbSMCInit(void) {
     gSMCChecked = YES;
     gSMCAvailable = YES;
     return kIOReturnSuccess;
+}
+
+// V4.22 — 智能充电配置载荷（与 daemon 协议一致）
+typedef struct {
+    uint8_t  smartChargeEnabled;
+    uint8_t  chargeLimitEnabled;
+    uint8_t  upperLimit;
+    uint8_t  lowerLimit;
+    uint8_t  drainMode;          // bit0=keepAC bit1=overrideOBC
+    uint8_t  manualChargeBlock;
+    uint8_t  manualPowerBlock;
+    uint8_t  scheduleEnabled;
+} sb_limits_t;
+
+typedef struct {
+    uint8_t  engineState;
+    uint8_t  batteryPercent;
+    uint8_t  chargeBlocked;
+    uint8_t  powerBlocked;
+    uint8_t  daemonRunning;
+    uint8_t  smcAvailable;
+    uint8_t  charging;
+    uint8_t  wireless;
+    uint8_t  upperLimit;
+    uint8_t  lowerLimit;
+    uint8_t  obcTaken;
+    uint8_t  pad;
+} sb_status_t;
+
+// 下发智能充电配置给 daemon（保存到偏好 + 立即 REDECIDE）
+static IOReturn sbSMCSendLimits(void) {
+    int fd = sbSMCConnect();
+    if (fd < 0) return kIOReturnNotOpen;
+    sb_cmd_t c = {0};
+    c.magic = SB_MAGIC;
+    c.cmd = kSBCmdSetLimits;
+    ssize_t n = write(fd, &c, sizeof(c));
+    if (n != (ssize_t)sizeof(c)) { close(fd); return kIOReturnIOError; }
+
+    sb_limits_t lim = {0};
+    lim.smartChargeEnabled = smartChargeEnable ? 1 : 0;
+    lim.chargeLimitEnabled = smartChargeEnable ? 1 : 0; // V1 与智能充电同源
+    lim.upperLimit = (uint8_t)smartChargeUpperLimit;
+    lim.lowerLimit = (uint8_t)smartChargeLowerLimit;
+    lim.drainMode = 1; // 默认保留外部供电（只停充不断 AC）
+    lim.manualChargeBlock = blockChargingEnable ? 1 : 0;
+    lim.manualPowerBlock = blockPowerEnable ? 1 : 0;
+    lim.scheduleEnabled = 0;
+    n = write(fd, &lim, sizeof(lim));
+    if (n != (ssize_t)sizeof(lim)) { close(fd); return kIOReturnIOError; }
+
+    sb_resp_t r = {0};
+    n = read(fd, &r, sizeof(r));
+    close(fd);
+    if (n != (ssize_t)sizeof(r) || r.magic != SB_MAGIC)
+        return kIOReturnIOError;
+    return (IOReturn)r.result;
+}
+
+// 立即重新决策（配置变化后调用）
+static IOReturn sbSMCRedecide(void) {
+    uint8_t v = 0;
+    return sbSMCRequest(kSBCmdRedecide, 0, &v);
+}
+
+// 读 daemon 状态（引擎状态机）
+static BOOL sbSMCGetStatus(sb_status_t *out) {
+    if (!out) return NO;
+    int fd = sbSMCConnect();
+    if (fd < 0) return NO;
+    sb_cmd_t c = {0};
+    c.magic = SB_MAGIC;
+    c.cmd = kSBCmdGetStatus;
+    if (write(fd, &c, sizeof(c)) != (ssize_t)sizeof(c)) { close(fd); return NO; }
+    sb_resp_t r = {0};
+    ssize_t n = read(fd, &r, sizeof(r));
+    if (n != (ssize_t)sizeof(r) || r.magic != SB_MAGIC) { close(fd); return NO; }
+    n = read(fd, out, sizeof(sb_status_t));
+    close(fd);
+    return n == (ssize_t)sizeof(sb_status_t);
 }
 
 static IOReturn sbSMCSetChargeBlock(BOOL inhibit, BOOL overrideOBC) {
@@ -2317,7 +2342,8 @@ static void updateCPU(void) {
     double fps = [SBCPUFPSHelper sharedInstance].currentFPS;
 
     checkHighCPU(cpu);
-    updateSmartCharge(); // 智能停充：检测电量，达到上限停充，降到下限恢复
+    // V4.22：智能停充已从 updateCPU 移除——充电控制完全由 SBCPUChargeDaemon
+    // (Charge Engine, 事件驱动) 负责，不依赖浮窗是否存在。此处只同步显示状态。
 
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!floatingView) return;
@@ -4257,9 +4283,23 @@ return self;
     }
     
     if (!fastChargeStartupAnimating) {
-        if (smartChargeEnable) {
+        if (smartChargeEnable || blockChargingEnable || blockPowerEnable) {
+            // V4.22：从 daemon 读真实引擎状态（节流 3s，避免每秒 socket）
+            static double gLastStatusFetch = 0;
+            static uint8_t gCachedEngineState = 0;
+            static uint8_t gCachedChargeBlocked = 0;
+            double now = [NSDate timeIntervalSinceReferenceDate];
+            if (now - gLastStatusFetch > 3.0) {
+                sb_status_t st;
+                if (sbSMCGetStatus(&st)) {
+                    gCachedEngineState = st.engineState;
+                    gCachedChargeBlocked = st.chargeBlocked;
+                    smartChargeStopped = (st.chargeBlocked != 0);
+                }
+                gLastStatusFetch = now;
+            }
             NSInteger scPercent = getBatteryPercentForSmartCharge();
-            if (smartChargeStopped) {
+            if (gCachedChargeBlocked) {
                 _statusLabel.text = [NSString stringWithFormat:@"🛑 停充中 · %ld%% (上限%ld)", (long)scPercent, (long)smartChargeUpperLimit];
                 _statusLabel.textColor = [UIColor systemOrangeColor];
             } else if (isCharging) {
@@ -7421,32 +7461,37 @@ static NSString *stripLeadingEmoji(NSString *s) {
     }
 }
 
-// 智能停充：开关
+// 智能停充：开关（V4.22：只改偏好 + 下发 daemon，SMC 决策由 daemon 完成）
 - (void)changeSmartChargeEnable:(UISwitch *)sw {
     smartChargeEnable = sw.isOn;
     SavePreferencesAndNotify();
     if (!smartChargeEnable) {
         smartChargeStopped = NO;
     }
+    // 下发配置并让 daemon 立即重判（关闭开关 → daemon 恢复充电）
+    updateSmartCharge();
     [self.tableView reloadData];
 }
 
-// V4.21 — 阻止充电（AppleSMC CH0C，经 root daemon 写入）
+// V4.22 — 阻止充电（手动，经 root daemon 写 AppleSMC CH0C）
 - (void)changeBlockCharging:(UISwitch *)sw {
     if (!sw.isOn) {
-        // 关闭：立即恢复充电
-        IOReturn r = sbSMCSetChargeBlock(NO, NO);
-        if (r != kIOReturnSuccess && r != kIOReturnCannotLock) {
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复充电失败"
-                message:[NSString stringWithFormat:@"SMC 写入失败（0x%x），请确认充电器已连接", r]
-                preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
-            [self presentViewController:alert animated:YES completion:nil];
-            sw.on = YES;
-            return;
+        // 关闭：经 daemon 恢复充电
+        if (sbSMCInit() == kIOReturnSuccess) {
+            IOReturn r = sbSMCSetChargeBlock(NO, NO);
+            if (r != kIOReturnSuccess) {
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复充电失败"
+                    message:[NSString stringWithFormat:@"SMC 写入失败（0x%x），请确认充电器已连接", r]
+                    preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:alert animated:YES completion:nil];
+                sw.on = YES;
+                return;
+            }
         }
         blockChargingEnable = NO;
         SavePreferencesAndNotify();
+        updateSmartCharge();
         [self.tableView reloadData];
         return;
     }
@@ -7466,7 +7511,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
         SavePreferencesAndNotify();
     }
     IOReturn r = sbSMCSetChargeBlock(YES, NO);
-    if (r != kIOReturnSuccess && r != kIOReturnCannotLock) {
+    if (r != kIOReturnSuccess) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"阻止充电失败"
             message:[NSString stringWithFormat:@"SMC 写入失败（0x%x），请确认充电器已连接", r]
             preferredStyle:UIAlertControllerStyleAlert];
@@ -7477,24 +7522,28 @@ static NSString *stripLeadingEmoji(NSString *s) {
     }
     blockChargingEnable = YES;
     SavePreferencesAndNotify();
+    updateSmartCharge();
     [self.tableView reloadData];
 }
 
-// V4.21 — 阻止外部供电（AppleSMC CH0I，经 root daemon 写入）
+// V4.22 — 阻止外部供电（手动，经 root daemon 写 AppleSMC CH0I）
 - (void)changeBlockPower:(UISwitch *)sw {
     if (!sw.isOn) {
-        IOReturn r = sbSMCSetPowerBlock(NO, NO);
-        if (r != kIOReturnSuccess && r != kIOReturnCannotLock) {
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复外部供电失败"
-                message:[NSString stringWithFormat:@"SMC 写入失败（0x%x），请确认充电器已连接", r]
-                preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
-            [self presentViewController:alert animated:YES completion:nil];
-            sw.on = YES;
-            return;
+        if (sbSMCInit() == kIOReturnSuccess) {
+            IOReturn r = sbSMCSetPowerBlock(NO, NO);
+            if (r != kIOReturnSuccess) {
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复外部供电失败"
+                    message:[NSString stringWithFormat:@"SMC 写入失败（0x%x），请确认充电器已连接", r]
+                    preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:alert animated:YES completion:nil];
+                sw.on = YES;
+                return;
+            }
         }
         blockPowerEnable = NO;
         SavePreferencesAndNotify();
+        updateSmartCharge();
         [self.tableView reloadData];
         return;
     }
@@ -7508,7 +7557,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
         return;
     }
     IOReturn r = sbSMCSetPowerBlock(YES, NO);
-    if (r != kIOReturnSuccess && r != kIOReturnCannotLock) {
+    if (r != kIOReturnSuccess) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"阻止外部供电失败"
             message:[NSString stringWithFormat:@"SMC 写入失败（0x%x），请确认充电器已连接", r]
             preferredStyle:UIAlertControllerStyleAlert];
@@ -7519,10 +7568,11 @@ static NSString *stripLeadingEmoji(NSString *s) {
     }
     blockPowerEnable = YES;
     SavePreferencesAndNotify();
+    updateSmartCharge();
     [self.tableView reloadData];
 }
 
-// 智能停充：预设模式
+// 智能停充：预设模式（V4.22：改偏好后下发 daemon 重判）
 - (void)changeSmartChargeMode:(UIButton *)btn {
     smartChargeMode = btn.tag - 900; // 按钮tag=900+i，还原为0/1/2
     if (smartChargeMode == 0) { smartChargeUpperLimit = 80; smartChargeLowerLimit = 70; }
@@ -7530,6 +7580,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
     else if (smartChargeMode == 2) { smartChargeUpperLimit = 60; smartChargeLowerLimit = 50; }
     SavePreferencesAndNotify();
     smartChargeStopped = NO;
+    updateSmartCharge();
     [self.tableView reloadData];
 }
 
@@ -7621,6 +7672,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
     (void)slider;
     SavePreferencesAndNotify();
     [self updateSmartChargeRangeVisualization];
+    updateSmartCharge(); // V4.22：下发配置 + daemon 重判
 }
 
 // 智能停充：回充下限
@@ -7637,6 +7689,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
     (void)slider;
     SavePreferencesAndNotify();
     [self updateSmartChargeRangeVisualization];
+    updateSmartCharge(); // V4.22：下发配置 + daemon 重判
 }
 
 // 🔍 插件冲突检测：扫描按钮
