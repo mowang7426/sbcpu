@@ -1,12 +1,9 @@
 Package: com.sbcpu.floating
 Name: SB CPU Floating
-Version: 4.1.6
+Version: 4.19.0
 Architecture: iphoneos-arm64
 Maintainer: MoWang
 Author: MoWang
-Description: 新增插件耗电情况，仅供参考
- 新增长按浮窗显示充电详情、充电器瓦数、实际输入瓦数
- 修复 120 强制帧率，强行注入每个进程，实现满帧率运行
- 新增充电历史详情
+Description:浮窗信号行升级：去掉格数字符画，改为运营商简称+dBm+频段(n78/B3)+5G SA/NSA+漫游标记，数据卡打点；长按详情新增蜂窝详情页，含信号质量RSRQ/SNR、基站频段/频宽/ARFCN/PCI/小区ID/TAC/MCC-MNC、双卡网络状态及IMEI/MEID/EID基带信息，全部真实XPC读取
 Section: Tweaks
 Depends: mobilesubstrate, preferenceloader

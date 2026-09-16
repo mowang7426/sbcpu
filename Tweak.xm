@@ -416,29 +416,25 @@ static NSString *shortRadioTech(NSString *tech) {
     return @"?G";
 }
 
-// 信号格数字符（0-4 格）
-static NSString *barsGlyph(NSInteger bars) {
-    if (bars <= 0) return @"▂";
-    if (bars == 1) return @"▂▄";
-    if (bars == 2) return @"▂▄▆";
-    return @"▂▄▆█";
-}
-
 // ============================================================
-// SIM 双卡信号读取（iOS 13+ CoreTelephonyClient XPC ObjC API）
+// SIM 双卡蜂窝数据读取（iOS 13+ CoreTelephonyClient XPC ObjC API）
 // 依据 iOS 17.1 classdump：
-//   CoreTelephonyClient -getSubscriptionInfoWithError:
-//       → CTXPCServiceSubscriptionInfo.subscriptions（每张卡一个 context，天然双卡）
-//   -getSignalStrengthInfo:error: → CTSignalStrengthInfo.displayBars/bars（信号格数）
-//   -getSignalStrengthMeasurements:error: → CTSignalStrengthMeasurements.rsrp/rssi（真实 dBm）
-//   -copyRadioAccessTechnology:error: → 当前制式字符串
+//   -getSubscriptionInfoWithError: → subscriptions（每卡一个 context，天然双卡）
+//   -getSignalStrengthInfo:error:  → displayBars/bars（信号格）
+//   -getSignalStrengthMeasurements:error: → rsrp/rssi(dBm)、rsrq、snr
+//   -copyRadioAccessTechnology:error: → 制式字符串
+//   -getOperatorName:error:        → 当前注册网络运营商名（iOS 16+）
+//   -getDataStatus:error:          → SA/NSA 覆盖、漫游(inHomeCountry)、数据卡、attached
+//   -copyCellInfo:completion:      → 异步：频段/频宽/ARFCN/PCI/CellID/TAC/MCC/MNC
+//   -getMobileEquipmentInfo:       → IMEI/MEID/EID/ICCID
 // 全程 ObjC 消息派发 + @try 兜底；不使用会崩溃的 _CTServerConnection C 函数。
-// tweak 注入 SpringBoard，进程本身具备 CommCenter XPC 权限（状态栏信号即由此而来）。
+// tweak 注入 SpringBoard，进程本身具备 CommCenter XPC 权限。
 // ============================================================
 #import <objc/message.h>
 
 typedef id (*SBMsgSendErr1)(id, SEL, NSError **);
 typedef id (*SBMsgSendErr2)(id, SEL, id, NSError **);
+typedef void (*SBMsgSendAsyncCell)(id, SEL, id, void (^)(id info, NSError *error));
 
 // XPC 客户端复用（只创建一次）
 static id gCTClientXPC = nil;
@@ -455,7 +451,104 @@ static id ctXPCClient(void) {
     return gCTClientXPC;
 }
 
-// 读取全部卡的真实信号快照，每元素字典：slot(序号) / bars(格数,-1为无) / dbm(字符串,可空) / tech(制式,可空)
+// 运营商全称 → 中文简称
+static NSString *carrierShortName(NSString *name) {
+    if (!name || name.length == 0) return nil;
+    NSString *s = name.lowercaseString;
+    if ([s containsString:@"移动"] || [s containsString:@"cmcc"] || [s containsString:@"china mobile"]) return @"移动";
+    if ([s containsString:@"联通"] || [s containsString:@"unicom"] || [s containsString:@"cucc"]) return @"联通";
+    if ([s containsString:@"电信"] || [s containsString:@"telecom"] || [s containsString:@"ctcc"]) return @"电信";
+    if ([s containsString:@"广电"] || [s containsString:@"broadnet"] || [s containsString:@"cbn"]) return @"广电";
+    // 境外/其它运营商：保留原名前 6 个字符，避免浮窗过长
+    return (name.length > 6) ? [name substringToIndex:6] : name;
+}
+
+// 基站小区信息缓存（copyCellInfo 为异步 XPC，不能每秒同步等待，故后台刷新、浮窗读缓存）
+// key = 卡槽序号(NSNumber)，value = 字典 band/bandwidth/nrarfcn/uarfcn/pci/cellid/tac/scs/mcc/mnc
+static NSMutableDictionary<NSNumber *, NSDictionary *> *gCellInfoCache = nil;
+static NSTimeInterval gLastCellInfoFetch = 0;
+
+static NSDictionary *cellInfoForSlot(NSInteger slot) {
+    if (!gCellInfoCache) return nil;
+    @synchronized (gCellInfoCache) {
+        return gCellInfoCache[@(slot)];
+    }
+}
+
+// 从 CTCellInfo.legacyInfo 中取 Serving Cell 字典
+static NSDictionary *servingCellFromInfo(id info) {
+    @try {
+        NSArray *legacy = [info valueForKey:@"legacyInfo"];
+        if (![legacy isKindOfClass:[NSArray class]] || legacy.count == 0) return nil;
+        for (id entry in legacy) {
+            if (![entry isKindOfClass:[NSDictionary class]]) continue;
+            if ([[entry objectForKey:@"kCTCellMonitorCellType"] isEqual:@"kCTCellMonitorCellTypeServing"]) {
+                return entry;
+            }
+        }
+        for (id entry in legacy) {
+            if ([entry isKindOfClass:[NSDictionary class]]) return entry;
+        }
+    } @catch (NSException *e) {}
+    return nil;
+}
+
+// 触发一次全部卡的基站信息异步查询（非阻塞，结果进缓存）。节流 8 秒。
+static void refreshCellInfoAsync(NSArray *contexts) {
+    @try {
+        id client = ctXPCClient();
+        if (!client || contexts.count == 0) return;
+        NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+        if (now - gLastCellInfoFetch < 8.0) return;
+        gLastCellInfoFetch = now;
+        if (!gCellInfoCache) gCellInfoCache = [NSMutableDictionary dictionary];
+        if (![client respondsToSelector:@selector(copyCellInfo:completion:)]) return;
+        SBMsgSendAsyncCell callAsync = (SBMsgSendAsyncCell)objc_msgSend;
+        NSInteger order = 1;
+        for (id context in contexts) {
+            NSNumber *slotKey = @(order);
+            callAsync(client, @selector(copyCellInfo:completion:), context, ^(id info, NSError *error) {
+                @try {
+                    NSDictionary *cell = servingCellFromInfo(info);
+                    if (!cell) return;
+                    id (^num)(NSString *) = ^id(NSString *k) {
+                        id v = cell[k];
+                        return [v isKindOfClass:[NSNumber class]] ? v : nil;
+                    };
+                    NSMutableDictionary *d = [NSMutableDictionary dictionary];
+                    if (num(@"kCTCellMonitorBandInfo")) d[@"band"] = num(@"kCTCellMonitorBandInfo");
+                    if (num(@"kCTCellMonitorBandwidth")) d[@"bandwidth"] = num(@"kCTCellMonitorBandwidth");
+                    if (num(@"kCTCellMonitorNRARFCN")) d[@"nrarfcn"] = num(@"kCTCellMonitorNRARFCN");
+                    if (num(@"kCTCellMonitorUARFCN")) d[@"uarfcn"] = num(@"kCTCellMonitorUARFCN");
+                    if (num(@"kCTCellMonitorPID")) d[@"pci"] = num(@"kCTCellMonitorPID");
+                    if (num(@"kCTCellMonitorCellId")) d[@"cellid"] = num(@"kCTCellMonitorCellId");
+                    if (num(@"kCTCellMonitorTAC")) d[@"tac"] = num(@"kCTCellMonitorTAC");
+                    if (num(@"kCTCellMonitorSCS")) d[@"scs"] = num(@"kCTCellMonitorSCS");
+                    if (num(@"kCTCellMonitorMCC")) d[@"mcc"] = num(@"kCTCellMonitorMCC");
+                    if (num(@"kCTCellMonitorMNC")) d[@"mnc"] = num(@"kCTCellMonitorMNC");
+                    if (d.count > 0) {
+                        @synchronized (gCellInfoCache) { gCellInfoCache[slotKey] = d; }
+                    }
+                } @catch (NSException *e) {}
+            });
+            order++;
+        }
+    } @catch (NSException *e) {}
+}
+
+// 频段显示：5G→n78，4G→B3，其它为空
+static NSString *bandStringForSlot(NSInteger slot, NSString *tech) {
+    @try {
+        NSDictionary *c = cellInfoForSlot(slot);
+        NSNumber *band = c[@"band"];
+        if (!band || band.integerValue <= 0) return nil;
+        if ([tech isEqual:@"5G"]) return [NSString stringWithFormat:@"n%ld", (long)band.integerValue];
+        if ([tech isEqual:@"4G"]) return [NSString stringWithFormat:@"B%ld", (long)band.integerValue];
+    } @catch (NSException *e) {}
+    return nil;
+}
+
+// 读取全部卡的真实信号快照（同步、轻量，可供浮窗每秒调用）
 static NSArray<NSDictionary *> *readAllSimSignals(void) {
     NSMutableArray *out = [NSMutableArray array];
     @try {
@@ -470,13 +563,16 @@ static NSArray<NSDictionary *> *readAllSimSignals(void) {
         NSArray *contexts = [subInfo valueForKey:@"subscriptions"];
         if (![contexts isKindOfClass:[NSArray class]] || contexts.count == 0) return out;
 
+        // 异步刷新基站信息（内部节流，不阻塞本次调用）
+        refreshCellInfoAsync(contexts);
+
         Class descCls = NSClassFromString(@"CTServiceDescriptor");
         NSInteger order = 1;
         for (id context in contexts) {
             @try {
                 NSInteger bars = -1;
-                NSString *dbm = nil;
-                NSString *tech = nil;
+                NSString *dbm = nil, rsrq = nil, snr = nil, tech = nil, carrier = nil;
+                BOOL attached = NO, roaming = NO, dataSim = NO, sa = NO, nsa = NO, nr = NO;
 
                 // 1) 信号格数
                 NSError *e1 = nil;
@@ -491,35 +587,69 @@ static NSArray<NSDictionary *> *readAllSimSignals(void) {
                     }
                 }
 
-                // 2) 真实 dBm（rsrp 用于 4G/5G，rssi 用于 2G/3G）
+                // 2) 信号测量：dBm(rsrp/rssi)、rsrq、snr
                 if (descCls && [descCls respondsToSelector:@selector(descriptorWithSubscriptionContext:)]) {
                     id desc = [descCls performSelector:@selector(descriptorWithSubscriptionContext:) withObject:context];
                     if (desc) {
                         NSError *e2 = nil;
                         id meas = call2(client, @selector(getSignalStrengthMeasurements:error:), desc, &e2);
                         if (meas) {
-                            NSNumber *rsrp = [meas valueForKey:@"rsrp"];
-                            NSNumber *rssi = [meas valueForKey:@"rssi"];
-                            NSNumber *use = ([rsrp isKindOfClass:[NSNumber class]] && rsrp.integerValue < 0) ? rsrp : rssi;
-                            if ([use isKindOfClass:[NSNumber class]] && use.integerValue < 0) {
+                            NSNumber *rsrpN = [meas valueForKey:@"rsrp"];
+                            NSNumber *rssiN = [meas valueForKey:@"rssi"];
+                            NSNumber *use = ([rsrpN isKindOfClass:[NSNumber class]] && rsrpN.integerValue < 0) ? rsrpN : rssiN;
+                            if ([use isKindOfClass:[NSNumber class]] && use.integerValue < 0)
                                 dbm = [NSString stringWithFormat:@"%ld", (long)use.integerValue];
-                            }
+                            NSNumber *rsrqN = [meas valueForKey:@"rsrq"];
+                            if ([rsrqN isKindOfClass:[NSNumber class]] && rsrqN.floatValue != 0)
+                                rsrq = [NSString stringWithFormat:@"%.0f", rsrqN.floatValue];
+                            NSNumber *snrN = [meas valueForKey:@"snr"];
+                            if ([snrN isKindOfClass:[NSNumber class]] && snrN.floatValue != 0)
+                                snr = [NSString stringWithFormat:@"%.0f", snrN.floatValue];
                         }
                     }
                 }
 
-                // 3) 当前制式
+                // 3) 制式
                 NSError *e3 = nil;
                 id techRaw = call2(client, @selector(copyRadioAccessTechnology:error:), context, &e3);
-                if ([techRaw isKindOfClass:[NSString class]]) {
-                    tech = shortRadioTech(techRaw);
+                if ([techRaw isKindOfClass:[NSString class]]) tech = shortRadioTech(techRaw);
+
+                // 4) 运营商名（iOS 16+）
+                if ([client respondsToSelector:@selector(getOperatorName:error:)]) {
+                    NSError *e4 = nil;
+                    id op = call2(client, @selector(getOperatorName:error:), context, &e4);
+                    if ([op isKindOfClass:[NSString class]] && ((NSString *)op).length > 0
+                        && ![(NSString *)op isEqualToString:@"--"]) {
+                        carrier = carrierShortName(op);
+                    }
+                }
+
+                // 5) 数据状态：SA/NSA、漫游、数据卡、附着
+                if ([client respondsToSelector:@selector(getDataStatus:error:)]) {
+                    NSError *e5 = nil;
+                    id ds = call2(client, @selector(getDataStatus:error:), context, &e5);
+                    if (ds) {
+                        attached = [[ds valueForKey:@"attached"] boolValue];
+                        dataSim  = [[ds valueForKey:@"dataSim"] boolValue];
+                        nr       = [[ds valueForKey:@"newRadioCoverage"] boolValue];
+                        sa       = [[ds valueForKey:@"newRadioSaCoverage"] boolValue];
+                        nsa      = [[ds valueForKey:@"newRadioNsaCoverage"] boolValue];
+                        roaming  = ![[ds valueForKey:@"inHomeCountry"] boolValue];
+                    }
                 }
 
                 NSMutableDictionary *d = [NSMutableDictionary dictionary];
                 d[@"slot"] = @(order);
                 d[@"bars"] = @(bars);
+                d[@"attached"] = @(attached);
+                d[@"roaming"] = @(roaming);
+                d[@"dataSim"] = @(dataSim);
+                d[@"sa"] = @(sa); d[@"nsa"] = @(nsa); d[@"nr"] = @(nr);
                 if (dbm) d[@"dbm"] = dbm;
+                if (rsrq) d[@"rsrq"] = rsrq;
+                if (snr) d[@"snr"] = snr;
                 if (tech) d[@"tech"] = tech;
+                if (carrier) d[@"carrier"] = carrier;
                 [out addObject:d];
             } @catch (NSException *e) {}
             order++;
@@ -528,20 +658,60 @@ static NSArray<NSDictionary *> *readAllSimSignals(void) {
     return out;
 }
 
-// 组装浮窗底部信号行（图一样式：SIM1 格数 dBm 制式 · SIM2 格数 dBm 制式），全部真实每秒刷新
+// 设备移动台信息列表（IMEI/MEID/EID/ICCID），详情页打开时读一次，失败返回空
+static NSArray<NSDictionary *> *readMobileEquipmentInfo(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    @try {
+        id client = ctXPCClient();
+        if (!client || ![client respondsToSelector:@selector(getMobileEquipmentInfo:)]) return out;
+        SBMsgSendErr1 call1 = (SBMsgSendErr1)objc_msgSend;
+        NSError *err = nil;
+        id list = call1(client, @selector(getMobileEquipmentInfo:), &err);
+        NSArray *items = [list valueForKey:@"meInfoList"];
+        if (![items isKindOfClass:[NSArray class]]) return out;
+        for (id it in items) {
+            NSMutableDictionary *d = [NSMutableDictionary dictionary];
+            NSString *(^s)(NSString *) = ^NSString *(NSString *k) {
+                id v = [it valueForKey:k];
+                return ([v isKindOfClass:[NSString class]] && ((NSString *)v).length > 0) ? v : nil;
+            };
+            if (s(@"IMEI")) d[@"imei"] = s(@"IMEI");
+            if (s(@"MEID")) d[@"meid"] = s(@"MEID");
+            if (s(@"ICCID")) d[@"iccid"] = s(@"ICCID");
+            if (s(@"IMSI")) d[@"imsi"] = s(@"IMSI");
+            if (s(@"CSN")) d[@"eid"] = s(@"CSN");
+            if (d.count) [out addObject:d];
+        }
+    } @catch (NSException *e) {}
+    return out;
+}
+
+// 组装浮窗底部信号行：运营商 dBm 频段 制式（双卡，去格画），全部真实每秒刷新
 static NSString *getSignalInfoString(void) {
     if (!showSignalStrength) return @"";
     @try {
         NSArray *sims = readAllSimSignals();
-        if (sims.count == 0) return @""; // XPC 暂不可用时不显示，避免出现误导性的 --
+        if (sims.count == 0) return @"";
         NSMutableArray *parts = [NSMutableArray array];
         for (NSDictionary *s in sims) {
             NSInteger slot = [s[@"slot"] integerValue];
-            NSInteger bars = [s[@"bars"] integerValue];
-            NSString *barsStr = (bars >= 0) ? barsGlyph(MIN(bars, 4)) : @"--";
-            NSMutableString *seg = [NSMutableString stringWithFormat:@"SIM%ld %@", (long)slot, barsStr];
+            NSString *tech = s[@"tech"];
+            NSString *name = s[@"carrier"] ?: [NSString stringWithFormat:@"SIM%ld", (long)slot];
+            NSMutableString *seg = [NSMutableString stringWithString:name];
+            // 数据卡在名字后加个小标记
+            if ([s[@"dataSim"] boolValue]) [seg appendString:@"●"];
             if (s[@"dbm"]) [seg appendFormat:@" %@", s[@"dbm"]];
-            if (s[@"tech"]) [seg appendFormat:@" %@", s[@"tech"]];
+            NSString *band = bandStringForSlot(slot, tech);
+            if (band) [seg appendFormat:@" %@", band];
+            if (tech) {
+                // SA/NSA 区分：SA 显示 5G⁺，NSA 显示 5G
+                if ([tech isEqual:@"5G"]) {
+                    [seg appendFormat:@" %@", [s[@"sa"] boolValue] ? @"5G+" : @"5G"];
+                } else {
+                    [seg appendFormat:@" %@", tech];
+                }
+            }
+            if ([s[@"roaming"] boolValue]) [seg appendString:@" 漫游"];
             [parts addObject:seg];
         }
         return [parts componentsJoinedByString:@" · "];
@@ -3854,6 +4024,159 @@ return self;
 
 #pragma mark - 7. 详细状态 UI 面板与数据绑定
 
+// ============================================================
+// 蜂窝网络详情页（可滚动，按 SIM 卡分组 + 设备基带信息）
+// ============================================================
+@interface SBCPUCellularDetailController : UITableViewController
+@property (nonatomic, strong) NSMutableArray *sections;
+@property (nonatomic, strong) NSTimer *cellRefreshTimer;
+@end
+
+@implementation SBCPUCellularDetailController
+
+- (instancetype)init {
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
+    if (self) {
+        _sections = [NSMutableArray array];
+        self.title = @"蜂窝网络详情";
+    }
+    return self;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeCellular)];
+    [self rebuildCellularData];
+}
+
+- (void)closeCellular {
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self rebuildCellularData];
+    _cellRefreshTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self
+                                                       selector:@selector(rebuildCellularData) userInfo:nil repeats:YES];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    [_cellRefreshTimer invalidate];
+    _cellRefreshTimer = nil;
+}
+
+- (void)rebuildCellularData {
+    @try {
+        NSMutableArray *secs = [NSMutableArray array];
+        NSArray *sims = readAllSimSignals();
+        NSArray *equip = readMobileEquipmentInfo();
+
+        for (NSDictionary *s in sims) {
+            NSInteger slot = [s[@"slot"] integerValue];
+            NSDictionary *cell = cellInfoForSlot(slot);
+            NSString *name = s[@"carrier"] ?: [NSString stringWithFormat:@"SIM%ld", (long)slot];
+            NSMutableArray *rows = [NSMutableArray array];
+            void (^add)(NSString *, NSString *) = ^(NSString *k, NSString *v) {
+                if (v && v.length > 0) [rows addObject:@{@"k": k, @"v": v}];
+            };
+
+            // —— 网络状态 ——
+            NSString *mode = s[@"tech"] ?: @"无服务";
+            if ([s[@"tech"] isEqual:@"5G"]) {
+                mode = [s[@"sa"] boolValue] ? @"5G SA 独立组网"
+                     : (([s[@"nsa"] boolValue] || [s[@"nr"] boolValue]) ? @"5G NSA 非独立组网" : @"5G");
+            }
+            add(@"网络制式", mode);
+            add(@"运营商", name);
+            add(@"网络注册", [s[@"attached"] boolValue] ? @"已注册" : @"未注册/无服务");
+            add(@"默认数据卡", [s[@"dataSim"] boolValue] ? @"是" : @"否");
+            add(@"漫游状态", [s[@"roaming"] boolValue] ? @"漫游中" : @"归属网络");
+
+            // —— 信号质量 ——
+            NSInteger bars = [s[@"bars"] integerValue];
+            add(@"信号格数", bars >= 0 ? [NSString stringWithFormat:@"%ld/4", (long)bars] : @"--");
+            if (s[@"dbm"]) add(@"RSRP/RSSI 强度", [NSString stringWithFormat:@"%@ dBm", s[@"dbm"]]);
+            if (s[@"rsrq"]) add(@"RSRQ 质量", [NSString stringWithFormat:@"%@ dB", s[@"rsrq"]]);
+            if (s[@"snr"]) add(@"SNR 信噪比", [NSString stringWithFormat:@"%@ dB", s[@"snr"]]);
+
+            // —— 基站无线参数（copyCellInfo 异步缓存，可能稍后才出现）——
+            NSString *band = bandStringForSlot(slot, s[@"tech"]);
+            add(@"频段", band);
+            if (cell[@"bandwidth"]) add(@"载波带宽(PRB)", [cell[@"bandwidth"] stringValue]);
+            if (cell[@"nrarfcn"]) add(@"5G 频点 NR-ARFCN", [cell[@"nrarfcn"] stringValue]);
+            if (cell[@"uarfcn"]) add(@"频点 UARFCN", [cell[@"uarfcn"] stringValue]);
+            if (cell[@"pci"]) add(@"物理小区号 PCI", [cell[@"pci"] stringValue]);
+            if (cell[@"cellid"]) add(@"小区 ID", [cell[@"cellid"] stringValue]);
+            if (cell[@"tac"]) add(@"跟踪区码 TAC", [cell[@"tac"] stringValue]);
+            if (cell[@"scs"]) add(@"子载波间隔", [NSString stringWithFormat:@"%@ kHz", [cell[@"scs"] stringValue]]);
+            if (cell[@"mcc"] && cell[@"mnc"])
+                add(@"MCC/MNC", [NSString stringWithFormat:@"%@/%@", [cell[@"mcc"] stringValue], [cell[@"mnc"] stringValue]]);
+
+            // —— 卡硬件信息（按卡槽对应）——
+            if (slot - 1 >= 0 && slot - 1 < (NSInteger)equip.count) {
+                NSDictionary *e = equip[slot - 1];
+                add(@"ICCID", e[@"iccid"]);
+                add(@"IMEI", e[@"imei"]);
+            }
+
+            NSString *title = [NSString stringWithFormat:@"SIM %ld · %@%@", (long)slot, name,
+                               [s[@"dataSim"] boolValue] ? @" · 默认数据卡" : @""];
+            [secs addObject:@{@"title": title, @"rows": rows}];
+        }
+
+        // —— 设备基带信息 ——
+        NSMutableArray *drows = [NSMutableArray array];
+        [drows addObject:@{@"k": @"卡槽数量", @"v": [NSString stringWithFormat:@"%lu", (unsigned long)sims.count]}];
+        NSInteger idx = 1;
+        for (NSDictionary *e in equip) {
+            if (e[@"imei"]) [drows addObject:@{@"k": [NSString stringWithFormat:@"IMEI %ld", (long)idx], @"v": e[@"imei"]}];
+            if (e[@"meid"]) [drows addObject:@{@"k": @"MEID", @"v": e[@"meid"]}];
+            if (e[@"eid"]) [drows addObject:@{@"k": @"EID (eSIM)", @"v": e[@"eid"]}];
+            idx++;
+        }
+        if (drows.count > 1) [secs addObject:@{@"title": @"设备基带信息", @"rows": drows}];
+
+        self.sections = secs;
+        [self.tableView reloadData];
+    } @catch (NSException *e) {}
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return self.sections.count; }
+
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
+    return [self.sections[section][@"rows"] count];
+}
+
+- (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
+    return self.sections[section][@"title"];
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:@"SBCell"];
+    if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"SBCell"];
+    NSDictionary *row = self.sections[ip.section][@"rows"][ip.row];
+    cell.textLabel.text = row[@"k"];
+    cell.detailTextLabel.text = row[@"v"];
+    cell.textLabel.font = [UIFont systemFontOfSize:14];
+    cell.detailTextLabel.font = [UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightMedium];
+    cell.textLabel.textColor = [UIColor secondaryLabelColor];
+    cell.detailTextLabel.textColor = [UIColor labelColor];
+    cell.detailTextLabel.adjustsFontSizeToFitWidth = YES;
+    cell.detailTextLabel.minimumScaleFactor = 0.6;
+    cell.detailTextLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    cell.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+    return cell;
+}
+
+@end
+
+#pragma mark - 系统与电池详细状态面板
+
 @implementation SBCPUDetailViewController
 
 - (void)viewDidLoad {
@@ -3900,6 +4223,18 @@ return self;
     closeBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
     [closeBtn addTarget:self action:@selector(closeDetailView) forControlEvents:UIControlEventTouchUpInside];
     [contentView addSubview:closeBtn];
+
+    // 蜂窝网络详情入口
+    UIButton *cellBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    cellBtn.frame = CGRectMake(panelW - 100, 9, 58, 28);
+    [cellBtn setTitle:@"蜂窝详情" forState:UIControlStateNormal];
+    cellBtn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold];
+    [cellBtn setTitleColor:[UIColor colorWithRed:0.0 green:0.45 blue:0.9 alpha:1.0] forState:UIControlStateNormal];
+    cellBtn.backgroundColor = [UIColor colorWithRed:0.0 green:0.45 blue:0.9 alpha:0.10];
+    cellBtn.layer.cornerRadius = 13.0;
+    cellBtn.layer.masksToBounds = YES;
+    [cellBtn addTarget:self action:@selector(openCellularDetail) forControlEvents:UIControlEventTouchUpInside];
+    [contentView addSubview:cellBtn];
 
     UIView *line = [[UIView alloc] initWithFrame:CGRectMake(0, 40, panelW, 0.5)];
     line.backgroundColor = [UIColor colorWithWhite:0 alpha:0.1]; 
@@ -3971,6 +4306,17 @@ return self;
     [self dismissViewControllerAnimated:YES completion:^{
         if (floatingView) [floatingView resetInactivityTimer];
     }];
+}
+
+// 打开蜂窝网络详情页（基站/信号/网络状态/基带设备信息）
+- (void)openCellularDetail {
+    @try {
+        SBCPUCellularDetailController *vc = [[SBCPUCellularDetailController alloc] init];
+        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
+        nav.modalPresentationStyle = UIModalPresentationPageSheet;
+        nav.modalTransitionStyle = UIModalTransitionStyleCoverVertical;
+        [self presentViewController:nav animated:YES completion:nil];
+    } @catch (NSException *e) {}
 }
 
 - (void)refreshAllDetailData {
