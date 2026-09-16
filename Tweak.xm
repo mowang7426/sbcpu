@@ -4288,20 +4288,40 @@ return self;
             static double gLastStatusFetch = 0;
             static uint8_t gCachedEngineState = 0;
             static uint8_t gCachedChargeBlocked = 0;
+            static uint8_t gCachedDaemonOK = 0;
             double now = [NSDate timeIntervalSinceReferenceDate];
             if (now - gLastStatusFetch > 3.0) {
                 sb_status_t st;
                 if (sbSMCGetStatus(&st)) {
                     gCachedEngineState = st.engineState;
                     gCachedChargeBlocked = st.chargeBlocked;
+                    gCachedDaemonOK = 1;
                     smartChargeStopped = (st.chargeBlocked != 0);
+                } else {
+                    gCachedDaemonOK = 0;
                 }
                 gLastStatusFetch = now;
             }
             NSInteger scPercent = getBatteryPercentForSmartCharge();
-            if (gCachedChargeBlocked) {
+            if (!gCachedDaemonOK) {
+                _statusLabel.text = [NSString stringWithFormat:@"⚠️ 充电守护进程未运行 · %ld%%", (long)scPercent];
+                _statusLabel.textColor = [UIColor systemRedColor];
+            } else if (gCachedEngineState == 2 || gCachedChargeBlocked) {
+                // SBCPUChargeStateBlocked：手动停充/断供 或 智能停充已触发
                 _statusLabel.text = [NSString stringWithFormat:@"🛑 停充中 · %ld%% (上限%ld)", (long)scPercent, (long)smartChargeUpperLimit];
                 _statusLabel.textColor = [UIColor systemOrangeColor];
+            } else if (gCachedEngineState == 3) {
+                // OBCControlled：系统充电管理接管，未强制覆盖
+                _statusLabel.text = @"⚠️ 系统充电管理(OBC)接管中";
+                _statusLabel.textColor = [UIColor systemOrangeColor];
+            } else if (gCachedEngineState == 5) {
+                // Unsupported：无线充电暂不支持限制
+                _statusLabel.text = @"⚠️ 无线充电暂不支持限制";
+                _statusLabel.textColor = [UIColor systemYellowColor];
+            } else if (gCachedEngineState == 6) {
+                // Error：AppleSMC 不可用
+                _statusLabel.text = @"❌ AppleSMC 不可用";
+                _statusLabel.textColor = [UIColor systemRedColor];
             } else if (isCharging) {
                 _statusLabel.text = [NSString stringWithFormat:@"🔋 智能停充待触发 · %ld%%→%ld%%", (long)scPercent, (long)smartChargeUpperLimit];
                 _statusLabel.textColor = [UIColor systemBlueColor];
