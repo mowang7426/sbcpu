@@ -571,7 +571,7 @@ static NSArray<NSDictionary *> *readAllSimSignals(void) {
         for (id context in contexts) {
             @try {
                 NSInteger bars = -1;
-                NSString *dbm = nil, rsrq = nil, snr = nil, tech = nil, carrier = nil;
+                NSString *dbm = nil, *rsrq = nil, *snr = nil, *tech = nil, *carrier = nil;
                 BOOL attached = NO, roaming = NO, dataSim = NO, sa = NO, nsa = NO, nr = NO;
 
                 // 1) 信号格数
