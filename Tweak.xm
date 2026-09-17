@@ -3789,10 +3789,9 @@ return self;
     } else { _divFps.hidden = YES; }
 
     if (showBattery) {
-        // V4.38：充电会话增量直接放到“95%”后面，不再占用第二行。
-        // 这样电量主值保持同一行、字号不被压缩，也符合浮窗横向信息流。
-        BOOL showInlineChargeDelta = isCharging && gWasExternalCharging && gActiveSession && gSessBatteryMah >= 1.0;
-        CGFloat batW = showInlineChargeDelta ? 88.0f : 48.0f;
+        // V4.41：充电会话增量不放在顶部电量后面；统一放到下方
+        // “智能停充待触发 · 81%→93%”这一行的目标百分比后面。
+        CGFloat batW = 48.0f;
         _batteryIconLabel.frame = CGRectMake(currentX, padY + 10, 18, 18);
         _batteryValueLabel.frame = CGRectMake(currentX + 18, padY + 10, batW - 18, 18);
         _batterySubLabel.hidden = YES;
@@ -4497,8 +4496,7 @@ return self;
 
     _cpuFreqLabel.text = [NSString stringWithFormat:@"%.0f MHz", cpuFreq];
     _fpsValueLabel.text = [NSString stringWithFormat:@"%.0f", fps];
-    // V4.38：充电时把会话增量直接显示在百分比后面，例如“95% +128mAh”。
-    // 非充电状态保持原来的“95%”，避免影响正常浮窗宽度。
+    // V4.41：顶部电量只显示百分比；充电会话增量放到下方智能停充状态行。
     _batteryValueLabel.adjustsFontSizeToFitWidth = NO;
     _batteryValueLabel.font = [UIFont monospacedDigitSystemFontOfSize:14.0 weight:UIFontWeightBold];
     double chargeDeltaMah = 0.0;
@@ -4506,11 +4504,7 @@ return self;
         double duration = [NSDate timeIntervalSinceReferenceDate] - gSessStartTime;
         if (duration >= 5.0 && gSessBatteryMah >= 1.0) chargeDeltaMah = gSessBatteryMah;
     }
-    if (chargeDeltaMah >= 1.0) {
-        _batteryValueLabel.text = [NSString stringWithFormat:@"%ld%% +%.0fmAh", (long)battery, chargeDeltaMah];
-    } else {
-        _batteryValueLabel.text = [NSString stringWithFormat:@"%ld%%", (long)battery];
-    }
+    _batteryValueLabel.text = [NSString stringWithFormat:@"%ld%%", (long)battery];
     _batterySubLabel.text = @"";
     _batterySubLabel.hidden = YES;
     _tempValueLabel.text = (temp > 0) ? [NSString stringWithFormat:@"%.1f°C", temp] : @"--°C";
@@ -4585,7 +4579,11 @@ return self;
                 _statusLabel.text = @"⚠️ 无线充电暂不支持限制";
                 _statusLabel.textColor = [UIColor systemYellowColor];
             } else if (isCharging) {
-                _statusLabel.text = [NSString stringWithFormat:@"🔋 智能停充待触发 · %ld%%→%ld%%", (long)scPercent, (long)smartChargeUpperLimit];
+                if (chargeDeltaMah >= 1.0) {
+                    _statusLabel.text = [NSString stringWithFormat:@"🔋 智能停充待触发 · %ld%%→%ld%% +%.0fmAh", (long)scPercent, (long)smartChargeUpperLimit, chargeDeltaMah];
+                } else {
+                    _statusLabel.text = [NSString stringWithFormat:@"🔋 智能停充待触发 · %ld%%→%ld%%", (long)scPercent, (long)smartChargeUpperLimit];
+                }
                 _statusLabel.textColor = [UIColor systemBlueColor];
             } else {
                 _statusLabel.text = [NSString stringWithFormat:@"🔋 智能停充已启用 · %ld%%", (long)scPercent];
