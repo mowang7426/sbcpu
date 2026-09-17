@@ -339,29 +339,45 @@ int smc_set_power_block(bool inhibit, bool overrideOBC) {
     uint8_t cur = 0;
     int32_t sz = 1;
 
-    /* Recovery must not be blocked by CHCE/CH0R or OBC state.  CH0I=0 is the
-       normal/auto state and is exactly what Battman's restore command writes.
-       In particular, after CH0I=1 the SMC may report CH0R.bit1=No VBUS while
-       the cable is physically still connected; treating that as a reason to
-       refuse the clear operation leaves external power permanently blocked. */
+    // 释放 CH0I 是恢复外部供电的最高优先级操作：不依赖 CHCE/CH0R。
+    // CH0I=1 时系统可能把 CHCE 报成 0，因此不能用“无外部电源”阻止恢复。
     if (!inhibit) {
         if (smc_read_key('CH0I', &cur, &sz) != kIOReturnSuccess) {
             NSLog(@"[SBCPUChargeSMC] read CH0I for recovery failed 0x%08x", smc_last_error());
             return SB_RESULT_IO_ERROR;
         }
         uint8_t zero = 0;
-        if ((cur & 1) || gPowerCache != 0) {
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            if ((cur & 1) == 0 && gPowerCache == 0) break;
             IOReturn r = smc_write_key('CH0I', &zero, 1);
             if (r != kIOReturnSuccess) {
                 NSLog(@"[SBCPUChargeSMC] recovery write CH0I=0 failed 0x%08x", smc_last_error());
                 return SB_RESULT_IO_ERROR;
             }
+            cur = 0;
+            int32_t verifySize = 1;
+            if (smc_read_key('CH0I', &cur, &verifySize) == kIOReturnSuccess && (cur & 1) == 0) {
+                gPowerCache = 0;
+                return SB_RESULT_OK;
+            }
+            usleep(50000);
         }
         gPowerCache = 0;
+        return ((cur & 1) == 0) ? SB_RESULT_OK : SB_RESULT_IO_ERROR;
+    }
+
+    // 先读 CH0I。如果已经是 1，说明断供已经生效；即使 CHCE=0 也应视为成功，
+    // 否则 UI 会出现“未检测到外部电源”但实际上已经被断供的假错误。
+    if (smc_read_key('CH0I', &cur, &sz) != kIOReturnSuccess) {
+        NSLog(@"[SBCPUChargeSMC] read CH0I failed 0x%08x", smc_last_error());
+        return SB_RESULT_IO_ERROR;
+    }
+    if (cur & 1) {
+        gPowerCache = 1;
         return SB_RESULT_OK;
     }
 
-    // 只有真正执行“阻止外部供电”时，才要求外部电源/VBUS存在。
+    // 真正首次执行断供时才要求外部电源存在。
     uint8_t chce = 0;
     if (smc_read_key('CHCE', &chce, &sz) != kIOReturnSuccess) {
         NSLog(@"[SBCPUChargeSMC] read CHCE failed 0x%08x", smc_last_error());
@@ -374,11 +390,6 @@ int smc_set_power_block(bool inhibit, bool overrideOBC) {
     if (smc_read_key('CH0R', &ch0r, &sz4) == kIOReturnSuccess && (ch0r & (1 << 1)))
         return SB_RESULT_NO_EXTERNAL_POWER;
 
-    if (smc_read_key('CH0I', &cur, &sz) != kIOReturnSuccess) {
-        NSLog(@"[SBCPUChargeSMC] read CH0I failed 0x%08x", smc_last_error());
-        return SB_RESULT_IO_ERROR;
-    }
-
     if (cur & (1 << 1)) {
         if (!overrideOBC) return SB_RESULT_OBC_TAKEN;
         if (!obc_switch(false)) {
@@ -387,16 +398,22 @@ int smc_set_power_block(bool inhibit, bool overrideOBC) {
         }
     }
 
-    int target = 1;
-    if (((cur & 1) != target) || gPowerCache != target) {
-        IOReturn r = smc_write_key('CH0I', &inhibit, 1);
+    uint8_t one = 1;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        IOReturn r = smc_write_key('CH0I', &one, 1);
         if (r != kIOReturnSuccess) {
-            NSLog(@"[SBCPUChargeSMC] write CH0I=%d failed 0x%08x", inhibit, smc_last_error());
+            NSLog(@"[SBCPUChargeSMC] write CH0I=1 failed 0x%08x", smc_last_error());
             return SB_RESULT_IO_ERROR;
         }
+        uint8_t verify = 0;
+        int32_t verifySize = 1;
+        if (smc_read_key('CH0I', &verify, &verifySize) == kIOReturnSuccess && (verify & 1)) {
+            gPowerCache = 1;
+            return SB_RESULT_OK;
+        }
+        usleep(50000);
     }
-    gPowerCache = target;
-    return SB_RESULT_OK;
+    return SB_RESULT_IO_ERROR;
 }
 
 bool smc_get_charge_blocked(void) {

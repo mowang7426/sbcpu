@@ -7812,17 +7812,29 @@ static NSString *stripLeadingEmoji(NSString *s) {
 // V4.22 — 阻止外部供电（手动，经 root daemon 写 AppleSMC CH0I）
 - (void)changeBlockPower:(UISwitch *)sw {
     if (!sw.isOn) {
-        if (sbSMCInit() == kIOReturnSuccess) {
-            IOReturn r = sbSMCSetPowerBlock(NO, NO);
-            if (r != kIOReturnSuccess) {
-                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复外部供电失败"
-                    message:sbChargeErrorMessage(r)
-                    preferredStyle:UIAlertControllerStyleAlert];
-                [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
-                [self presentViewController:alert animated:YES completion:nil];
-                sw.on = YES;
-                return;
-            }
+        // 关闭手动断供：先强制清 CH0I，并确认硬件已经恢复；
+        // 即使 CHCE 因为之前的 CH0I=1 暂时为 0，也不能阻止恢复。
+        if (sbSMCInit() != kIOReturnSuccess) {
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复外部供电失败"
+                message:sbChargeErrorMessage(kIOReturnNotOpen)
+                preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:alert animated:YES completion:nil];
+            sw.on = YES;
+            return;
+        }
+        IOReturn r = sbSMCSetPowerBlock(NO, NO);
+        if (r != kIOReturnSuccess || sbSMCGetPowerBlocked()) {
+            r = sbSMCSetPowerBlock(NO, NO);
+        }
+        if (r != kIOReturnSuccess || sbSMCGetPowerBlocked()) {
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复外部供电失败"
+                message:sbChargeErrorMessage(r)
+                preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:alert animated:YES completion:nil];
+            sw.on = YES;
+            return;
         }
         blockPowerEnable = NO;
         SavePreferencesAndNotify();
@@ -7830,6 +7842,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
         [self.tableView reloadData];
         return;
     }
+
     if (sbSMCInit() != kIOReturnSuccess) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"阻止外部供电失败"
             message:sbChargeErrorMessage(kIOReturnNotOpen)

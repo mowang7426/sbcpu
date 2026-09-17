@@ -30,6 +30,7 @@ static bool gManualPowerBlock = false;
 // 智能充电限制的独立状态（不从 CH0C 反推；keepAC=NO 用 CH0I 停充时 CH0C 仍为 0）
 static bool gLimitBlocked = false;        // 当前是否处于"达到上限停充"状态
 static bool gLimitUsesPowerBlock = false; // 本次停充用的是 CH0I（keepAC=NO）而非 CH0C
+static bool gPowerBlockUserReleased = false; // 用户手动关闭断供后的临时释放，避免智能停充立即把 CH0I 再次拉高
 
 // IOKit callbacks run on the daemon run-loop while socket commands arrive on a
 // separate thread. Keep all state-machine mutations serialized. Recursive is
@@ -224,8 +225,17 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
     if (cfgChanged) {
         SBCPUChargeConfig oldCfg = gCfg;
         gCfg = newCfg;
+        bool oldManualPowerBlock = gManualPowerBlock;
         gManualChargeBlock = gCfg.manualChargeBlock;
         gManualPowerBlock = gCfg.manualPowerBlock;
+        if (oldManualPowerBlock && !gManualPowerBlock) {
+            // 用户明确关闭“阻止外部供电”：即使当前电量仍高于智能停充上限，也不要马上被智能规则重新断供。
+            gPowerBlockUserReleased = true;
+            (void)smc_set_power_block(false, oldCfg.overrideOBC);
+            engine_log(@"manual power block released by user; temporarily suppress CH0I limit until recharge threshold");
+        } else if (gManualPowerBlock) {
+            gPowerBlockUserReleased = false;
+        }
 
         // If the user moved the limit above the current SoC, or changed the
         // drain mode while already blocked, do not carry the old hysteresis
@@ -314,8 +324,17 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
 
     // 优先级 3：智能充电限制（迟滞，独立状态变量，不从 CH0C 反推）
     if (gCfg.smartChargeEnabled || gCfg.chargeLimitEnabled) {
+        // 用户刚刚手动关闭“阻止外部供电”时，优先确保 CH0I 已释放；
+        // 在回充下限之前保持这次人工释放，避免 UI 关闭后下一次轮询又立刻断供。
+        if (gPowerBlockUserReleased) {
+            if (pct <= gCfg.lowerLimit) {
+                gPowerBlockUserReleased = false;
+            } else if (smc_get_power_blocked()) {
+                (void)smc_set_power_block(false, gCfg.overrideOBC);
+            }
+        }
         gOBC = smc_obc_taken_charge();
-        if (!gLimitBlocked && pct >= gCfg.upperLimit) {
+        if (!gLimitBlocked && !gPowerBlockUserReleased && pct >= gCfg.upperLimit) {
             // V4.30/V4.31: 智能停充触发后直接切断外部供电（CH0I=1）。
             // 这样“已阻止”与实际充电器输入路径一致，避免 CH0C inhibit
             // 后仍存在小额外部输入/系统维持电流的歧义。
