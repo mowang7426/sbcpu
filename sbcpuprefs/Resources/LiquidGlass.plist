@@ -29,6 +29,8 @@
 		<dict>
 			<key>cell</key>
 			<string>SBCPULiquidGlassSliderCell</string>
+			<key>height</key>
+			<real>112.0</real>
 			<key>label</key>
 			<string>玻璃强度</string>
 			<key>description</key>
@@ -49,6 +51,8 @@
 		<dict>
 			<key>cell</key>
 			<string>SBCPULiquidGlassSliderCell</string>
+			<key>height</key>
+			<real>112.0</real>
 			<key>label</key>
 			<string>折射强度</string>
 			<key>description</key>
@@ -69,6 +73,8 @@
 		<dict>
 			<key>cell</key>
 			<string>SBCPULiquidGlassSliderCell</string>
+			<key>height</key>
+			<real>112.0</real>
 			<key>label</key>
 			<string>玻璃厚度</string>
 			<key>description</key>
@@ -89,6 +95,8 @@
 		<dict>
 			<key>cell</key>
 			<string>SBCPULiquidGlassSliderCell</string>
+			<key>height</key>
+			<real>112.0</real>
 			<key>label</key>
 			<string>边缘高光</string>
 			<key>description</key>
@@ -109,6 +117,8 @@
 		<dict>
 			<key>cell</key>
 			<string>SBCPULiquidGlassSliderCell</string>
+			<key>height</key>
+			<real>112.0</real>
 			<key>label</key>
 			<string>色散</string>
 			<key>description</key>
@@ -129,6 +139,8 @@
 		<dict>
 			<key>cell</key>
 			<string>SBCPULiquidGlassSliderCell</string>
+			<key>height</key>
+			<real>112.0</real>
 			<key>label</key>
 			<string>边缘宽度</string>
 			<key>description</key>
@@ -149,6 +161,8 @@
 		<dict>
 			<key>cell</key>
 			<string>SBCPULiquidGlassSliderCell</string>
+			<key>height</key>
+			<real>112.0</real>
 			<key>label</key>
 			<string>折射率</string>
 			<key>description</key>
@@ -169,6 +183,8 @@
 		<dict>
 			<key>cell</key>
 			<string>SBCPULiquidGlassSliderCell</string>
+			<key>height</key>
+			<real>112.0</real>
 			<key>label</key>
 			<string>渲染质量</string>
 			<key>description</key>
