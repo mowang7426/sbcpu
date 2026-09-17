@@ -20,6 +20,8 @@
     _lgSpecifier = specifier;
     self.selectionStyle = UITableViewCellSelectionStyleNone;
     self.backgroundColor = UIColor.clearColor;
+    self.contentView.backgroundColor = UIColor.clearColor;
+    self.clipsToBounds = NO;
 
     _nameLabel = [UILabel new];
     _nameLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
@@ -56,12 +58,12 @@
     CGFloat h = CGRectGetHeight(self.contentView.bounds);
     CGFloat pad = 18.0;
     CGFloat valueW = 72.0;
-    CGFloat top = 7.0;
+    CGFloat top = 8.0;
 
     self.nameLabel.frame = CGRectMake(pad, top, w - pad * 2 - valueW, 21.0);
     self.valueLabel.frame = CGRectMake(w - pad - valueW, top, valueW, 21.0);
-    self.detailLabel.frame = CGRectMake(pad, top + 21.0, w - pad * 2, 29.0);
-    self.slider.frame = CGRectMake(pad - 3.0, h - 31.0, w - (pad - 3.0) * 2.0, 28.0);
+    self.detailLabel.frame = CGRectMake(pad, top + 22.0, w - pad * 2, 30.0);
+    self.slider.frame = CGRectMake(pad - 3.0, MAX(58.0, h - 40.0), w - (pad - 3.0) * 2.0, 28.0);
 }
 
 - (void)reloadValue {
@@ -91,8 +93,8 @@
     self.valueLabel.text = [self displayValue:slider.value key:key];
 }
 
-+ (CGFloat)preferredHeightForWidth:(CGFloat)width {
-    return 86.0;
+- (CGFloat)preferredHeightForWidth:(CGFloat)width {
+    return 112.0;
 }
 
 @end
