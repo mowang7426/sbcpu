@@ -1,4 +1,4 @@
-// SBCPUChargeEngine.m — 充电状态机实现 (V4.30 Stable)
+// SBCPUChargeEngine.m — 充电状态机实现 (V4.31 Stable)
 // 优先级（Battman 方案）：
 //   1. 安全状态（未插电 / SMC 不可用 / 无线充电不支持）→ 不写
 //   2. 手动阻止充电（manualChargeBlock）→ CH0C = inhibit
@@ -217,16 +217,6 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
         return;
     }
 
-    // 优先级 1：安全状态
-    if (!charging || !smc_external_connected()) {
-        if (gState != SBCPUChargeStateNoPower) {
-            gState = SBCPUChargeStateNoPower;
-            engine_log(@"no external power; idle (pct=%d)", pct);
-        }
-        engine_unlock();
-        return;
-    }
-
     // 重读配置（每次决策都读，保证 UI 改动即时生效）
     SBCPUChargeConfig newCfg = gCfg;
     (void)sb_engine_load_config(&newCfg);
@@ -255,6 +245,42 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
 
         engine_log(@"config updated: smart=%d upper=%d lower=%d keepAC=%d obc=%d",
             gCfg.smartChargeEnabled, gCfg.upperLimit, gCfg.lowerLimit, gCfg.keepAC, gCfg.overrideOBC);
+    }
+
+    // V4.31：CH0I 停充后，IOPMPowerSource 的 ExternalConnected/charging
+    // 会变成 false。因此“安全状态”检查不能挡在回充判断之前。
+    // 只要智能停充已启用、没有手动断供，并且电量已经跌到回充下限，
+    // 先无条件清除我们自己的 CH0I，再重新采样一次电源状态。
+    // 这样 85% -> 82% 时不会因为 CH0I=1 导致系统一直停在 NoPower。
+    if (gCfg.smartChargeEnabled && !gCfg.manualChargeBlock && !gCfg.manualPowerBlock &&
+        pct >= 0 && pct <= gCfg.lowerLimit) {
+        bool shouldReleaseLimit = gLimitBlocked || smc_get_power_blocked();
+        if (shouldReleaseLimit) {
+            int rr = smc_set_power_block(false, gCfg.overrideOBC);
+            if (rr == SB_RESULT_OK) {
+                gLimitBlocked = false;
+                gLimitUsesPowerBlock = false;
+                gState = SBCPUChargeStateCharging;
+                engine_log(@"smart recovery: pct=%d <= %d -> RELEASE CH0I before power-state gate", pct, gCfg.lowerLimit);
+                // 重新读取 ExternalConnected/charging；如果物理充电器仍在，
+                // 同一次事件即可继续走正常充电状态机。
+                sb_power_poll_once();
+                engine_unlock();
+                return;
+            } else {
+                engine_log(@"smart recovery: pct=%d <= %d but CH0I release failed result=%d", pct, gCfg.lowerLimit, rr);
+            }
+        }
+    }
+
+    // 优先级 1：安全状态
+    if (!charging || !smc_external_connected()) {
+        if (gState != SBCPUChargeStateNoPower) {
+            gState = SBCPUChargeStateNoPower;
+            engine_log(@"no external power; idle (pct=%d)", pct);
+        }
+        engine_unlock();
+        return;
     }
 
     // 无线充电：底层不可靠控制 → 不假装成功
@@ -290,7 +316,7 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
     if (gCfg.smartChargeEnabled || gCfg.chargeLimitEnabled) {
         gOBC = smc_obc_taken_charge();
         if (!gLimitBlocked && pct >= gCfg.upperLimit) {
-            // V4.30: 智能停充触发后直接切断外部供电（CH0I=1）。
+            // V4.30/V4.31: 智能停充触发后直接切断外部供电（CH0I=1）。
             // 这样“已阻止”与实际充电器输入路径一致，避免 CH0C inhibit
             // 后仍存在小额外部输入/系统维持电流的歧义。
             // keepAC 不再决定智能停充的执行路径；它仍保留在配置协议中以

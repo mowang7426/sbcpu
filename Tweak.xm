@@ -359,6 +359,7 @@ static BOOL smartChargeStopped = NO;           // 当前是否处于停充状态
 static BOOL blockChargingEnable = NO;          // V4.21 — 阻止充电（SMC CH0C，经 daemon）
 static BOOL blockPowerEnable = NO;             // V4.21 — 阻止外部供电（SMC CH0I，经 daemon）
 static BOOL chargeKeepAC = YES;                // V4.25 — 达到上限时保留外部供电（只停充不断 AC）
+static BOOL gSmartChargeHoldDisplay = NO; // V4.31：CH0I 停充时仍保持浮窗充电布局
 static BOOL chargeOverrideOBC = NO;            // V4.25 — 覆盖系统"优化电池充电"接管（OBC）
 
 static CGRect keyboardBeforeFrame;
@@ -2101,6 +2102,9 @@ static void updateFloatingSize(void) {
     if (!floatingView) return;
 
     BOOL charging = isChargingInternal();
+    // CH0I 智能停充会让 AppleSmartBattery.IsCharging 变成 NO。
+    // 但物理充电器仍在，浮窗不应因此瞬间缩掉“电量/状态”区域。
+    BOOL layoutCharging = charging || gSmartChargeHoldDisplay;
     UIInterfaceOrientation orientation = getEffectiveFloatingOrientation();
 
     floatingView.transform = CGAffineTransformIdentity;
@@ -2110,7 +2114,7 @@ static void updateFloatingSize(void) {
                             showBatteryPercent:showBatteryPercent
                                showBatteryTemp:showBatteryTemperature
                             showBatteryCurrent:showBatteryCurrent
-                                    isCharging:charging];
+                                    isCharging:layoutCharging];
 
     // 启动动画期间，布局仍按原插件计算，但视觉上只显示这个“原浮窗变形”的紧凑启动卡片。
     if (fastChargeStartupAnimating) {
@@ -3701,7 +3705,7 @@ return self;
     } else { _divFps.hidden = YES; }
 
     if (showBattery) {
-        CGFloat batW = 44.0f;
+        CGFloat batW = 52.0f;
         _batteryIconLabel.frame = CGRectMake(currentX, padY + 10, 18, 18);
         _batteryValueLabel.frame = CGRectMake(currentX + 20, padY + 10, batW - 20, 16);
         _batterySubLabel.frame = CGRectMake(currentX + 20, padY + 27, batW - 20, 12);
@@ -4346,7 +4350,10 @@ return self;
         }
     }
     _tempValueLabel.text = (temp > 0) ? [NSString stringWithFormat:@"%.1f°C", temp] : @"--°C";
-    _currentValueLabel.text = [NSString stringWithFormat:@"%.0f mA", current];
+    // 智能停充 = CH0I 已验证阻断外部供电；此时 AppleSmartBattery 的
+    // Amperage 仍可能是设备负载电流，不应把它显示成“充电电流”。
+    double displayCurrent = gSmartChargeHoldDisplay ? 0.0 : current;
+    _currentValueLabel.text = [NSString stringWithFormat:@"%.0f mA", displayCurrent];
 
     // 直接读取 SBCPUThermal 的核心心跳、保护状态和诊断热压力。
     // 不读取设置页面的静态文字，所以浮窗每次刷新都会显示最新状态。
@@ -4369,6 +4376,7 @@ return self;
             static double gLastStatusFetch = 0;
             static uint8_t gCachedEngineState = 0;
             static uint8_t gCachedChargeBlocked = 0;
+            static uint8_t gCachedPowerBlocked = 0;
             static uint8_t gCachedDaemonOK = 0;
             static uint8_t gCachedSmcAvailable = 1;
             static uint8_t gCachedVersion = 0;
@@ -4378,12 +4386,16 @@ return self;
                 if (sbSMCGetStatus(&st)) {
                     gCachedEngineState = st.engineState;
                     gCachedChargeBlocked = st.chargeBlocked;
+                    gCachedPowerBlocked = st.powerBlocked;
+                    // V4.30 智能停充实际使用 CH0I，所以不能只看 chargeBlocked。
+                    gSmartChargeHoldDisplay = (smartChargeEnable && st.powerBlocked);
                     gCachedDaemonOK = 1;
                     gCachedSmcAvailable = st.smcAvailable;
                     gCachedVersion = st.version;
-                    smartChargeStopped = (st.chargeBlocked != 0);
+                    smartChargeStopped = (st.chargeBlocked != 0 || st.powerBlocked != 0);
                 } else {
                     gCachedDaemonOK = 0;
+                    gSmartChargeHoldDisplay = NO;
                 }
                 gLastStatusFetch = now;
             }
@@ -4451,7 +4463,7 @@ return self;
     } else if (collapsedDisplayMode == 2) {
         _miniCpuLabel.text = (temp > 0) ? [NSString stringWithFormat:@"%.0f°", temp] : @"--°";
     } else if (collapsedDisplayMode == 3) {
-        _miniCpuLabel.text = [NSString stringWithFormat:@"%.0fmA", current];
+        _miniCpuLabel.text = [NSString stringWithFormat:@"%.0fmA", displayCurrent];
     } else if (collapsedDisplayMode == 4) {
         _miniCpuLabel.text = [NSString stringWithFormat:@"%ld%%", (long)MAX(0, MIN(100, battery))];
     }
