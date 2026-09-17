@@ -1218,7 +1218,7 @@ enum {
 
 #define SB_SOCKET_PATH "/var/mobile/Library/Preferences/sbcpu_charge.sock"
 #define SB_MAGIC 0x53424350
-#define SB_DAEMON_VERSION 4
+#define SB_DAEMON_VERSION 3
 
 // daemon 返回的 result 语义（与 SBCPUChargeProtocol.h SB_RESULT_* 对齐）
 enum {
@@ -1345,14 +1345,6 @@ static bool sbSMCWriteFull(int fd, const void *buf, size_t len) {
 
 static IOReturn sbSMCRequest(uint8_t cmd, uint8_t value, uint8_t *outValue) {
     int fd = sbSMCConnect();
-    if (fd < 0) {
-        // V4.40: a transient socket failure must not become a permanent
-        // "daemon unavailable" state in SpringBoard. Ask launchd to start it
-        // and retry the socket once.
-        sbSMCLoadDaemon();
-        usleep(400 * 1000);
-        fd = sbSMCConnect();
-    }
     if (fd < 0) return kIOReturnNotOpen;
     sb_cmd_t c = {0};
     c.magic = SB_MAGIC;
@@ -1372,12 +1364,12 @@ static IOReturn sbSMCRequest(uint8_t cmd, uint8_t value, uint8_t *outValue) {
 }
 
 static IOReturn sbSMCInit(void) {
-    // V4.40: do not permanently cache a failed probe. launchd may need a
-    // moment after install/respring before the socket becomes available.
+    if (gSMCChecked && gSMCAvailable) return kIOReturnSuccess;
     int fd = sbSMCConnect();
     if (fd < 0) {
+        // daemon 未运行：尝试拉起一次，等待后重试
         sbSMCLoadDaemon();
-        usleep(400 * 1000);
+        usleep(600 * 1000);
         fd = sbSMCConnect();
     }
     if (fd < 0) {
@@ -4071,6 +4063,9 @@ return self;
     self.performanceContainer.alpha = 1.0;
     self.collapsedContainerView.hidden = NO;
 
+    // 折叠动画使用独立的圆角变量，避免 block 捕获未声明的 cornerRad。
+    CGFloat collapseCornerRad = MIN(floatingCornerRadius, targetH * 0.5f);
+
     void (^animationsBlock)(void) = ^{
         for (UIView *v in self.performanceContainer.subviews) {
             if (v != self.collapsedContainerView) v.alpha = 0.0;
@@ -4084,7 +4079,7 @@ return self;
         self.glassSurfaceView.frame = CGRectMake(0, 0, targetW, targetH);
         if (self->_blurView) {
             self->_blurView.frame = self.glassSurfaceView.bounds;
-            self->_blurView.layer.cornerRadius = cornerRad;
+            self->_blurView.layer.cornerRadius = collapseCornerRad;
         }
         self.glassContentView.frame = self.glassSurfaceView.bounds;
 
