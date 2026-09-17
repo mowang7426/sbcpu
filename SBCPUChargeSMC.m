@@ -17,17 +17,40 @@
 #include "SBCPUChargeSMC.h"
 #include "SBCPUChargeProtocol.h"
 
+typedef struct SMCVersion {
+    uint8_t  major;
+    uint8_t  minor;
+    uint8_t  build;
+    uint16_t release;
+} SMCVersion;
+
+typedef struct SMCPLimitData {
+    uint16_t version;
+    uint16_t length;
+    uint32_t cpuPLimit;
+    uint32_t gpuPLimit;
+    uint32_t memPLimit;
+} SMCPLimitData;
+
 typedef struct SMCKeyInfoData {
     uint32_t dataSize;
     uint32_t dataType;
     uint8_t  dataAttributes;
 } SMCKeyInfoData;
 
+/*
+ * AppleSMC's user-client struct is ABI-sensitive. Battman uses the 168-byte
+ * arm64 layout (bytes[120]); the previous SBCPU struct used a 164-byte
+ * substitute layout by making `vers` a single byte. That makes every field
+ * after `vers` land at the wrong offset and AppleSMC rejects the call with
+ * kIOReturnBadArgument (0xe00002c2). Keep this layout byte-for-byte compatible
+ * with Battman's libsmc implementation.
+ */
 typedef struct SMCParamStruct {
     uint32_t key;
     struct SMCParam {
-        uint8_t  vers;
-        uint8_t  pLimitData[16];
+        SMCVersion vers;
+        SMCPLimitData pLimitData;
         SMCKeyInfoData keyInfo;
         uint8_t  result;
         uint8_t  status;
@@ -36,6 +59,8 @@ typedef struct SMCParamStruct {
         unsigned char bytes[120];
     } param;
 } SMCParamStruct;
+
+_Static_assert(sizeof(SMCParamStruct) == 168, "AppleSMC ABI must be 168 bytes");
 
 enum {
     kSMCUserClientOpen,
@@ -147,11 +172,22 @@ IOReturn smc_write_key(uint32_t key, const void *bytes, uint32_t size) {
     SMCParamStruct out = {0};
     IOReturn r = smc_get_keyinfo(key, &in.param.keyInfo);
     if (r != kIOReturnSuccess) return r;
-    if (in.param.keyInfo.dataSize > size) return kIOReturnIOError;
+    uint32_t dataSize = in.param.keyInfo.dataSize;
+    if (dataSize == 0 || dataSize > sizeof(in.param.bytes)) return kIOReturnBadArgument;
+    if (dataSize > size || (dataSize > 0 && !bytes)) return kIOReturnBadArgument;
     in.param.data8 = kSMCWriteKey;
     in.key = key;
-    if (bytes) memcpy(in.param.bytes, bytes, in.param.keyInfo.dataSize);
-    return smc_call(kSMCHandleYPCEvent, &in, &out);
+    memcpy(in.param.bytes, bytes, dataSize);
+    r = smc_call(kSMCHandleYPCEvent, &in, &out);
+    if (r != kIOReturnSuccess) return r;
+    /* IOConnectCallStructMethod can succeed while the SMC firmware rejects
+       the command; result==0 is the SMC-level success value. */
+    if (out.param.result != 0) {
+        gLastSMCError = kIOReturnError;
+        NSLog(@"[SBCPUChargeSMC] SMC rejected write key=0x%08x result=0x%02x", key, out.param.result);
+        return kIOReturnError;
+    }
+    return kIOReturnSuccess;
 }
 
 bool smc_external_connected(void) {
