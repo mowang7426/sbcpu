@@ -30,6 +30,7 @@
 #include <ctype.h>
 #import "SBCPUThermalPaths.h"
 #import "SBCPUThermalPressure.h"
+#import "Shared/LGLiveBackdropView.h"
 
 #ifndef kIOMainPortDefault
 #define kIOMainPortDefault kIOMasterPortDefault
@@ -356,6 +357,14 @@ static BOOL showBatteryPercent = YES;
 static BOOL showBatteryTemperature = YES;
 static BOOL showBatteryCurrent = YES;
 static BOOL liquidGlassEnabled = YES; // 液态玻璃效果开关
+static float liquidGlassStrength = 0.75f;
+static float liquidGlassRefraction = 0.65f;
+static float liquidGlassThickness = 0.70f;
+static float liquidGlassSpecular = 0.65f;
+static float liquidGlassDispersion = 0.20f;
+static float liquidGlassBezel = 0.90f;
+static float liquidGlassRefractiveIndex = 1.70f;
+static float liquidGlassQuality = 1.0f;
 // V4.8 液态玻璃自定义：背景白雾透明度 / 磨砂强度(blurRadius) / 卡片不透明度
 static float glassDimOpacity = 0.90f;
 static float glassBlurRadius = 50.0f;
@@ -978,6 +987,15 @@ static void LoadPreferences(void) {
     showBatteryTemperature = getBoolPref(CFSTR("showBatteryTemperature"), YES);
     showBatteryCurrent = getBoolPref(CFSTR("showBatteryCurrent"), YES);
     liquidGlassEnabled = getBoolPref(CFSTR("liquidGlassEnabled"), YES);
+    // V4.36 Liquid Glass renderer tuning.
+    liquidGlassStrength = getFloatPref(CFSTR("SBCPU.LiquidGlass.Strength"), 0.75f);
+    liquidGlassRefraction = getFloatPref(CFSTR("SBCPU.LiquidGlass.Refraction"), 0.65f);
+    liquidGlassThickness = getFloatPref(CFSTR("SBCPU.LiquidGlass.Thickness"), 0.70f);
+    liquidGlassSpecular = getFloatPref(CFSTR("SBCPU.LiquidGlass.Specular"), 0.65f);
+    liquidGlassDispersion = getFloatPref(CFSTR("SBCPU.LiquidGlass.Dispersion"), 0.20f);
+    liquidGlassBezel = getFloatPref(CFSTR("SBCPU.LiquidGlass.Bezel"), 0.90f);
+    liquidGlassRefractiveIndex = getFloatPref(CFSTR("SBCPU.LiquidGlass.RefractiveIndex"), 1.70f);
+    liquidGlassQuality = getFloatPref(CFSTR("SBCPU.LiquidGlass.Quality"), 1.0f);
     smartChargeEnable = getBoolPref(CFSTR("smartChargeEnable"), NO);
     smartChargeUpperLimit = (NSInteger)getFloatPref(CFSTR("smartChargeUpperLimit"), 80.0f);
     smartChargeLowerLimit = (NSInteger)getFloatPref(CFSTR("smartChargeLowerLimit"), 70.0f);
@@ -1045,6 +1063,14 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("showBatteryTemperature"), showBatteryTemperature);
     setBoolPref(CFSTR("showBatteryCurrent"), showBatteryCurrent);
     setBoolPref(CFSTR("liquidGlassEnabled"), liquidGlassEnabled);
+    setFloatPref(CFSTR("SBCPU.LiquidGlass.Strength"), liquidGlassStrength);
+    setFloatPref(CFSTR("SBCPU.LiquidGlass.Refraction"), liquidGlassRefraction);
+    setFloatPref(CFSTR("SBCPU.LiquidGlass.Thickness"), liquidGlassThickness);
+    setFloatPref(CFSTR("SBCPU.LiquidGlass.Specular"), liquidGlassSpecular);
+    setFloatPref(CFSTR("SBCPU.LiquidGlass.Dispersion"), liquidGlassDispersion);
+    setFloatPref(CFSTR("SBCPU.LiquidGlass.Bezel"), liquidGlassBezel);
+    setFloatPref(CFSTR("SBCPU.LiquidGlass.RefractiveIndex"), liquidGlassRefractiveIndex);
+    setFloatPref(CFSTR("SBCPU.LiquidGlass.Quality"), liquidGlassQuality);
     setBoolPref(CFSTR("smartChargeEnable"), smartChargeEnable);
     setFloatPref(CFSTR("smartChargeUpperLimit"), (float)smartChargeUpperLimit);
     setFloatPref(CFSTR("smartChargeLowerLimit"), (float)smartChargeLowerLimit);
@@ -2790,48 +2816,37 @@ static void LGRemoveLabelShadowInView(UIView *view) {
 // hostView 始终就是 SBCPUFloatingView 本身；尺寸由浮窗布局单独决定。
 - (void)refreshNativeLiquidGlass {
     if (!_nativeLiquidGlassView || !_usingNativeLiquidGlass) return;
-
-    CGRect targetBounds = self.bounds;
-    if (CGRectIsEmpty(targetBounds)) {
+    CGRect b = self.bounds;
+    if (CGRectIsEmpty(b)) {
         _nativeLiquidGlassView.hidden = YES;
         return;
     }
-
-    _nativeLiquidGlassView.frame = targetBounds;
-    // 不修改 CCLiquidGlassView 的 cornerRadius / masksToBounds。
-    // 这些属性交给系统私有实现，避免把原生 Liquid Glass 降级成普通裁剪磨砂。
-
-    @try {
-        if ([(id)_nativeLiquidGlassView respondsToSelector:@selector(updateForHostView:preferredStyle:)]) {
-            [(id)_nativeLiquidGlassView updateForHostView:self preferredStyle:1];
-        } else if ([(id)_nativeLiquidGlassView respondsToSelector:@selector(updateForHostView:)]) {
-            [(id)_nativeLiquidGlassView updateForHostView:self];
-        }
-    } @catch (NSException *e) {
-        NSLog(@"[SBCPUFloating] V4.35 native Liquid Glass refresh exception: %@", e);
+    _nativeLiquidGlassView.frame = b;
+    CGFloat r = MIN(floatingCornerRadius, CGRectGetHeight(b) * 0.5);
+    _nativeLiquidGlassView.layer.cornerRadius = r;
+    _nativeLiquidGlassView.layer.cornerCurve = kCACornerCurveContinuous;
+    _nativeLiquidGlassView.layer.masksToBounds = YES;
+    if ([_nativeLiquidGlassView isKindOfClass:[LGLiveBackdropView class]]) {
+        [(LGLiveBackdropView *)_nativeLiquidGlassView applyFilters];
     }
 }
+
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-
     if (_nativeLiquidGlassView && _usingNativeLiquidGlass) {
-        // 只同步 frame；绝不在 layoutSubviews 中改 self.bounds/self.center。
         CGRect b = self.bounds;
         _nativeLiquidGlassView.frame = b;
-        if (!CGRectIsEmpty(b)) {
-            @try {
-                if ([(id)_nativeLiquidGlassView respondsToSelector:@selector(updateForHostView:preferredStyle:)]) {
-                    [(id)_nativeLiquidGlassView updateForHostView:self preferredStyle:1];
-                } else if ([(id)_nativeLiquidGlassView respondsToSelector:@selector(updateForHostView:)]) {
-                    [(id)_nativeLiquidGlassView updateForHostView:self];
-                }
-            } @catch (NSException *e) {
-                NSLog(@"[SBCPUFloating] V4.35 native Liquid Glass layout refresh exception: %@", e);
-            }
+        CGFloat r = MIN(floatingCornerRadius, CGRectGetHeight(b) * 0.5);
+        _nativeLiquidGlassView.layer.cornerRadius = r;
+        _nativeLiquidGlassView.layer.cornerCurve = kCACornerCurveContinuous;
+        _nativeLiquidGlassView.layer.masksToBounds = YES;
+        if ([_nativeLiquidGlassView isKindOfClass:[LGLiveBackdropView class]] && !CGRectIsEmpty(b)) {
+            [(LGLiveBackdropView *)_nativeLiquidGlassView applyFilters];
         }
     }
 }
+
 
 - (void)applyLiquidGlassStyle {
     BOOL enabled = liquidGlassEnabled;
@@ -2840,6 +2855,9 @@ static void LGRemoveLabelShadowInView(UIView *view) {
     if (_nativeLiquidGlassView && _usingNativeLiquidGlass) {
         _nativeLiquidGlassView.hidden = !enabled;
         _nativeLiquidGlassView.alpha = 1.0;
+        if (enabled && [_nativeLiquidGlassView isKindOfClass:[LGLiveBackdropView class]]) {
+            [(LGLiveBackdropView *)_nativeLiquidGlassView applyFilters];
+        }
     }
 
     // Native Glass 不可用时，保留旧 UIVisualEffectView 作为安全 fallback；
@@ -3027,7 +3045,8 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         self.layer.shadowOffset = CGSizeMake(0, 6);
         self.layer.shadowRadius = 18.0f;
 
-        // === V4.34：原浮窗背景直接切换为 CCLiquidGlassView ===
+        // V4.36：SBCPU 直接使用 ceshi-main 的 CABackdropLayer + CAFilter + Metal renderer。
+        // 不再依赖 CCLiquidGlassView；SBCPUFloatingView 自身就是 host surface。
         UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialLight];
         _blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
         _blurView.userInteractionEnabled = NO;
@@ -3037,35 +3056,23 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _glassSurfaceView = nil;
 
         @try {
-            Class glassCls = NSClassFromString(@"CCLiquidGlassView");
-            if (glassCls && [glassCls isSubclassOfClass:[UIView class]]) {
-                UIView *nativeGlass = [[glassCls alloc] initWithFrame:CGRectZero];
-                if (nativeGlass) {
-                    _nativeLiquidGlassView = nativeGlass;
-                    _usingNativeLiquidGlass = YES;
-                    nativeGlass.userInteractionEnabled = NO;
-                    nativeGlass.backgroundColor = UIColor.clearColor;
-                    // V4.35：不碰系统 Liquid Glass 的 cornerRadius / masksToBounds。
-                    // 让 CCLiquidGlassView 自己管理其材质、裁剪和动态效果。
-
-                    // Native Liquid Glass 直接作为 SBCPU 浮窗的唯一背景表面；
-                    // 普通 UIBlurEffect 只作为“液态玻璃关闭/私有类不存在”时的 fallback。
-                    [self insertSubview:nativeGlass atIndex:0];
-                    _glassSurfaceView = nativeGlass;
-
-                    if ([nativeGlass respondsToSelector:@selector(updateForHostView:preferredStyle:)]) {
-                        [(id)nativeGlass updateForHostView:self preferredStyle:1];
-                    } else if ([nativeGlass respondsToSelector:@selector(updateForHostView:)]) {
-                        [(id)nativeGlass updateForHostView:self];
-                    }
-
-                    NSLog(@"[SBCPUFloating] V4.34 CCLiquidGlassView found and installed as native surface");
-                }
+            LGLiveBackdropView *glass = [[LGLiveBackdropView alloc]
+                initWithFrame:CGRectZero
+                    groupName:@"dylv.liquidglass.sbcpufloating.instance"
+                   filterType:@"dylv.liquidglass.sbcpufloating"];
+            if (glass) {
+                glass.userInteractionEnabled = NO;
+                glass.backgroundColor = UIColor.clearColor;
+                _nativeLiquidGlassView = glass;
+                _usingNativeLiquidGlass = YES;
+                _glassSurfaceView = glass;
+                [self insertSubview:glass atIndex:0];
+                NSLog(@"[SBCPUFloating] V4.36 Metal Liquid Glass renderer installed");
             }
         } @catch (NSException *e) {
             _nativeLiquidGlassView = nil;
             _usingNativeLiquidGlass = NO;
-            NSLog(@"[SBCPUFloating] V4.34 CCLiquidGlassView init failed: %@", e);
+            NSLog(@"[SBCPUFloating] V4.36 renderer init failed: %@", e);
         }
 
         if (!_usingNativeLiquidGlass) {

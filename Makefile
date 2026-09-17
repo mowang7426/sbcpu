@@ -6,10 +6,10 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = SBCPUFloating SBCPUThermal SBCPUPowerd SBCPUFloatingCCRegistration SBCPUForce120
 
 # 1. 桌面 UI、悬浮窗、120Hz/FPS、通知管理
-SBCPUFloating_FILES = Tweak.xm
-SBCPUFloating_CFLAGS = -fobjc-arc -Iinclude
+SBCPUFloating_FILES = Tweak.xm Shared/LGLiveBackdropView.m Shared/LGWallpaperBlurCache.m Shared/LGSharedSupport.m
+SBCPUFloating_CFLAGS = -fobjc-arc -Iinclude -IShared
 SBCPUFloating_LDFLAGS = -Wl,-U,___isOSVersionAtLeast
-SBCPUFloating_FRAMEWORKS = UIKit Foundation QuartzCore CoreMotion
+SBCPUFloating_FRAMEWORKS = UIKit Foundation QuartzCore CoreMotion CoreImage CoreGraphics
 SBCPUFloating_PRIVATE_FRAMEWORKS = PowerUI IOKit FrontBoardServices
 SBCPUFloating_INSTALL_TARGET_PROCESSES = SpringBoard
 
@@ -74,6 +74,7 @@ include $(THEOS_MAKE_PATH)/tool.mk
 
 # PreferenceBundle
 SUBPROJECTS += sbcpuprefs
+SUBPROJECTS += SBCPULiquidGlassBackboardd
 
 # Control Center Bundle：结构/生命周期参考 CPUthermal 1.6.4-53。
 BUNDLE_NAME = SBCPUFloatingCC
@@ -108,3 +109,5 @@ after-stage::
 	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/prerm" "$(THEOS_STAGING_DIR)/DEBIAN/prerm"$(ECHO_END)
 	$(ECHO_NOTHING)chmod 0755 "$(THEOS_STAGING_DIR)/DEBIAN/postinst"$(ECHO_END)
 	$(ECHO_NOTHING)chmod 0755 "$(THEOS_STAGING_DIR)/DEBIAN/prerm"$(ECHO_END)
+	$(ECHO_NOTHING)mkdir -p "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries"$(ECHO_END)
+	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/SBCPULiquidGlassBackboardd/SBCPULiquidGlassBackboardd.plist" "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/SBCPULiquidGlassBackboardd.plist"$(ECHO_END)
