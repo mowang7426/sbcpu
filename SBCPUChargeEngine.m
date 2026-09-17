@@ -1,4 +1,4 @@
-// SBCPUChargeEngine.m — 充电状态机实现 (V4.26 Stable)
+// SBCPUChargeEngine.m — 充电状态机实现 (V4.29 Stable)
 // 优先级（Battman 方案）：
 //   1. 安全状态（未插电 / SMC 不可用 / 无线充电不支持）→ 不写
 //   2. 手动阻止充电（manualChargeBlock）→ CH0C = inhibit
@@ -303,7 +303,7 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
                 gLimitBlocked = true;
                 if (gState != SBCPUChargeStateBlocked) {
                     gState = SBCPUChargeStateBlocked;
-                    engine_log(@"limit reached: pct=%d >= %d -> BLOCKED (%s)",
+                    engine_log(@"limit reached: pct=%d >= %d -> BLOCKED (%s), SMC verified",
                         pct, gCfg.upperLimit, gLimitUsesPowerBlock ? "CH0I" : "CH0C");
                 }
             } else if (r == SB_RESULT_OBC_TAKEN) {

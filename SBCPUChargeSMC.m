@@ -326,10 +326,13 @@ int smc_set_charge_block(bool inhibit, bool overrideOBC) {
     int target = 1;
     if (((cur & 1) != target) || gChargeCache != target) {
         IOReturn r = smc_write_key('CH0C', &inhibit, 1);
-        if (r != kIOReturnSuccess) {
-            NSLog(@"[SBCPUChargeSMC] write CH0C=%d failed 0x%08x", inhibit, smc_last_error());
+        if (r != kIOReturnSuccess || !smc_verify_bit('CH0C', 1)) {
+            NSLog(@"[SBCPUChargeSMC] write/verify CH0C=%d failed 0x%08x",
+                  inhibit, (unsigned)smc_last_error());
             return SB_RESULT_IO_ERROR;
         }
+    } else if (!smc_verify_bit('CH0C', 1)) {
+        return SB_RESULT_IO_ERROR;
     }
     gChargeCache = target;
     return SB_RESULT_OK;
@@ -390,13 +393,28 @@ int smc_set_power_block(bool inhibit, bool overrideOBC) {
     int target = 1;
     if (((cur & 1) != target) || gPowerCache != target) {
         IOReturn r = smc_write_key('CH0I', &inhibit, 1);
-        if (r != kIOReturnSuccess) {
-            NSLog(@"[SBCPUChargeSMC] write CH0I=%d failed 0x%08x", inhibit, smc_last_error());
+        if (r != kIOReturnSuccess || !smc_verify_bit('CH0I', 1)) {
+            NSLog(@"[SBCPUChargeSMC] write/verify CH0I=%d failed 0x%08x",
+                  inhibit, (unsigned)smc_last_error());
             return SB_RESULT_IO_ERROR;
         }
+    } else if (!smc_verify_bit('CH0I', 1)) {
+        return SB_RESULT_IO_ERROR;
     }
     gPowerCache = target;
     return SB_RESULT_OK;
+}
+
+
+static bool smc_verify_bit(uint32_t key, uint8_t expectedBit) {
+    uint8_t v = 0;
+    int32_t sz = 1;
+    if (smc_read_key(key, &v, &sz) != kIOReturnSuccess) {
+        NSLog(@"[SBCPUChargeSMC] verify key=0x%08x read failed 0x%08x",
+              key, (unsigned)smc_last_error());
+        return false;
+    }
+    return ((v & 1u) != 0u) == (expectedBit != 0);
 }
 
 bool smc_get_charge_blocked(void) {

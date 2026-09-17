@@ -60,3 +60,6 @@
 ## GitHub Actions
 
 项目原有 `build.yml` / `build_fixed.yml` 保留。推荐使用 `build_fixed.yml` 手动触发，确认 RootHide Theos + iPhoneOS 16.5 SDK 后执行 `make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide`。
+
+
+> V4.29 note: CH0C/CH0I write-back verification and charging-current display semantics were added in V4.29.

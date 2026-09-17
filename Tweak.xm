@@ -1344,7 +1344,7 @@ static IOReturn sbSMCInit(void) {
     return kIOReturnSuccess;
 }
 
-// V4.26 — 智能充电配置载荷（与 daemon 协议一致）
+// V4.29 — 智能充电配置载荷 + 停充电流显示语义修正（与 daemon 协议一致）
 typedef struct {
     uint8_t  smartChargeEnabled;
     uint8_t  chargeLimitEnabled;
@@ -4388,6 +4388,13 @@ return self;
                 gLastStatusFetch = now;
             }
             NSInteger scPercent = getBatteryPercentForSmartCharge();
+            // Re-read the UI current after the daemon status is known. A stopped
+            // charge can still show a small positive-looking battery Amperage
+            // due to device load/measurement semantics; don't label that as
+            // charging current.
+            if (gCachedDaemonOK) {
+                current = getFloatingChargingCurrentMA(gCachedChargeBlocked != 0);
+            }
             if (!gCachedDaemonOK) {
                 _statusLabel.text = [NSString stringWithFormat:@"⚠️ 充电守护进程未运行 · %ld%%", (long)scPercent];
                 _statusLabel.textColor = [UIColor systemRedColor];
