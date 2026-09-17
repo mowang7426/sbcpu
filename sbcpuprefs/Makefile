@@ -6,10 +6,10 @@ include $(THEOS)/makefiles/common.mk
 
 BUNDLE_NAME = SBCPUPrefs
 
-SBCPUPrefs_FILES = SBCPUPrefsRootListController.m
+SBCPUPrefs_FILES = SBCPUPrefsRootListController.m SBCPUChargePreferencesCommon.m SBCPUChargeManagementController.m SBCPUChargeLimitController.m
 SBCPUPrefs_FRAMEWORKS = UIKit
 SBCPUPrefs_PRIVATE_FRAMEWORKS = Preferences
-SBCPUPrefs_CFLAGS = -fobjc-arc
+SBCPUPrefs_CFLAGS = -fobjc-arc -I../include
 
 # 🔴 核心修复3：指定正确的安装路径和主类
 SBCPUPrefs_INSTALL_PATH = /Library/PreferenceBundles
