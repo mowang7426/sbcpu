@@ -3791,9 +3791,12 @@ return self;
     if (showBattery) {
         // V4.41：充电会话增量不放在顶部电量后面；统一放到下方
         // “智能停充待触发 · 81%→93%”这一行的目标百分比后面。
-        CGFloat batW = 48.0f;
+        // V4.42：顶部电量必须完整显示“XX%”。之前 batW=48 时，电量标签只有 30pt，
+        // 在当前描边/字体配置下会被截成“82...”或“97...”。增量已移到下方状态行，
+        // 因此这里给百分比独立留出足够宽度，并让外层自动扩宽，避免任何截断。
+        CGFloat batW = 60.0f;
         _batteryIconLabel.frame = CGRectMake(currentX, padY + 10, 18, 18);
-        _batteryValueLabel.frame = CGRectMake(currentX + 18, padY + 10, batW - 18, 18);
+        _batteryValueLabel.frame = CGRectMake(currentX + 18, padY + 10, 42.0f, 18);
         _batterySubLabel.hidden = YES;
         _batterySubLabel.frame = CGRectZero;
         currentX += batW + 3.0f;
