@@ -149,9 +149,17 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 - (void)handleNewNotification:(SBNotifReq *)req;
 @end
 
+// iOS 26 私有原生液态玻璃容器（运行时动态检测，低版本自动回退）。
+// 不直接链接私有类，避免旧系统启动/链接失败。
+@interface CCLiquidGlassView : UIView
+- (void)updateForHostView:(UIView *)hostView;
+- (void)updateForHostView:(UIView *)hostView preferredStyle:(NSInteger)style;
+@end
+
 @interface SBCPUFloatingView : UIView <UIGestureRecognizerDelegate>
 @property (nonatomic, assign) CGPoint lastPoint;
 @property (nonatomic, strong) UIVisualEffectView *blurView;
+@property (nonatomic, strong) UIView *nativeLiquidGlassView; // iOS 26 CCLiquidGlassView 原生液态玻璃
 @property (nonatomic, strong) CAShapeLayer *marqueeLayer;
 // iOS 26 液态玻璃：specular 边缘高光（SBLiquidGlass Dock 配方移植）
 @property (nonatomic, strong) CAGradientLayer *glassSheenLayer;
@@ -395,6 +403,7 @@ static void setFloatPref(CFStringRef key, float value);
 static void setIntPref(CFStringRef key, NSInteger value);
 static void applyVisibility(void);
 static void applyFloatingAlpha(void);
+static void updateNativeLiquidGlassFrame(SBCPUFloatingView *view);
 static void applySystemRefreshRate(void);
 static void LoadPreferences(void);
 static void SavePreferencesAndNotify(void);
@@ -2773,20 +2782,83 @@ static void LGRemoveLabelShadowInView(UIView *view) {
     }
 }
 
+// iOS 26 原生 Liquid Glass：严格按外部提供的 CCLiquidGlassView 用法接入。
+// 运行时不存在该类/方法时返回 NO，继续使用原有 CABackdropLayer/UIBlurEffect。
+static BOOL SBCPUInstallNativeLiquidGlass(SBCPUFloatingView *view, UIView *hostView, CGFloat cornerRadius) {
+    if (!view || !hostView) return NO;
+    Class cls = NSClassFromString(@"CCLiquidGlassView");
+    if (!cls || ![cls isSubclassOfClass:[UIView class]]) return NO;
+
+    SEL updateSel = @selector(updateForHostView:preferredStyle:);
+    SEL updateFallbackSel = @selector(updateForHostView:);
+    if (![cls instancesRespondToSelector:updateSel] && ![cls instancesRespondToSelector:updateFallbackSel]) return NO;
+
+    @try {
+        CCLiquidGlassView *glass = [[cls alloc] initWithFrame:hostView.bounds];
+        if (!glass) return NO;
+        glass.backgroundColor = UIColor.clearColor;
+        glass.opaque = NO;
+        glass.userInteractionEnabled = NO;
+        glass.layer.cornerRadius = cornerRadius;
+        glass.layer.masksToBounds = YES;
+        if ([glass.layer respondsToSelector:@selector(setCornerCurve:)]) {
+            glass.layer.cornerCurve = kCACornerCurveContinuous;
+        }
+        [hostView insertSubview:glass atIndex:0];
+
+        // 用户提供的核心调用：优先 preferredStyle:1，低阶变体才退回无 style 版本。
+        if ([glass respondsToSelector:updateSel]) {
+            [glass updateForHostView:hostView preferredStyle:1];
+        } else {
+            [glass updateForHostView:hostView];
+        }
+        view.nativeLiquidGlassView = glass;
+        return YES;
+    } @catch (NSException *e) {
+        NSLog(@"[SBCPUFloating] CCLiquidGlassView 初始化失败，回退旧玻璃: %@", e);
+        return NO;
+    }
+}
+
+static void updateNativeLiquidGlassFrame(SBCPUFloatingView *view) {
+    if (!view || !view.nativeLiquidGlassView) return;
+    UIView *glass = view.nativeLiquidGlassView;
+    CGFloat r = floatingCornerRadius;
+    if (r > view.bounds.size.height / 2.0f) r = view.bounds.size.height / 2.0f;
+    glass.frame = view.bounds;
+    glass.layer.cornerRadius = MAX(0.0f, r);
+    glass.hidden = !liquidGlassEnabled;
+    if ([glass.layer respondsToSelector:@selector(setCornerCurve:)]) {
+        glass.layer.cornerCurve = kCACornerCurveContinuous;
+    }
+    @try {
+        CCLiquidGlassView *nativeGlass = (CCLiquidGlassView *)glass;
+        if ([nativeGlass respondsToSelector:@selector(updateForHostView:preferredStyle:)]) {
+            [nativeGlass updateForHostView:view preferredStyle:1];
+        }
+    } @catch (NSException *e) {
+        // 更新失败不影响浮窗，继续保持当前已创建的玻璃层。
+    }
+}
+
 @implementation SBCPUFloatingView
 
 // 液态玻璃：根据开关应用/取消液态玻璃样式
 - (void)applyLiquidGlassStyle {
     BOOL enabled = liquidGlassEnabled;
-    _glassBackdropLayer.hidden = !enabled;
-    _glassSheenLayer.hidden = !enabled;
-    _glassBoostLayer.hidden = !enabled;
+    _nativeLiquidGlassView.hidden = !enabled;
+    _glassBackdropLayer.hidden = !enabled || (_nativeLiquidGlassView != nil);
+    _glassSheenLayer.hidden = !enabled || (_nativeLiquidGlassView != nil);
+    _glassBoostLayer.hidden = !enabled || (_nativeLiquidGlassView != nil);
     _glassEdgeLayer.hidden = !enabled;
     if (_glassTintLayer) _glassTintLayer.hidden = !enabled;
 
     if (enabled) {
-        if (_glassBackdropLayer) {
-            _blurView.effect = nil; // 用 CABackdropLayer 替代 UIVisualEffect
+        if (_nativeLiquidGlassView) {
+            // 原生 CCLiquidGlassView 自己负责真实 Liquid Glass backdrop。
+            _blurView.effect = nil;
+        } else if (_glassBackdropLayer) {
+            _blurView.effect = nil; // 旧系统/无私有类时继续使用 CABackdropLayer
         }
         LGApplyShadowToLabelsInView(_blurView.contentView);
     } else {
@@ -2957,12 +3029,25 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _blurView.layer.borderWidth = 1.0f;
         _blurView.layer.borderColor = [UIColor colorWithWhite:1.0f alpha:0.90f].CGColor;
         _blurView.userInteractionEnabled = NO;
+        _blurView.backgroundColor = UIColor.clearColor;
         [self addSubview:_blurView];
 
-        // === iOS 26 原生液态玻璃：CABackdropLayer 真正 backdrop 模糊（SBLiquidGlass 同款） ===
+        // === iOS 26 原生 Liquid Glass：使用系统私有 CCLiquidGlassView ===
+        // 按用户提供的代码路径创建：insertSubview:atIndex:0 + preferredStyle:1。
+        BOOL nativeLiquidGlassInstalled = SBCPUInstallNativeLiquidGlass(self, self, cornerRad);
+        if (nativeLiquidGlassInstalled) {
+            // native glass 位于 self 最底层；blurView 只作为透明内容承载层。
+            _blurView.layer.borderWidth = 0.0f;
+            _blurView.layer.borderColor = UIColor.clearColor.CGColor;
+        }
+
+        // === 兼容回退：CABackdropLayer（没有 CCLiquidGlassView 时使用） ===
         _glassBackdropLayer = nil;
         @try {
-            Class backdropCls = NSClassFromString(@"CABackdropLayer");
+            if (_nativeLiquidGlassView) {
+                _glassBackdropLayer = nil;
+            }
+            Class backdropCls = _nativeLiquidGlassView ? Nil : NSClassFromString(@"CABackdropLayer");
             if (backdropCls) {
                 CALayer *bd = [backdropCls layer];
                 bd.frame = _blurView.bounds;
@@ -3836,6 +3921,7 @@ return self;
     }
 
     _blurView.frame = CGRectMake(0, 0, finalW, currentY);
+    updateNativeLiquidGlassFrame(self);
     
     CGFloat cornerRad = floatingCornerRadius;
     if (cornerRad > currentY / 2.0f) cornerRad = currentY / 2.0f;
@@ -4004,6 +4090,7 @@ return self;
         
         self.blurView.layer.cornerRadius = cornerRad;
         self.bounds = CGRectMake(0, 0, targetW, targetH);
+        updateNativeLiquidGlassFrame(self);
         self.center = targetCenter;
 
         if (!self.badgeLabel.hidden) {
@@ -4174,6 +4261,7 @@ return self;
         CGFloat capH = collapsedBounds.size.height;
         self.bounds = collapsedBounds;
         self.blurView.frame = CGRectMake(0, 0, capW, capH);
+        updateNativeLiquidGlassFrame(self);
         self.blurView.layer.cornerRadius = collapsedCornerRad;
         self.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, capW, capH) cornerRadius:collapsedCornerRad].CGPath;
         self.marqueeLayer.frame = self.blurView.bounds;
@@ -4203,6 +4291,7 @@ return self;
         // ★ 尺寸过渡：胶囊 → 完整面板（与收起动画对称，视觉上平滑“膨胀”展开）
         self.bounds = CGRectMake(0, 0, expandedW, expandedH);
         self.blurView.frame = CGRectMake(0, 0, expandedW, expandedH);
+        updateNativeLiquidGlassFrame(self);
         self.blurView.layer.cornerRadius = expandedCornerRad;
         self.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, expandedW, expandedH) cornerRadius:expandedCornerRad].CGPath;
         self.marqueeLayer.frame = self.blurView.bounds;
