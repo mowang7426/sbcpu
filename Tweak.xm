@@ -3045,12 +3045,8 @@ static void LGRemoveLabelShadowInView(UIView *view) {
                     _usingNativeLiquidGlass = YES;
                     nativeGlass.userInteractionEnabled = NO;
                     nativeGlass.backgroundColor = UIColor.clearColor;
-                    nativeGlass.opaque = NO;
-                    // V4.35.3：增强现有 Glass 表面的轮廓可见度；不创建第二层玻璃。
-                    nativeGlass.layer.borderWidth = 0.8;
-                    nativeGlass.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.28].CGColor;
-                    nativeGlass.layer.cornerCurve = kCACornerCurveContinuous;
-                    nativeGlass.layer.masksToBounds = YES;
+                    // V4.35：不碰系统 Liquid Glass 的 cornerRadius / masksToBounds。
+                    // 让 CCLiquidGlassView 自己管理其材质、裁剪和动态效果。
 
                     // Native Liquid Glass 直接作为 SBCPU 浮窗的唯一背景表面；
                     // 普通 UIBlurEffect 只作为“液态玻璃关闭/私有类不存在”时的 fallback。
@@ -3170,9 +3166,9 @@ static void LGRemoveLabelShadowInView(UIView *view) {
 
         _batteryValueLabel = [[UILabel alloc] init];
         _batteryValueLabel.textColor = [UIColor colorWithRed:0.15f green:0.45f blue:0.25f alpha:1.0f];
-        _batteryValueLabel.font = [UIFont systemFontOfSize:15.5 weight:UIFontWeightBold];
+        _batteryValueLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
         _batteryValueLabel.adjustsFontSizeToFitWidth = YES;
-        _batteryValueLabel.minimumScaleFactor = 0.78f;
+        _batteryValueLabel.minimumScaleFactor = 0.5f;
         [_performanceContainer addSubview:_batteryValueLabel];
 
         _batterySubLabel = [[UILabel alloc] init];
@@ -3420,6 +3416,10 @@ return self;
 
 - (void)handleSingleTap:(UITapGestureRecognizer *)tap {
     if (tap.state == UIGestureRecognizerStateEnded) {
+        // V4.35.3：单击只保留轻微反馈；双击有独立反馈且不会再进入这里。
+        UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+        [generator prepare];
+        [generator impactOccurred];
         BOOL hasUnread = (historyNotifications.count > 0);
         BOOL combinedModeVisible = (!self.isCollapsed && hasUnread) || self.isShowingNotification;
 
@@ -3566,12 +3566,20 @@ return self;
 
 - (void)handleDoubleTap:(UITapGestureRecognizer *)tap {
     if (tap.state == UIGestureRecognizerStateEnded) {
+        // V4.35.3：双击打开设置时给一次轻触反馈，明确区分于单击展开/收起。
+        UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+        [generator prepare];
+        [generator impactOccurred];
         dispatch_async(dispatch_get_main_queue(), ^{ openSettings(); });
     }
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    return YES;
+    // V4.35.3：浮窗的 Pan / Tap / LongPress 不再全部同时识别，避免拖动或长按
+    // 与点击动作串联触发。单击与双击仍由 requireGestureRecognizerToFail: 协调。
+    (void)gestureRecognizer;
+    (void)otherGestureRecognizer;
+    return NO;
 }
 
 - (void)prepareStartupAnimationView {
@@ -3758,12 +3766,12 @@ return self;
     } else { _divFps.hidden = YES; }
 
     if (showBattery) {
-        // V4.35.3：扩大电量列，避免充电时电量百分比被压缩得过小。
-        CGFloat batW = 72.0f;
-        _batteryIconLabel.frame = CGRectMake(currentX, padY + 9, 20, 20);
-        _batteryValueLabel.frame = CGRectMake(currentX + 22, padY + 9, batW - 22, 18);
-        _batterySubLabel.frame = CGRectMake(currentX + 22, padY + 28, batW - 22, 12);
-        currentX += batW + 4.0f;
+        // V4.35.3：收紧电量列宽，避免图标与“XX%/电量”之间显得过松。
+        CGFloat batW = 48.0f;
+        _batteryIconLabel.frame = CGRectMake(currentX, padY + 10, 18, 18);
+        _batteryValueLabel.frame = CGRectMake(currentX + 18, padY + 10, batW - 18, 16);
+        _batterySubLabel.frame = CGRectMake(currentX + 18, padY + 27, batW - 18, 12);
+        currentX += batW + 3.0f;
 
         if (showTemp || actualShowCurrent) {
             _div2.hidden = NO;
@@ -3906,8 +3914,6 @@ return self;
         _nativeLiquidGlassView.layer.cornerRadius = cornerRad;
         _nativeLiquidGlassView.layer.cornerCurve = kCACornerCurveContinuous;
         _nativeLiquidGlassView.layer.masksToBounds = YES;
-        _nativeLiquidGlassView.layer.borderWidth = 0.8;
-        _nativeLiquidGlassView.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.28].CGColor;
     }
     self.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, finalW, currentY) cornerRadius:cornerRad].CGPath;
 
@@ -4433,8 +4439,13 @@ return self;
 
     _cpuFreqLabel.text = [NSString stringWithFormat:@"%.0f MHz", cpuFreq];
     _fpsValueLabel.text = [NSString stringWithFormat:@"%.0f", fps];
-    // V4.35.3：主电量只显示百分比，避免充电时追加 mAh 导致字号被压缩。
     _batteryValueLabel.text = [NSString stringWithFormat:@"%ld%%", (long)battery];
+    if (isCharging && gWasExternalCharging && gActiveSession) {
+        double duration = [NSDate timeIntervalSinceReferenceDate] - gSessStartTime;
+        if (duration >= 5 && gSessBatteryMah >= 1) {
+            _batteryValueLabel.text = [NSString stringWithFormat:@"%ld%% +%.0fmAh", (long)battery, gSessBatteryMah];
+        }
+    }
     _tempValueLabel.text = (temp > 0) ? [NSString stringWithFormat:@"%.1f°C", temp] : @"--°C";
     // 智能停充 = CH0I 已验证阻断外部供电；此时 AppleSmartBattery 的
     // Amperage 仍可能是设备负载电流，不应把它显示成“充电电流”。
