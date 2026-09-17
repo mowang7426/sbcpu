@@ -322,8 +322,8 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
             // keepAC 不再决定智能停充的执行路径；它仍保留在配置协议中以
             // 兼容旧版 UI，但 Charge Engine 的智能停充统一使用 CH0I。
             int r = smc_set_power_block(true, gCfg.overrideOBC);
-            gLimitUsesPowerBlock = true;
             if (r == SB_RESULT_OK) {
+                gLimitUsesPowerBlock = true;
                 gLimitBlocked = true;
                 if (gState != SBCPUChargeStateBlocked) {
                     gState = SBCPUChargeStateBlocked;
@@ -333,6 +333,10 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
             } else if (r == SB_RESULT_OBC_TAKEN) {
                 gState = SBCPUChargeStateOBCControlled;
                 engine_log(@"OBC took over at limit (pct=%d)", pct);
+            } else {
+                gState = SBCPUChargeStateError;
+                engine_log(@"limit reached: pct=%d >= %d -> CH0I write/verify failed result=%d; will retry on next power event",
+                    pct, gCfg.upperLimit, r);
             }
         } else if (gLimitBlocked && pct <= gCfg.lowerLimit) {
             // 降到下限 → 恢复充电（按之前停充用的 key 复位）

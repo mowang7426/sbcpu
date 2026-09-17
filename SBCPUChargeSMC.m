@@ -351,9 +351,20 @@ int smc_set_power_block(bool inhibit, bool overrideOBC) {
         }
         uint8_t zero = 0;
         if ((cur & 1) || gPowerCache != 0) {
-            IOReturn r = smc_write_key('CH0I', &zero, 1);
-            if (r != kIOReturnSuccess) {
-                NSLog(@"[SBCPUChargeSMC] recovery write CH0I=0 failed 0x%08x", smc_last_error());
+            bool verified = false;
+            for (int attempt = 0; attempt < 3 && !verified; attempt++) {
+                IOReturn r = smc_write_key('CH0I', &zero, 1);
+                if (r == kIOReturnSuccess) {
+                    uint8_t rb = 0;
+                    int32_t rbsz = 1;
+                    if (smc_read_key('CH0I', &rb, &rbsz) == kIOReturnSuccess && (rb & 1) == 0) {
+                        verified = true;
+                    }
+                }
+                if (!verified && attempt < 2) usleep(20000);
+            }
+            if (!verified) {
+                NSLog(@"[SBCPUChargeSMC] recovery write CH0I=0 not verified after 3 attempts");
                 return SB_RESULT_IO_ERROR;
             }
         }
@@ -371,8 +382,13 @@ int smc_set_power_block(bool inhibit, bool overrideOBC) {
 
     uint32_t ch0r = 0;
     int32_t sz4 = 4;
-    if (smc_read_key('CH0R', &ch0r, &sz4) == kIOReturnSuccess && (ch0r & (1 << 1)))
-        return SB_RESULT_NO_EXTERNAL_POWER;
+    if (smc_read_key('CH0R', &ch0r, &sz4) == kIOReturnSuccess && (ch0r & (1 << 1))) {
+        /* CH0R.bit1 is a transient "No VBUS/OBC" status on some iOS builds.
+           CHCE has already confirmed that an external source is connected, so
+           do not abort the smart-stop write here. The write itself is followed
+           by a read-back verification below. */
+        NSLog(@"[SBCPUChargeSMC] CH0R reports No VBUS while CHCE=1; continue CH0I inhibit and verify");
+    }
 
     if (smc_read_key('CH0I', &cur, &sz) != kIOReturnSuccess) {
         NSLog(@"[SBCPUChargeSMC] read CH0I failed 0x%08x", smc_last_error());
@@ -389,9 +405,20 @@ int smc_set_power_block(bool inhibit, bool overrideOBC) {
 
     int target = 1;
     if (((cur & 1) != target) || gPowerCache != target) {
-        IOReturn r = smc_write_key('CH0I', &inhibit, 1);
-        if (r != kIOReturnSuccess) {
-            NSLog(@"[SBCPUChargeSMC] write CH0I=%d failed 0x%08x", inhibit, smc_last_error());
+        bool verified = false;
+        for (int attempt = 0; attempt < 3 && !verified; attempt++) {
+            IOReturn r = smc_write_key('CH0I', &inhibit, 1);
+            if (r == kIOReturnSuccess) {
+                uint8_t rb = 0;
+                int32_t rbsz = 1;
+                if (smc_read_key('CH0I', &rb, &rbsz) == kIOReturnSuccess && (rb & 1) != 0) {
+                    verified = true;
+                }
+            }
+            if (!verified && attempt < 2) usleep(20000);
+        }
+        if (!verified) {
+            NSLog(@"[SBCPUChargeSMC] write CH0I=1 not verified after 3 attempts");
             return SB_RESULT_IO_ERROR;
         }
     }
