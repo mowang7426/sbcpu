@@ -2782,40 +2782,39 @@ static void LGRemoveLabelShadowInView(UIView *view) {
     }
 }
 
-// iOS 26 原生 Liquid Glass：严格按外部提供的 CCLiquidGlassView 用法接入。
-// 运行时不存在该类/方法时返回 NO，继续使用原有 CABackdropLayer/UIBlurEffect。
+// iOS 26 原生 Liquid Glass：严格贴合外部提供的最小调用方式。
+// 关键点：init 时浮窗还没有进入 UIWindow，不能过早调用 updateForHostView:。
+// 先创建并挂到 hostView，等 didMoveToWindow / 最终尺寸确定后再刷新宿主关系。
 static BOOL SBCPUInstallNativeLiquidGlass(SBCPUFloatingView *view, UIView *hostView, CGFloat cornerRadius) {
     if (!view || !hostView) return NO;
     Class cls = NSClassFromString(@"CCLiquidGlassView");
-    if (!cls || ![cls isSubclassOfClass:[UIView class]]) return NO;
+    if (!cls || ![cls isSubclassOfClass:[UIView class]]) {
+        NSLog(@"[SBCPUFloating][LiquidGlass] CCLiquidGlassView NOT FOUND");
+        return NO;
+    }
 
     SEL updateSel = @selector(updateForHostView:preferredStyle:);
     SEL updateFallbackSel = @selector(updateForHostView:);
-    if (![cls instancesRespondToSelector:updateSel] && ![cls instancesRespondToSelector:updateFallbackSel]) return NO;
+    BOOL hasPreferred = [cls instancesRespondToSelector:updateSel];
+    BOOL hasFallback = [cls instancesRespondToSelector:updateFallbackSel];
+    NSLog(@"[SBCPUFloating][LiquidGlass] class=%@ preferredStyle=%d fallback=%d", NSStringFromClass(cls), hasPreferred, hasFallback);
+    if (!hasPreferred && !hasFallback) return NO;
 
     @try {
+        // 完全按照外部代码的核心结构：创建 → insertSubview:atIndex:0。
         CCLiquidGlassView *glass = [[cls alloc] initWithFrame:hostView.bounds];
         if (!glass) return NO;
-        glass.backgroundColor = UIColor.clearColor;
-        glass.opaque = NO;
         glass.userInteractionEnabled = NO;
         glass.layer.cornerRadius = cornerRadius;
-        glass.layer.masksToBounds = YES;
         if ([glass.layer respondsToSelector:@selector(setCornerCurve:)]) {
             glass.layer.cornerCurve = kCACornerCurveContinuous;
         }
         [hostView insertSubview:glass atIndex:0];
-
-        // 用户提供的核心调用：优先 preferredStyle:1，低阶变体才退回无 style 版本。
-        if ([glass respondsToSelector:updateSel]) {
-            [glass updateForHostView:hostView preferredStyle:1];
-        } else {
-            [glass updateForHostView:hostView];
-        }
         view.nativeLiquidGlassView = glass;
+        NSLog(@"[SBCPUFloating][LiquidGlass] view CREATED, waiting for window/layout refresh");
         return YES;
     } @catch (NSException *e) {
-        NSLog(@"[SBCPUFloating] CCLiquidGlassView 初始化失败，回退旧玻璃: %@", e);
+        NSLog(@"[SBCPUFloating][LiquidGlass] init exception: %@", e);
         return NO;
     }
 }
@@ -2831,13 +2830,25 @@ static void updateNativeLiquidGlassFrame(SBCPUFloatingView *view) {
     if ([glass.layer respondsToSelector:@selector(setCornerCurve:)]) {
         glass.layer.cornerCurve = kCACornerCurveContinuous;
     }
+}
+
+static void refreshNativeLiquidGlassHost(SBCPUFloatingView *view, BOOL forceLog) {
+    if (!view || !view.nativeLiquidGlassView || !view.window) return;
     @try {
-        CCLiquidGlassView *nativeGlass = (CCLiquidGlassView *)glass;
-        if ([nativeGlass respondsToSelector:@selector(updateForHostView:preferredStyle:)]) {
+        CCLiquidGlassView *nativeGlass = (CCLiquidGlassView *)view.nativeLiquidGlassView;
+        SEL preferredSel = @selector(updateForHostView:preferredStyle:);
+        SEL fallbackSel = @selector(updateForHostView:);
+        if ([nativeGlass respondsToSelector:preferredSel]) {
             [nativeGlass updateForHostView:view preferredStyle:1];
+            if (forceLog) NSLog(@"[SBCPUFloating][LiquidGlass] refresh SUCCESS preferredStyle=1 host=%@ bounds=%@", NSStringFromClass(view.window.class), NSStringFromCGRect(view.bounds));
+        } else if ([nativeGlass respondsToSelector:fallbackSel]) {
+            [nativeGlass updateForHostView:view];
+            if (forceLog) NSLog(@"[SBCPUFloating][LiquidGlass] refresh SUCCESS fallback host=%@ bounds=%@", NSStringFromClass(view.window.class), NSStringFromCGRect(view.bounds));
+        } else if (forceLog) {
+            NSLog(@"[SBCPUFloating][LiquidGlass] refresh FAILED: update selector unavailable");
         }
     } @catch (NSException *e) {
-        // 更新失败不影响浮窗，继续保持当前已创建的玻璃层。
+        NSLog(@"[SBCPUFloating][LiquidGlass] refresh EXCEPTION: %@", e);
     }
 }
 
@@ -2978,6 +2989,15 @@ static void updateNativeLiquidGlassFrame(SBCPUFloatingView *view) {
     [super traitCollectionDidChange:previousTraitCollection];
     if (liquidGlassEnabled) {
         [self applyAdaptiveTextColors];
+    }
+}
+
+// 原生 Liquid Glass 必须在浮窗真正进入 UIWindow 后再建立 host 关系。
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    if (self.window && self.nativeLiquidGlassView) {
+        updateNativeLiquidGlassFrame(self);
+        refreshNativeLiquidGlassHost(self, YES);
     }
 }
 
@@ -3921,7 +3941,6 @@ return self;
     }
 
     _blurView.frame = CGRectMake(0, 0, finalW, currentY);
-    updateNativeLiquidGlassFrame(self);
     
     CGFloat cornerRad = floatingCornerRadius;
     if (cornerRad > currentY / 2.0f) cornerRad = currentY / 2.0f;
@@ -3967,6 +3986,9 @@ return self;
 
     self.bounds = CGRectMake(0, 0, finalW, currentY);
     self.performanceContainer.frame = self.bounds;
+    // 先提交最终 host bounds，再同步原生 Liquid Glass，避免“旧尺寸→新尺寸”二次跳变。
+    updateNativeLiquidGlassFrame(self);
+    refreshNativeLiquidGlassHost(self, NO);
 }
 
 - (void)resetInactivityTimer {
@@ -4329,11 +4351,14 @@ return self;
             self.collapsedContainerView.hidden = YES;
             self.collapsedContainerView.alpha = 0.0;
         }
+        updateNativeLiquidGlassFrame(self);
+        refreshNativeLiquidGlassHost(self, YES);
         [self resetInactivityTimer];
     };
 
     if (animated) {
-        [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.5 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:animationsBlock completion:completionBlock];
+        // 不再使用有回弹的 spring：避免“打开后又向外撑一下”的二次膨胀感。
+        [UIView animateWithDuration:0.30 delay:0 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut animations:animationsBlock completion:completionBlock];
     } else {
         animationsBlock();
         completionBlock(YES);
