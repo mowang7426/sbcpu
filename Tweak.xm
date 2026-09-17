@@ -3892,6 +3892,16 @@ return self;
     if (cornerRad > currentY / 2.0f) cornerRad = currentY / 2.0f;
     
     _glassSurfaceView.layer.cornerRadius = cornerRad;
+    if (_nativeLiquidGlassView && _usingNativeLiquidGlass) {
+        // V4.35.2: CCLiquidGlassView is the actual floating surface, so it
+        // must clip its rectangular layer to the same rounded shape.
+        // Previously we deliberately left masksToBounds disabled, which made
+        // the native surface render as a square panel even though the shadow
+        // path and marquee were rounded.
+        _nativeLiquidGlassView.layer.cornerRadius = cornerRad;
+        _nativeLiquidGlassView.layer.cornerCurve = kCACornerCurveContinuous;
+        _nativeLiquidGlassView.layer.masksToBounds = YES;
+    }
     self.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, finalW, currentY) cornerRadius:cornerRad].CGPath;
 
     _marqueeLayer.frame = _glassSurfaceView.bounds;
