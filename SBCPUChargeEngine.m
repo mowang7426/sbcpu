@@ -1,4 +1,4 @@
-// SBCPUChargeEngine.m — 充电状态机实现 (V4.29 Stable)
+// SBCPUChargeEngine.m — 充电状态机实现 (V4.30 Stable)
 // 优先级（Battman 方案）：
 //   1. 安全状态（未插电 / SMC 不可用 / 无线充电不支持）→ 不写
 //   2. 手动阻止充电（manualChargeBlock）→ CH0C = inhibit
@@ -290,20 +290,18 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
     if (gCfg.smartChargeEnabled || gCfg.chargeLimitEnabled) {
         gOBC = smc_obc_taken_charge();
         if (!gLimitBlocked && pct >= gCfg.upperLimit) {
-            // 达到上限 → 进入停充状态（保留 AC 用 CH0C；不保留 AC 用 CH0I）
-            int r;
-            if (gCfg.keepAC) {
-                r = smc_set_charge_block(true, gCfg.overrideOBC);
-                gLimitUsesPowerBlock = false;
-            } else {
-                r = smc_set_power_block(true, gCfg.overrideOBC);
-                gLimitUsesPowerBlock = true;
-            }
+            // V4.30: 智能停充触发后直接切断外部供电（CH0I=1）。
+            // 这样“已阻止”与实际充电器输入路径一致，避免 CH0C inhibit
+            // 后仍存在小额外部输入/系统维持电流的歧义。
+            // keepAC 不再决定智能停充的执行路径；它仍保留在配置协议中以
+            // 兼容旧版 UI，但 Charge Engine 的智能停充统一使用 CH0I。
+            int r = smc_set_power_block(true, gCfg.overrideOBC);
+            gLimitUsesPowerBlock = true;
             if (r == SB_RESULT_OK) {
                 gLimitBlocked = true;
                 if (gState != SBCPUChargeStateBlocked) {
                     gState = SBCPUChargeStateBlocked;
-                    engine_log(@"limit reached: pct=%d >= %d -> BLOCKED (%s), SMC verified",
+                    engine_log(@"limit reached: pct=%d >= %d -> BLOCKED (%s)",
                         pct, gCfg.upperLimit, gLimitUsesPowerBlock ? "CH0I" : "CH0C");
                 }
             } else if (r == SB_RESULT_OBC_TAKEN) {
@@ -356,7 +354,7 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
                 if (stalePowerBlock) (void)smc_set_power_block(false, gCfg.overrideOBC);
             }
         }
-        // 中间区间（lower < pct < upper）：保持迟滞，但修复外部状态漂移。
+        // 中间区间（lower < pct < upper）：保持迟滞；智能停充使用 CH0I，持续校验外部供电阻断状态。
         engine_unlock();
         return;
     }
