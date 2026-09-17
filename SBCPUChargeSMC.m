@@ -336,35 +336,30 @@ int smc_set_charge_block(bool inhibit, bool overrideOBC) {
 }
 
 int smc_set_power_block(bool inhibit, bool overrideOBC) {
+    (void)overrideOBC;
     uint8_t cur = 0;
     int32_t sz = 1;
 
-    /* Recovery must not be blocked by CHCE/CH0R or OBC state.  CH0I=0 is the
-       normal/auto state and is exactly what Battman's restore command writes.
-       In particular, after CH0I=1 the SMC may report CH0R.bit1=No VBUS while
-       the cable is physically still connected; treating that as a reason to
-       refuse the clear operation leaves external power permanently blocked. */
+    // Recovery is always allowed: CH0I=0 is our normal state. Do not gate
+    // recovery on CHCE/CH0R because CH0I itself can make those reports look
+    // like "No VBUS" while a cable is still physically connected.
     if (!inhibit) {
         if (smc_read_key('CH0I', &cur, &sz) != kIOReturnSuccess) {
             NSLog(@"[SBCPUChargeSMC] read CH0I for recovery failed 0x%08x", smc_last_error());
             return SB_RESULT_IO_ERROR;
         }
-        uint8_t zero = 0;
+
         if ((cur & 1) || gPowerCache != 0) {
-            bool verified = false;
-            for (int attempt = 0; attempt < 3 && !verified; attempt++) {
-                IOReturn r = smc_write_key('CH0I', &zero, 1);
-                if (r == kIOReturnSuccess) {
-                    uint8_t rb = 0;
-                    int32_t rbsz = 1;
-                    if (smc_read_key('CH0I', &rb, &rbsz) == kIOReturnSuccess && (rb & 1) == 0) {
-                        verified = true;
-                    }
-                }
-                if (!verified && attempt < 2) usleep(20000);
+            uint8_t zero = 0;
+            IOReturn r = smc_write_key('CH0I', &zero, 1);
+            if (r != kIOReturnSuccess) {
+                NSLog(@"[SBCPUChargeSMC] recovery write CH0I=0 failed 0x%08x", smc_last_error());
+                return SB_RESULT_IO_ERROR;
             }
-            if (!verified) {
-                NSLog(@"[SBCPUChargeSMC] recovery write CH0I=0 not verified after 3 attempts");
+            uint8_t verify = 0;
+            int32_t vsz = 1;
+            if (smc_read_key('CH0I', &verify, &vsz) != kIOReturnSuccess || (verify & 1)) {
+                NSLog(@"[SBCPUChargeSMC] recovery CH0I readback still blocked: 0x%02x", verify);
                 return SB_RESULT_IO_ERROR;
             }
         }
@@ -372,7 +367,11 @@ int smc_set_power_block(bool inhibit, bool overrideOBC) {
         return SB_RESULT_OK;
     }
 
-    // 只有真正执行“阻止外部供电”时，才要求外部电源/VBUS存在。
+    // Only require CHCE for the initial block operation. Do NOT reject CH0I
+    // because CH0R.bit1 says No VBUS: on some firmware CH0R transitions to
+    // that state immediately before/after the inhibit write even while the
+    // physical charger remains attached. This was the main cause of smart
+    // stop being skipped at the upper threshold.
     uint8_t chce = 0;
     if (smc_read_key('CHCE', &chce, &sz) != kIOReturnSuccess) {
         NSLog(@"[SBCPUChargeSMC] read CHCE failed 0x%08x", smc_last_error());
@@ -380,50 +379,39 @@ int smc_set_power_block(bool inhibit, bool overrideOBC) {
     }
     if (!chce) return SB_RESULT_NO_EXTERNAL_POWER;
 
-    uint32_t ch0r = 0;
-    int32_t sz4 = 4;
-    if (smc_read_key('CH0R', &ch0r, &sz4) == kIOReturnSuccess && (ch0r & (1 << 1))) {
-        /* CH0R.bit1 is a transient "No VBUS/OBC" status on some iOS builds.
-           CHCE has already confirmed that an external source is connected, so
-           do not abort the smart-stop write here. The write itself is followed
-           by a read-back verification below. */
-        NSLog(@"[SBCPUChargeSMC] CH0R reports No VBUS while CHCE=1; continue CH0I inhibit and verify");
-    }
-
     if (smc_read_key('CH0I', &cur, &sz) != kIOReturnSuccess) {
         NSLog(@"[SBCPUChargeSMC] read CH0I failed 0x%08x", smc_last_error());
         return SB_RESULT_IO_ERROR;
     }
 
-    if (cur & (1 << 1)) {
-        if (!overrideOBC) return SB_RESULT_OBC_TAKEN;
-        if (!obc_switch(false)) {
-            NSLog(@"[SBCPUChargeSMC] failed to disable OBC before CH0I write");
-            return SB_RESULT_IO_ERROR;
-        }
+    // If already blocked, verify the actual bit instead of trusting the cache.
+    if (cur & 1) {
+        gPowerCache = 1;
+        return SB_RESULT_OK;
     }
 
-    int target = 1;
-    if (((cur & 1) != target) || gPowerCache != target) {
-        bool verified = false;
-        for (int attempt = 0; attempt < 3 && !verified; attempt++) {
-            IOReturn r = smc_write_key('CH0I', &inhibit, 1);
-            if (r == kIOReturnSuccess) {
-                uint8_t rb = 0;
-                int32_t rbsz = 1;
-                if (smc_read_key('CH0I', &rb, &rbsz) == kIOReturnSuccess && (rb & 1) != 0) {
-                    verified = true;
-                }
-            }
-            if (!verified && attempt < 2) usleep(20000);
+    // CH0I is a single-byte inhibit bit. Retry + readback because a successful
+    // IOKit call does not necessarily mean the SMC firmware accepted the state.
+    for (int attempt = 0; attempt < 3; attempt++) {
+        uint8_t one = 1;
+        IOReturn r = smc_write_key('CH0I', &one, 1);
+        if (r != kIOReturnSuccess) {
+            NSLog(@"[SBCPUChargeSMC] write CH0I=1 attempt %d failed 0x%08x", attempt + 1, smc_last_error());
+            continue;
         }
-        if (!verified) {
-            NSLog(@"[SBCPUChargeSMC] write CH0I=1 not verified after 3 attempts");
-            return SB_RESULT_IO_ERROR;
+
+        uint8_t verify = 0;
+        int32_t vsz = 1;
+        if (smc_read_key('CH0I', &verify, &vsz) == kIOReturnSuccess && (verify & 1)) {
+            gPowerCache = 1;
+            return SB_RESULT_OK;
         }
+        NSLog(@"[SBCPUChargeSMC] CH0I=1 readback failed on attempt %d (value=0x%02x)", attempt + 1, verify);
+        usleep(20000);
     }
-    gPowerCache = target;
-    return SB_RESULT_OK;
+
+    gPowerCache = -1;
+    return SB_RESULT_IO_ERROR;
 }
 
 bool smc_get_charge_blocked(void) {
