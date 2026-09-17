@@ -4376,7 +4376,6 @@ return self;
             static double gLastStatusFetch = 0;
             static uint8_t gCachedEngineState = 0;
             static uint8_t gCachedChargeBlocked = 0;
-            static uint8_t gCachedPowerBlocked = 0;
             static uint8_t gCachedDaemonOK = 0;
             static uint8_t gCachedSmcAvailable = 1;
             static uint8_t gCachedVersion = 0;
@@ -4386,7 +4385,6 @@ return self;
                 if (sbSMCGetStatus(&st)) {
                     gCachedEngineState = st.engineState;
                     gCachedChargeBlocked = st.chargeBlocked;
-                    gCachedPowerBlocked = st.powerBlocked;
                     // V4.30 智能停充实际使用 CH0I，所以不能只看 chargeBlocked。
                     gSmartChargeHoldDisplay = (smartChargeEnable && st.powerBlocked);
                     gCachedDaemonOK = 1;
