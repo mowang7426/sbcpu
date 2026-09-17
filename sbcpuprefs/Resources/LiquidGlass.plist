@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>items</key><array>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>实时液态玻璃渲染器</string><key>footerText</key><string>这些参数直接作用于 SBCPU 的 Metal 液态玻璃渲染器。建议一次调整一项，修改后等待片刻即可看到效果。</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>启用液态玻璃</string><key>key</key><string>liquidGlassEnabled</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSSliderCell</string><key>label</key><string>玻璃强度</string><key>key</key><string>SBCPU.LiquidGlass.Strength</string><key>default</key><real>0.75</real><key>min</key><real>0.0</real><key>max</key><real>1.0</real><key>showValue</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSSliderCell</string><key>label</key><string>折射强度</string><key>key</key><string>SBCPU.LiquidGlass.Refraction</string><key>default</key><real>0.65</real><key>min</key><real>0.0</real><key>max</key><real>1.0</real><key>showValue</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSSliderCell</string><key>label</key><string>玻璃厚度</string><key>key</key><string>SBCPU.LiquidGlass.Thickness</string><key>default</key><real>0.70</real><key>min</key><real>0.0</real><key>max</key><real>1.0</real><key>showValue</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSSliderCell</string><key>label</key><string>边缘高光</string><key>key</key><string>SBCPU.LiquidGlass.Specular</string><key>default</key><real>0.65</real><key>min</key><real>0.0</real><key>max</key><real>1.0</real><key>showValue</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSSliderCell</string><key>label</key><string>色散</string><key>key</key><string>SBCPU.LiquidGlass.Dispersion</string><key>default</key><real>0.20</real><key>min</key><real>0.0</real><key>max</key><real>1.0</real><key>showValue</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSSliderCell</string><key>label</key><string>边缘宽度</string><key>key</key><string>SBCPU.LiquidGlass.Bezel</string><key>default</key><real>0.90</real><key>min</key><real>0.40</real><key>max</key><real>1.50</real><key>showValue</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSSliderCell</string><key>label</key><string>折射率</string><key>key</key><string>SBCPU.LiquidGlass.RefractiveIndex</string><key>default</key><real>1.70</real><key>min</key><real>1.10</real><key>max</key><real>2.20</real><key>showValue</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSSliderCell</string><key>label</key><string>渲染质量</string><key>key</key><string>SBCPU.LiquidGlass.Quality</string><key>default</key><real>1.0</real><key>min</key><real>0.25</real><key>max</key><real>1.0</real><key>showValue</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>footerText</key><string>折射强度越高，边缘背景位移越明显；玻璃厚度决定边缘“鼓起”程度；高光控制边缘亮泽；色散建议保持较低；渲染质量越高 GPU 开销越大。</string></dict>
+</array>
+</dict>
+</plist>
