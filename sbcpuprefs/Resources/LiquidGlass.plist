@@ -28,7 +28,7 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>SBCPULiquidGlassSliderCell</string>
+			<string>PSTableCell</string>
 			<key>height</key>
 			<real>104.0</real>
 			<key>label</key>
@@ -47,10 +47,12 @@
 			<string>getPreferenceValue:</string>
 			<key>set</key>
 			<string>setPreferenceValue:specifier:</string>
+			<key>cellClass</key>
+			<string>SBCPULiquidGlassSliderCell</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>SBCPULiquidGlassSliderCell</string>
+			<string>PSTableCell</string>
 			<key>height</key>
 			<real>104.0</real>
 			<key>label</key>
@@ -69,10 +71,12 @@
 			<string>getPreferenceValue:</string>
 			<key>set</key>
 			<string>setPreferenceValue:specifier:</string>
+			<key>cellClass</key>
+			<string>SBCPULiquidGlassSliderCell</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>SBCPULiquidGlassSliderCell</string>
+			<string>PSTableCell</string>
 			<key>height</key>
 			<real>104.0</real>
 			<key>label</key>
@@ -91,10 +95,12 @@
 			<string>getPreferenceValue:</string>
 			<key>set</key>
 			<string>setPreferenceValue:specifier:</string>
+			<key>cellClass</key>
+			<string>SBCPULiquidGlassSliderCell</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>SBCPULiquidGlassSliderCell</string>
+			<string>PSTableCell</string>
 			<key>height</key>
 			<real>104.0</real>
 			<key>label</key>
@@ -113,10 +119,12 @@
 			<string>getPreferenceValue:</string>
 			<key>set</key>
 			<string>setPreferenceValue:specifier:</string>
+			<key>cellClass</key>
+			<string>SBCPULiquidGlassSliderCell</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>SBCPULiquidGlassSliderCell</string>
+			<string>PSTableCell</string>
 			<key>height</key>
 			<real>104.0</real>
 			<key>label</key>
@@ -135,10 +143,12 @@
 			<string>getPreferenceValue:</string>
 			<key>set</key>
 			<string>setPreferenceValue:specifier:</string>
+			<key>cellClass</key>
+			<string>SBCPULiquidGlassSliderCell</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>SBCPULiquidGlassSliderCell</string>
+			<string>PSTableCell</string>
 			<key>height</key>
 			<real>104.0</real>
 			<key>label</key>
@@ -157,10 +167,12 @@
 			<string>getPreferenceValue:</string>
 			<key>set</key>
 			<string>setPreferenceValue:specifier:</string>
+			<key>cellClass</key>
+			<string>SBCPULiquidGlassSliderCell</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>SBCPULiquidGlassSliderCell</string>
+			<string>PSTableCell</string>
 			<key>height</key>
 			<real>104.0</real>
 			<key>label</key>
@@ -179,10 +191,12 @@
 			<string>getPreferenceValue:</string>
 			<key>set</key>
 			<string>setPreferenceValue:specifier:</string>
+			<key>cellClass</key>
+			<string>SBCPULiquidGlassSliderCell</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>SBCPULiquidGlassSliderCell</string>
+			<string>PSTableCell</string>
 			<key>height</key>
 			<real>104.0</real>
 			<key>label</key>
@@ -201,6 +215,8 @@
 			<string>getPreferenceValue:</string>
 			<key>set</key>
 			<string>setPreferenceValue:specifier:</string>
+			<key>cellClass</key>
+			<string>SBCPULiquidGlassSliderCell</string>
 		</dict>
 		<dict>
 			<key>cell</key>
