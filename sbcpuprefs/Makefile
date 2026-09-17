@@ -6,7 +6,7 @@ include $(THEOS)/makefiles/common.mk
 
 BUNDLE_NAME = SBCPUPrefs
 
-SBCPUPrefs_FILES = SBCPUPrefsRootListController.m SBCPUChargePreferencesCommon.m SBCPUChargeManagementController.m SBCPUChargeLimitController.m
+SBCPUPrefs_FILES = SBCPUPrefsRootListController.m SBCPUChargePreferencesCommon.m SBCPUChargeManagementController.m SBCPUChargeLimitController.m SBCPULiquidGlassController.m
 SBCPUPrefs_FRAMEWORKS = UIKit
 SBCPUPrefs_PRIVATE_FRAMEWORKS = Preferences
 SBCPUPrefs_CFLAGS = -fobjc-arc -I../include
