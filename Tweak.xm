@@ -3262,6 +3262,8 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _statusLabel.textColor = [UIColor colorWithRed:0.15f green:0.65f blue:0.3f alpha:1.0f];
         _statusLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
         _statusLabel.textAlignment = NSTextAlignmentCenter;
+        _statusLabel.adjustsFontSizeToFitWidth = YES;
+        _statusLabel.minimumScaleFactor = 0.62f;
         [_bottomCapsule addSubview:_statusLabel];
 
         // 实时温控状态显示，与充电状态分开，避免充电文字覆盖温控信息。
@@ -3752,10 +3754,13 @@ return self;
     _tempValueLabel.hidden = !showTemp;
     _tempSubLabel.hidden = !showTemp;
 
-    BOOL actualShowCurrent = showBatteryCurrent && isCharging;
-    _currentIconLabel.hidden = !actualShowCurrent;
-    _currentValueLabel.hidden = !actualShowCurrent;
-    _currentSubLabel.hidden = !actualShowCurrent;
+    // V4.37.1：充电电流不再单独占一列，改为放到下方充电状态胶囊末尾，
+    // 例如“智能停充待触发 · 77%→95% · +76mA”。这样不会挤压电量/温度显示。
+    BOOL actualShowCurrent = NO;
+    _currentIconLabel.hidden = YES;
+    _currentValueLabel.hidden = YES;
+    _currentSubLabel.hidden = YES;
+    _div3.hidden = YES;
     _bottomCapsule.hidden = !isCharging;
 
     CGFloat currentX = 14.0f;
@@ -3816,14 +3821,6 @@ return self;
             currentX += 6.5f;
         } else { _div3.hidden = YES; }
     } else { _div3.hidden = YES; }
-
-    if (actualShowCurrent) {
-        CGFloat curW = 56.0f;
-        _currentIconLabel.frame = CGRectMake(currentX, padY + 11, 14, 18);
-        _currentValueLabel.frame = CGRectMake(currentX + 16, padY + 10, curW - 16, 16);
-        _currentSubLabel.frame = CGRectMake(currentX + 16, padY + 27, curW - 16, 12);
-        currentX += curW + 4.0f;
-    }
 
     CGFloat finalW = currentX + 10.0f; 
     if (finalW < 40.0f) finalW = 40.0f;
@@ -4071,6 +4068,10 @@ return self;
         self.collapsedContainerView.frame = CGRectMake(0, 0, targetW, targetH);
 
         self.glassSurfaceView.frame = CGRectMake(0, 0, targetW, targetH);
+        if (self.blurView) {
+            self.blurView.frame = self.glassSurfaceView.bounds;
+            self.blurView.layer.cornerRadius = MIN(floatingCornerRadius, targetH * 0.5f);
+        }
         self.glassContentView.frame = self.glassSurfaceView.bounds;
 
         // 横屏迷你胶囊：默认 CPU / FPS / 电量 / 温度 四段；开启单段开关则仅 CPU 单段
@@ -4201,6 +4202,10 @@ return self;
 
     self.collapsedContainerView.frame = CGRectMake(0, 0, targetW, targetH);
     self.glassSurfaceView.frame = CGRectMake(0, 0, targetW, targetH);
+    if (self.blurView) {
+        self.blurView.frame = self.glassSurfaceView.bounds;
+        self.blurView.layer.cornerRadius = MIN(floatingCornerRadius, targetH * 0.5f);
+    }
     self.glassContentView.frame = self.glassSurfaceView.bounds;
     [self refreshNativeLiquidGlass];
     CGFloat cornerRad = floatingCornerRadius;
@@ -4294,6 +4299,10 @@ return self;
         CGFloat capH = collapsedBounds.size.height;
         self.bounds = collapsedBounds;
         self.glassSurfaceView.frame = CGRectMake(0, 0, capW, capH);
+        if (self.blurView) {
+            self.blurView.frame = self.glassSurfaceView.bounds;
+            self.blurView.layer.cornerRadius = MIN(floatingCornerRadius, capH * 0.5f);
+        }
         self.glassContentView.frame = self.glassSurfaceView.bounds;
         [self refreshNativeLiquidGlass];
         self.glassSurfaceView.layer.cornerRadius = collapsedCornerRad;
@@ -4328,6 +4337,10 @@ return self;
         // ★ 尺寸过渡：胶囊 → 完整面板（与收起动画对称，视觉上平滑“膨胀”展开）
         self.bounds = CGRectMake(0, 0, expandedW, expandedH);
         self.glassSurfaceView.frame = CGRectMake(0, 0, expandedW, expandedH);
+        if (self.blurView) {
+            self.blurView.frame = self.glassSurfaceView.bounds;
+            self.blurView.layer.cornerRadius = expandedCornerRad;
+        }
         self.glassContentView.frame = self.glassSurfaceView.bounds;
         // Native Glass frame 由 layoutSubviews 同步；不要在尺寸动画块里重复 updateForHostView。
         self.glassSurfaceView.layer.cornerRadius = expandedCornerRad;
@@ -4483,16 +4496,9 @@ return self;
     _batteryValueLabel.text = [NSString stringWithFormat:@"%ld%%", (long)battery];
     _batteryValueLabel.adjustsFontSizeToFitWidth = NO;
     _batteryValueLabel.font = [UIFont monospacedDigitSystemFontOfSize:14.0 weight:UIFontWeightBold];
-    if (isCharging && gWasExternalCharging && gActiveSession) {
-        double duration = [NSDate timeIntervalSinceReferenceDate] - gSessStartTime;
-        if (duration >= 5 && gSessBatteryMah >= 1) {
-            _batterySubLabel.text = [NSString stringWithFormat:@"+%.0fmAh", gSessBatteryMah];
-        } else {
-            _batterySubLabel.text = @"电量";
-        }
-    } else {
-        _batterySubLabel.text = @"电量";
-    }
+    // V4.37.1：不再把充电会话累计 mAh 放在电量百分比下面；
+    // 这里固定显示“电量”，实时充电电流统一放到下方状态胶囊末尾。
+    _batterySubLabel.text = @"电量";
     _tempValueLabel.text = (temp > 0) ? [NSString stringWithFormat:@"%.1f°C", temp] : @"--°C";
     // 智能停充 = CH0I 已验证阻断外部供电；此时 AppleSmartBattery 的
     // Amperage 仍可能是设备负载电流，不应把它显示成“充电电流”。
@@ -4565,7 +4571,11 @@ return self;
                 _statusLabel.text = @"⚠️ 无线充电暂不支持限制";
                 _statusLabel.textColor = [UIColor systemYellowColor];
             } else if (isCharging) {
-                _statusLabel.text = [NSString stringWithFormat:@"🔋 智能停充待触发 · %ld%%→%ld%%", (long)scPercent, (long)smartChargeUpperLimit];
+                if (showBatteryCurrent) {
+                    _statusLabel.text = [NSString stringWithFormat:@"🔋 智能停充待触发 · %ld%%→%ld%% · +%.0fmA", (long)scPercent, (long)smartChargeUpperLimit, MAX(0.0, current)];
+                } else {
+                    _statusLabel.text = [NSString stringWithFormat:@"🔋 智能停充待触发 · %ld%%→%ld%%", (long)scPercent, (long)smartChargeUpperLimit];
+                }
                 _statusLabel.textColor = [UIColor systemBlueColor];
             } else {
                 _statusLabel.text = [NSString stringWithFormat:@"🔋 智能停充已启用 · %ld%%", (long)scPercent];
@@ -4574,16 +4584,28 @@ return self;
         } else if (forceFastChargeEnable && isCharging) {
             NSDictionary *chargeInfo = getRealBatteryDetails();
             double watts = [chargeInfo[@"CalculatedWatts"] doubleValue];
-            _statusLabel.text = [NSString stringWithFormat:@"🔥 强制满血快充 · %.1fW", MAX(0.0, watts)];
+            if (showBatteryCurrent) {
+                _statusLabel.text = [NSString stringWithFormat:@"🔥 强制满血快充 · %.1fW · +%.0fmA", MAX(0.0, watts), MAX(0.0, current)];
+            } else {
+                _statusLabel.text = [NSString stringWithFormat:@"🔥 强制满血快充 · %.1fW", MAX(0.0, watts)];
+            }
             _statusLabel.textColor = [UIColor systemRedColor];
         } else if (chargeBoostEnable && isCharging) {
             NSDictionary *chargeInfo = getRealBatteryDetails();
             double watts = [chargeInfo[@"CalculatedWatts"] doubleValue];
             NSString *verify = chargeBoostVerified ? @"已验证功率提升" : @"实时验证中";
-            _statusLabel.text = [NSString stringWithFormat:@"⚡ 充电增强 · %.1fW · %@", MAX(0.0, watts), verify];
+            if (showBatteryCurrent) {
+                _statusLabel.text = [NSString stringWithFormat:@"⚡ 充电增强 · %.1fW · %@ · +%.0fmA", MAX(0.0, watts), verify, MAX(0.0, current)];
+            } else {
+                _statusLabel.text = [NSString stringWithFormat:@"⚡ 充电增强 · %.1fW · %@", MAX(0.0, watts), verify];
+            }
             _statusLabel.textColor = chargeBoostVerified ? [UIColor systemGreenColor] : [UIColor systemBlueColor];
         } else {
-            _statusLabel.text = isCharging ? @"正在充电" : @"未在充电";
+            if (isCharging && showBatteryCurrent) {
+                _statusLabel.text = [NSString stringWithFormat:@"正在充电 · +%.0fmA", MAX(0.0, current)];
+            } else {
+                _statusLabel.text = isCharging ? @"正在充电" : @"未在充电";
+            }
             _statusLabel.textColor = [UIColor colorWithRed:0.15f green:0.65f blue:0.3f alpha:1.0f];
         }
     }
