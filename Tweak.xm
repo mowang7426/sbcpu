@@ -2786,38 +2786,49 @@ static void LGRemoveLabelShadowInView(UIView *view) {
 @implementation SBCPUFloatingView
 
 // 液态玻璃：根据开关应用/取消液态玻璃样式
+// V4.35：Native Liquid Glass 只负责“表面”，不参与浮窗尺寸计算。
+// hostView 始终就是 SBCPUFloatingView 本身；尺寸由浮窗布局单独决定。
 - (void)refreshNativeLiquidGlass {
     if (!_nativeLiquidGlassView || !_usingNativeLiquidGlass) return;
-    // Native surface must always match the actual floating container, including during
-    // collapse/expand animations. The system view is refreshed after its frame settles.
-    _nativeLiquidGlassView.frame = self.bounds;
-    _glassContentView.frame = self.bounds;
-    CGFloat r = floatingCornerRadius;
-    if (self.bounds.size.height > 0.0) r = MIN(r, self.bounds.size.height / 2.0);
-    _nativeLiquidGlassView.layer.cornerRadius = r;
+
+    CGRect targetBounds = self.bounds;
+    if (CGRectIsEmpty(targetBounds)) {
+        _nativeLiquidGlassView.hidden = YES;
+        return;
+    }
+
+    _nativeLiquidGlassView.frame = targetBounds;
+    // 不修改 CCLiquidGlassView 的 cornerRadius / masksToBounds。
+    // 这些属性交给系统私有实现，避免把原生 Liquid Glass 降级成普通裁剪磨砂。
+
     @try {
         if ([(id)_nativeLiquidGlassView respondsToSelector:@selector(updateForHostView:preferredStyle:)]) {
             [(id)_nativeLiquidGlassView updateForHostView:self preferredStyle:1];
         } else if ([(id)_nativeLiquidGlassView respondsToSelector:@selector(updateForHostView:)]) {
             [(id)_nativeLiquidGlassView updateForHostView:self];
         }
-    } @catch (NSException *e) {}
+    } @catch (NSException *e) {
+        NSLog(@"[SBCPUFloating] V4.35 native Liquid Glass refresh exception: %@", e);
+    }
 }
 
 - (void)layoutSubviews {
     [super layoutSubviews];
+
     if (_nativeLiquidGlassView && _usingNativeLiquidGlass) {
-        _nativeLiquidGlassView.frame = self.bounds;
-        CGFloat r = MIN(floatingCornerRadius, MAX(0.0, self.bounds.size.height / 2.0));
-        _nativeLiquidGlassView.layer.cornerRadius = r;
-        @try {
-            if ([(id)_nativeLiquidGlassView respondsToSelector:@selector(updateForHostView:preferredStyle:)]) {
-                [(id)_nativeLiquidGlassView updateForHostView:self preferredStyle:1];
-            } else if ([(id)_nativeLiquidGlassView respondsToSelector:@selector(updateForHostView:)]) {
-                [(id)_nativeLiquidGlassView updateForHostView:self];
+        // 只同步 frame；绝不在 layoutSubviews 中改 self.bounds/self.center。
+        CGRect b = self.bounds;
+        _nativeLiquidGlassView.frame = b;
+        if (!CGRectIsEmpty(b)) {
+            @try {
+                if ([(id)_nativeLiquidGlassView respondsToSelector:@selector(updateForHostView:preferredStyle:)]) {
+                    [(id)_nativeLiquidGlassView updateForHostView:self preferredStyle:1];
+                } else if ([(id)_nativeLiquidGlassView respondsToSelector:@selector(updateForHostView:)]) {
+                    [(id)_nativeLiquidGlassView updateForHostView:self];
+                }
+            } @catch (NSException *e) {
+                NSLog(@"[SBCPUFloating] V4.35 native Liquid Glass layout refresh exception: %@", e);
             }
-        } @catch (NSException *e) {
-            NSLog(@"[SBCPUFloating] V4.34 native Liquid Glass layout refresh exception: %@", e);
         }
     }
 }
@@ -2839,7 +2850,8 @@ static void LGRemoveLabelShadowInView(UIView *view) {
     }
 
     UIView *surface = _glassSurfaceView ?: (UIView *)_blurView;
-    if (surface) {
+    if (surface && !_usingNativeLiquidGlass) {
+        // 仅旧版 UIBlurEffect fallback 使用自有圆角裁剪。
         surface.layer.masksToBounds = YES;
         CGFloat r = floatingCornerRadius;
         if (surface.bounds.size.height > 0.0) r = MIN(r, surface.bounds.size.height / 2.0);
@@ -3034,10 +3046,8 @@ static void LGRemoveLabelShadowInView(UIView *view) {
                     _usingNativeLiquidGlass = YES;
                     nativeGlass.userInteractionEnabled = NO;
                     nativeGlass.backgroundColor = UIColor.clearColor;
-                    // 不给系统 Liquid Glass 再套 masks/border/tint，避免把系统材质变成普通磨砂。
-                    nativeGlass.layer.cornerRadius = cornerRad;
-                    nativeGlass.layer.borderWidth = 0.0;
-                    nativeGlass.layer.masksToBounds = NO;
+                    // V4.35：不碰系统 Liquid Glass 的 cornerRadius / masksToBounds。
+                    // 让 CCLiquidGlassView 自己管理其材质、裁剪和动态效果。
 
                     // Native Liquid Glass 直接作为 SBCPU 浮窗的唯一背景表面；
                     // 普通 UIBlurEffect 只作为“液态玻璃关闭/私有类不存在”时的 fallback。
@@ -3081,58 +3091,13 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _marqueeLayer.zPosition = 1001.0f; // 跑马灯在玻璃高光之上，保持清晰
         [_glassSurfaceView.layer addSublayer:_marqueeLayer];
 
-        // === 液态玻璃：specular 边缘高光（SBLiquidGlass Dock 配方：白-清-白 45° 渐变 + 边缘 mask 只露一圈） ===
-        _glassSheenLayer = [CAGradientLayer layer];
-        _glassSheenLayer.frame = _glassSurfaceView.bounds;
-        _glassSheenLayer.colors = @[
-            (id)[UIColor colorWithWhite:1.0f alpha:0.50f].CGColor,
-            (id)[UIColor clearColor].CGColor,
-            (id)[UIColor colorWithWhite:1.0f alpha:0.50f].CGColor,
-        ];
-        _glassSheenLayer.locations = @[@0.0f, @0.5f, @1.0f];
-        _glassSheenLayer.startPoint = CGPointMake(0.0f, 0.0f);
-        _glassSheenLayer.endPoint = CGPointMake(1.0f, 1.0f);
-        _glassSheenLayer.zPosition = 1000.0f; // 玻璃表面反光盖在内容之上
-        _glassSheenMask = [CALayer layer];
-        _glassSheenMask.frame = _glassSurfaceView.bounds;
-        _glassSheenMask.backgroundColor = [UIColor clearColor].CGColor;
-        _glassSheenMask.borderColor = [UIColor blackColor].CGColor;
-        _glassSheenMask.borderWidth = 1.25f;
-        _glassSheenMask.cornerRadius = cornerRad;
-        _glassSheenLayer.mask = _glassSheenMask;
-        [_glassSurfaceView.layer addSublayer:_glassSheenLayer];
-
-        // boost 层：overlayBlendMode 增强高光亮度
-        _glassBoostLayer = [CAGradientLayer layer];
-        _glassBoostLayer.frame = _glassSurfaceView.bounds;
-        _glassBoostLayer.colors = @[
-            (id)[UIColor colorWithWhite:1.0f alpha:0.90f].CGColor,
-            (id)[UIColor clearColor].CGColor,
-            (id)[UIColor colorWithWhite:1.0f alpha:0.90f].CGColor,
-        ];
-        _glassBoostLayer.locations = @[@0.0f, @0.5f, @1.0f];
-        _glassBoostLayer.startPoint = _glassSheenLayer.startPoint;
-        _glassBoostLayer.endPoint = _glassSheenLayer.endPoint;
-        _glassBoostLayer.compositingFilter = @"overlayBlendMode";
-        _glassBoostLayer.zPosition = 999.0f;
-        _glassBoostMask = [CALayer layer];
-        _glassBoostMask.frame = _glassSurfaceView.bounds;
-        _glassBoostMask.backgroundColor = [UIColor clearColor].CGColor;
-        _glassBoostMask.borderColor = [UIColor blackColor].CGColor;
-        _glassBoostMask.borderWidth = 1.25f;
-        _glassBoostMask.cornerRadius = cornerRad;
-        _glassBoostLayer.mask = _glassBoostMask;
-        [_glassSurfaceView.layer addSublayer:_glassBoostLayer];
-
-        // === 液态玻璃：最外沿细亮描边（配合 specular 形成完整边缘光） ===
-        _glassEdgeLayer = [CAShapeLayer layer];
-        _glassEdgeLayer.frame = _glassSurfaceView.bounds;
-        _glassEdgeLayer.fillColor = [UIColor clearColor].CGColor;
-        _glassEdgeLayer.strokeColor = [UIColor colorWithWhite:1.0f alpha:0.55f].CGColor;
-        _glassEdgeLayer.lineWidth = 1.0f;
-        _glassEdgeLayer.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(_glassSurfaceView.bounds, 0.5f, 0.5f) cornerRadius:cornerRad].CGPath;
-        _glassEdgeLayer.zPosition = 998.0f;
-        [_glassSurfaceView.layer addSublayer:_glassEdgeLayer];
+        // V4.35：原生 CCLiquidGlassView 已经是唯一玻璃表面。
+        // 不再创建额外的 sheen / boost / edge 玻璃层，避免普通磨砂叠加。
+        _glassSheenLayer = nil;
+        _glassSheenMask = nil;
+        _glassBoostLayer = nil;
+        _glassBoostMask = nil;
+        _glassEdgeLayer = nil;
 
         UIView *content = _glassContentView;
         content.userInteractionEnabled = NO;
@@ -4148,7 +4113,14 @@ return self;
         self.horizontalDiv.hidden = YES;
         self.horizontalDiv.alpha = 0.0;
 
-        [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.4 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:animationsBlock completion:completionBlock];
+        // V4.35：收起同样取消 overshoot，避免玻璃框先弹大再缩回。
+        [UIView animateWithDuration:0.26
+                              delay:0
+                            options:UIViewAnimationOptionAllowUserInteraction |
+                                    UIViewAnimationOptionBeginFromCurrentState |
+                                    UIViewAnimationOptionCurveEaseInOut
+                         animations:animationsBlock
+                         completion:completionBlock];
     } else {
         animationsBlock();
         completionBlock(YES);
@@ -4298,7 +4270,7 @@ return self;
         self.bounds = CGRectMake(0, 0, expandedW, expandedH);
         self.glassSurfaceView.frame = CGRectMake(0, 0, expandedW, expandedH);
         self.glassContentView.frame = self.glassSurfaceView.bounds;
-        [self refreshNativeLiquidGlass];
+        // Native Glass frame 由 layoutSubviews 同步；不要在尺寸动画块里重复 updateForHostView。
         self.glassSurfaceView.layer.cornerRadius = expandedCornerRad;
         self.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, expandedW, expandedH) cornerRadius:expandedCornerRad].CGPath;
         self.marqueeLayer.frame = self.glassSurfaceView.bounds;
@@ -4340,7 +4312,14 @@ return self;
     };
 
     if (animated) {
-        [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.5 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:animationsBlock completion:completionBlock];
+        // V4.35：不使用弹簧动画。弹簧会产生明显 overshoot，正是“打开后又大一圈”的来源。
+        [UIView animateWithDuration:0.28
+                              delay:0
+                            options:UIViewAnimationOptionAllowUserInteraction |
+                                    UIViewAnimationOptionBeginFromCurrentState |
+                                    UIViewAnimationOptionCurveEaseOut
+                         animations:animationsBlock
+                         completion:completionBlock];
     } else {
         animationsBlock();
         completionBlock(YES);
