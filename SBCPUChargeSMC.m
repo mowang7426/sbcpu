@@ -10,6 +10,10 @@
 #import <Foundation/Foundation.h>
 #import <IOKit/IOKitLib.h>
 #import <notify.h>
+#include <pwd.h>
+#include <unistd.h>
+#include <errno.h>
+#include <string.h>
 #include "SBCPUChargeSMC.h"
 #include "SBCPUChargeProtocol.h"
 
@@ -108,17 +112,33 @@ static IOReturn smc_get_keyinfo(uint32_t key, SMCKeyInfoData *keyInfo) {
 }
 
 IOReturn smc_read_key(uint32_t key, void *bytes, int32_t *size) {
+    if (!size || *size < 0) return kIOReturnBadArgument;
+
     SMCParamStruct in = {0};
     SMCParamStruct out = {0};
     in.key = key;
+
     IOReturn r = smc_get_keyinfo(key, &in.param.keyInfo);
     if (r != kIOReturnSuccess) return r;
-    if (*size < (int32_t)in.param.keyInfo.dataSize)
-        *size = (int32_t)in.param.keyInfo.dataSize;
+
+    uint32_t dataSize = in.param.keyInfo.dataSize;
+    if (dataSize == 0 || dataSize > sizeof(out.param.bytes)) {
+        return kIOReturnBadArgument;
+    }
+
+    // The caller owns the destination buffer. Never enlarge *size and then
+    // memcpy past that buffer: several SMC keys are larger than 1 byte.
+    if ((uint32_t)*size < dataSize || (dataSize > 0 && !bytes)) {
+        *size = (int32_t)dataSize;
+        return kIOReturnNoSpace;
+    }
+
     in.param.data8 = kSMCReadKey;
     r = smc_call(kSMCHandleYPCEvent, &in, &out);
     if (r != kIOReturnSuccess) return r;
-    if (bytes) memcpy(bytes, out.param.bytes, *size);
+
+    memcpy(bytes, out.param.bytes, dataSize);
+    *size = (int32_t)dataSize;
     return kIOReturnSuccess;
 }
 
@@ -159,17 +179,45 @@ bool smc_obc_taken_power(void) {
 
 // 关闭 iOS 优化电池充电（OBC topoff protection），让 CH0C 写不被系统抢回
 static bool obc_switch(bool on) {
-    // 以 mobile 身份写偏好（root 写会落到 root 域，mobile 的 SpringBoard 读不到）
-    // 简化：直接写文件 /var/mobile/Library/Preferences/com.apple.smartcharging.topoffprotection.plist
-    NSString *path = @"/var/mobile/Library/Preferences/com.apple.smartcharging.topoffprotection.plist";
-    NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:path];
-    if (!d) d = [NSMutableDictionary dictionary];
-    d[@"enabled"] = @(on ? 1 : 0);
-    BOOL ok = [d writeToFile:path atomically:YES];
-    if (ok) {
-        // 通知 powerui/coreduet 刷新
-        notify_post("com.apple.smartcharging.defaultschanged");
+    // Match Battman's safe OBC preference path: temporarily drop to mobile so
+    // CFPreferences writes the mobile user's domain rather than root's domain.
+    struct passwd *pw = getpwnam("mobile");
+    if (!pw) return false;
+
+    uid_t orig_euid = geteuid();
+    gid_t orig_egid = getegid();
+    bool ok = false;
+
+    if (setegid(pw->pw_gid) != 0) {
+        return false;
     }
+    if (seteuid(pw->pw_uid) != 0) {
+        (void)setegid(orig_egid);
+        return false;
+    }
+
+    CFStringRef domain = CFSTR("com.apple.smartcharging.topoffprotection");
+    CFStringRef key = CFSTR("enabled");
+    int onValue = on ? 1 : 0;
+    CFNumberRef value = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &onValue);
+    if (value) {
+        CFPreferencesSetValue(key, value, domain,
+                              kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        CFRelease(value);
+        ok = CFPreferencesSynchronize(domain,
+                                      kCFPreferencesCurrentUser,
+                                      kCFPreferencesAnyHost);
+        if (!ok) {
+            ok = CFPreferencesAppSynchronize(domain);
+        }
+        if (ok) {
+            notify_post("com.apple.smartcharging.defaultschanged");
+        }
+    }
+
+    // Always restore daemon credentials before returning.
+    if (seteuid(orig_euid) != 0) ok = false;
+    if (setegid(orig_egid) != 0) ok = false;
     return ok;
 }
 
@@ -195,23 +243,31 @@ int smc_set_charge_block(bool inhibit, bool overrideOBC) {
         return SB_RESULT_IO_ERROR;
     }
 
-    // OBC 已接管充电：不强制则标记 OBC 托管；强制则关 OBC 再写 CH0B
+    // OBC 已接管充电：不强制则标记 OBC 托管；强制则先关闭 OBC。
     if (cur & (1 << 1)) {
         if (!overrideOBC) return SB_RESULT_OBC_TAKEN;
-        obc_switch(false);
-        (void)smc_write_key('CH0B', &inhibit, 1);
+        if (!obc_switch(false)) {
+            NSLog(@"[SBCPUChargeSMC] failed to disable OBC before CH0C write");
+            return SB_RESULT_IO_ERROR;
+        }
+        IOReturn obcWrite = smc_write_key('CH0B', &inhibit, 1);
+        if (obcWrite != kIOReturnSuccess) {
+            NSLog(@"[SBCPUChargeSMC] write CH0B=%d failed 0x%08x", inhibit, smc_last_error());
+            return SB_RESULT_IO_ERROR;
+        }
     }
 
-    // 只在实际状态变化时写
+    // The cache is only an optimisation. The registry value is authoritative:
+    // iOS/OBC may have changed CH0C while we were asleep or after a replug.
     int target = inhibit ? 1 : 0;
-    if (target != gChargeCache) {
+    if (((cur & 1) != target) || gChargeCache != target) {
         IOReturn r = smc_write_key('CH0C', &inhibit, 1);
         if (r != kIOReturnSuccess) {
             NSLog(@"[SBCPUChargeSMC] write CH0C=%d failed 0x%08x", inhibit, smc_last_error());
             return SB_RESULT_IO_ERROR;
         }
-        gChargeCache = target;
     }
+    gChargeCache = target;
     return SB_RESULT_OK;
 }
 
@@ -237,18 +293,21 @@ int smc_set_power_block(bool inhibit, bool overrideOBC) {
 
     if (cur & (1 << 1)) {
         if (!overrideOBC) return SB_RESULT_OBC_TAKEN;
-        obc_switch(false);
+        if (!obc_switch(false)) {
+            NSLog(@"[SBCPUChargeSMC] failed to disable OBC before CH0I write");
+            return SB_RESULT_IO_ERROR;
+        }
     }
 
     int target = inhibit ? 1 : 0;
-    if (target != gPowerCache) {
+    if (((cur & 1) != target) || gPowerCache != target) {
         IOReturn r = smc_write_key('CH0I', &inhibit, 1);
         if (r != kIOReturnSuccess) {
             NSLog(@"[SBCPUChargeSMC] write CH0I=%d failed 0x%08x", inhibit, smc_last_error());
             return SB_RESULT_IO_ERROR;
         }
-        gPowerCache = target;
     }
+    gPowerCache = target;
     return SB_RESULT_OK;
 }
 

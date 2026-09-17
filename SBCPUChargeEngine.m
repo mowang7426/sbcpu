@@ -1,4 +1,4 @@
-// SBCPUChargeEngine.m — 充电状态机实现
+// SBCPUChargeEngine.m — 充电状态机实现 (V4.26 Stable)
 // 优先级（Battman 方案）：
 //   1. 安全状态（未插电 / SMC 不可用 / 无线充电不支持）→ 不写
 //   2. 手动阻止充电（manualChargeBlock）→ CH0C = inhibit
@@ -12,6 +12,8 @@
 #import <notify.h>
 #import <unistd.h>
 #include <stdarg.h>
+#include <pthread.h>
+#include <string.h>
 #include "SBCPUChargeEngine.h"
 #include "SBCPUChargeSMC.h"
 #include "SBCPUChargePowerSource.h"
@@ -25,6 +27,29 @@ static bool gSmcAvailable = false;
 static bool gOBC = false;
 static bool gManualChargeBlock = false;  // 手动状态持久于内存（daemon 生命周期）
 static bool gManualPowerBlock = false;
+// 智能充电限制的独立状态（不从 CH0C 反推；keepAC=NO 用 CH0I 停充时 CH0C 仍为 0）
+static bool gLimitBlocked = false;        // 当前是否处于"达到上限停充"状态
+static bool gLimitUsesPowerBlock = false; // 本次停充用的是 CH0I（keepAC=NO）而非 CH0C
+
+// IOKit callbacks run on the daemon run-loop while socket commands arrive on a
+// separate thread. Keep all state-machine mutations serialized. Recursive is
+// intentional: sb_engine_redecide() may synchronously trigger the power callback.
+static pthread_once_t gEngineMutexOnce = PTHREAD_ONCE_INIT;
+static pthread_mutex_t gEngineMutex;
+static void engine_mutex_init(void) {
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&gEngineMutex, &attr);
+    pthread_mutexattr_destroy(&attr);
+}
+static inline void engine_lock(void) {
+    pthread_once(&gEngineMutexOnce, engine_mutex_init);
+    pthread_mutex_lock(&gEngineMutex);
+}
+static inline void engine_unlock(void) {
+    pthread_mutex_unlock(&gEngineMutex);
+}
 
 // 日志（仅状态变化/错误时写，避免刷屏）
 static void engine_log(NSString *fmt, ...) {
@@ -71,7 +96,10 @@ bool sb_engine_load_config(SBCPUChargeConfig *cfg) {
 
     SBCPUChargeConfig c = {0};
     c.smartChargeEnabled = pref_bool(d, @"smartChargeEnable", false);
-    c.chargeLimitEnabled = pref_bool(d, @"chargeLimitEnabled", c.smartChargeEnabled);
+    // V1 deliberately uses one master switch. Treat smartChargeEnable as
+    // authoritative so stale legacy chargeLimitEnabled values cannot keep the
+    // engine active after the user turns Smart Charging off.
+    c.chargeLimitEnabled = c.smartChargeEnabled;
     c.upperLimit = (uint8_t)pref_int(d, @"smartChargeUpperLimit", 80);
     c.lowerLimit = (uint8_t)pref_int(d, @"smartChargeLowerLimit", 70);
     c.keepAC = pref_bool(d, @"chargeKeepAC", true);
@@ -90,31 +118,40 @@ bool sb_engine_load_config(SBCPUChargeConfig *cfg) {
 }
 
 void sb_engine_init(void) {
+    engine_lock();
     IOReturn oret = smc_open();
     gSmcAvailable = (oret == kIOReturnSuccess);
     if (!gSmcAvailable) {
         engine_log(@"AppleSMC open failed: 0x%08x (uid=%d); engine disabled", (unsigned)oret, (int)getuid());
         gState = SBCPUChargeStateError;
+        engine_unlock();
         return;
     }
     engine_log(@"AppleSMC opened OK (uid=%d)", (int)getuid());
     if (!sb_engine_load_config(&gCfg)) {
         engine_log(@"No preferences yet; engine idle");
         gState = SBCPUChargeStateUnknown;
+        engine_unlock();
         return;
     }
     // 启动立即决策一次（不等下一次电池事件）
     sb_engine_redecide();
+    engine_unlock();
 }
 
 void sb_engine_shutdown(void) {
-    // 恢复充电并停止（卸载/停用场景）
+    engine_lock();
+    // 恢复我们自己的 inhibit 状态并停止。Do not force-disable Apple's OBC
+    // during unload; leaving system-managed charging alone is the safer exit.
     if (gSmcAvailable) {
-        (void)smc_set_charge_block(false, true);
-        (void)smc_set_power_block(false, true);
+        (void)smc_set_charge_block(false, false);
+        (void)smc_set_power_block(false, false);
     }
     smc_close();
     gState = SBCPUChargeStateUnknown;
+    gLimitBlocked = false;
+    gLimitUsesPowerBlock = false;
+    engine_unlock();
 }
 
 // 按需确保 SMC 已打开：启动时若临时失败，后续命令/事件到来时自动重连（自愈）
@@ -131,10 +168,11 @@ static bool engine_ensure_smc(void) {
 }
 
 int sb_engine_manual_charge_block(bool block) {
-    gManualChargeBlock = block;
-    if (!engine_ensure_smc()) return SB_RESULT_SMC_UNAVAILABLE;
+    engine_lock();
+    if (!engine_ensure_smc()) { engine_unlock(); return SB_RESULT_SMC_UNAVAILABLE; }
     int r = smc_set_charge_block(block, gCfg.overrideOBC);
     if (r == SB_RESULT_OK) {
+        gManualChargeBlock = block;
         gCfg.manualChargeBlock = block;
         // 同步回偏好，UI 重启后仍生效
         NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:@SB_PREF_FILE];
@@ -145,14 +183,16 @@ int sb_engine_manual_charge_block(bool block) {
         gState = block ? SBCPUChargeStateBlocked : SBCPUChargeStateCharging;
         engine_log(@"manual charge block -> %d (0x%x)", block, r);
     }
+    engine_unlock();
     return r;
 }
 
 int sb_engine_manual_power_block(bool block) {
-    gManualPowerBlock = block;
-    if (!engine_ensure_smc()) return SB_RESULT_SMC_UNAVAILABLE;
+    engine_lock();
+    if (!engine_ensure_smc()) { engine_unlock(); return SB_RESULT_SMC_UNAVAILABLE; }
     int r = smc_set_power_block(block, gCfg.overrideOBC);
     if (r == SB_RESULT_OK) {
+        gManualPowerBlock = block;
         gCfg.manualPowerBlock = block;
         NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:@SB_PREF_FILE];
         if (d) {
@@ -162,15 +202,18 @@ int sb_engine_manual_power_block(bool block) {
         gState = block ? SBCPUChargeStateBlocked : SBCPUChargeStateCharging;
         engine_log(@"manual power block -> %d (0x%x)", block, r);
     }
+    engine_unlock();
     return r;
 }
 
 // 核心决策
 void sb_engine_decide(int pct, bool charging, bool wireless) {
+    engine_lock();
     if (pct >= 0) gBatteryPercent = pct;
     gWireless = wireless;
     if (!engine_ensure_smc()) {
         gState = SBCPUChargeStateError;
+        engine_unlock();
         return;
     }
 
@@ -180,6 +223,7 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
             gState = SBCPUChargeStateNoPower;
             engine_log(@"no external power; idle (pct=%d)", pct);
         }
+        engine_unlock();
         return;
     }
 
@@ -188,7 +232,27 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
     (void)sb_engine_load_config(&newCfg);
     bool cfgChanged = memcmp(&newCfg, &gCfg, sizeof(SBCPUChargeConfig)) != 0;
     if (cfgChanged) {
+        SBCPUChargeConfig oldCfg = gCfg;
         gCfg = newCfg;
+        gManualChargeBlock = gCfg.manualChargeBlock;
+        gManualPowerBlock = gCfg.manualPowerBlock;
+
+        // If the user moved the limit above the current SoC, or changed the
+        // drain mode while already blocked, do not carry the old hysteresis
+        // decision forever. Release the previous key and let this invocation
+        // evaluate the new configuration from scratch.
+        if (gLimitBlocked &&
+            (!gCfg.smartChargeEnabled || pct < gCfg.upperLimit ||
+             oldCfg.keepAC != gCfg.keepAC)) {
+            if (gLimitUsesPowerBlock) {
+                (void)smc_set_power_block(false, oldCfg.overrideOBC);
+            } else {
+                (void)smc_set_charge_block(false, oldCfg.overrideOBC);
+            }
+            gLimitBlocked = false;
+            gLimitUsesPowerBlock = false;
+        }
+
         engine_log(@"config updated: smart=%d upper=%d lower=%d keepAC=%d obc=%d",
             gCfg.smartChargeEnabled, gCfg.upperLimit, gCfg.lowerLimit, gCfg.keepAC, gCfg.overrideOBC);
     }
@@ -199,6 +263,7 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
             gState = SBCPUChargeStateUnsupported;
             engine_log(@"wireless charging detected; limit unsupported");
         }
+        engine_unlock();
         return;
     }
 
@@ -208,6 +273,7 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
         int r = smc_set_charge_block(true, gCfg.overrideOBC);
         if (r == SB_RESULT_OK) gState = SBCPUChargeStateBlocked;
         else if (r == SB_RESULT_OBC_TAKEN) gState = SBCPUChargeStateOBCControlled;
+        engine_unlock();
         return;
     }
     // 手动阻止外部供电
@@ -216,34 +282,45 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
         int r = smc_set_power_block(true, gCfg.overrideOBC);
         if (r == SB_RESULT_OK) gState = SBCPUChargeStateBlocked;
         else if (r == SB_RESULT_OBC_TAKEN) gState = SBCPUChargeStateOBCControlled;
+        engine_unlock();
         return;
     }
 
-    // 优先级 3：智能充电限制（迟滞）
+    // 优先级 3：智能充电限制（迟滞，独立状态变量，不从 CH0C 反推）
     if (gCfg.smartChargeEnabled || gCfg.chargeLimitEnabled) {
-        bool blocked = smc_get_charge_blocked();
         gOBC = smc_obc_taken_charge();
-        if (!blocked && pct >= gCfg.upperLimit) {
-            // 达到上限 → 停充（保留 AC 用 CH0C；不保留 AC 用 CH0I）
+        if (!gLimitBlocked && pct >= gCfg.upperLimit) {
+            // 达到上限 → 进入停充状态（保留 AC 用 CH0C；不保留 AC 用 CH0I）
             int r;
             if (gCfg.keepAC) {
                 r = smc_set_charge_block(true, gCfg.overrideOBC);
+                gLimitUsesPowerBlock = false;
             } else {
                 r = smc_set_power_block(true, gCfg.overrideOBC);
+                gLimitUsesPowerBlock = true;
             }
             if (r == SB_RESULT_OK) {
+                gLimitBlocked = true;
                 if (gState != SBCPUChargeStateBlocked) {
                     gState = SBCPUChargeStateBlocked;
-                    engine_log(@"limit reached: pct=%d >= %d -> BLOCKED", pct, gCfg.upperLimit);
+                    engine_log(@"limit reached: pct=%d >= %d -> BLOCKED (%s)",
+                        pct, gCfg.upperLimit, gLimitUsesPowerBlock ? "CH0I" : "CH0C");
                 }
             } else if (r == SB_RESULT_OBC_TAKEN) {
                 gState = SBCPUChargeStateOBCControlled;
                 engine_log(@"OBC took over at limit (pct=%d)", pct);
             }
-        } else if (blocked && pct <= gCfg.lowerLimit) {
-            // 降到下限 → 恢复充电
-            int r = smc_set_charge_block(false, gCfg.overrideOBC);
+        } else if (gLimitBlocked && pct <= gCfg.lowerLimit) {
+            // 降到下限 → 恢复充电（按之前停充用的 key 复位）
+            int r;
+            if (gLimitUsesPowerBlock) {
+                r = smc_set_power_block(false, gCfg.overrideOBC);
+            } else {
+                r = smc_set_charge_block(false, gCfg.overrideOBC);
+            }
             if (r == SB_RESULT_OK) {
+                gLimitBlocked = false;
+                gLimitUsesPowerBlock = false;
                 if (gState != SBCPUChargeStateCharging) {
                     gState = SBCPUChargeStateCharging;
                     engine_log(@"resume: pct=%d <= %d -> CHARGING", pct, gCfg.lowerLimit);
@@ -251,34 +328,70 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
             } else if (r == SB_RESULT_OBC_TAKEN) {
                 gState = SBCPUChargeStateOBCControlled;
             }
+        } else if (gLimitBlocked) {
+            // Hysteresis middle band: keep the logical state, but reconcile the
+            // actual SMC bit. iOS/OBC can reset CH0C/CH0I while unplugged or
+            // during a daemon restart; the software flag alone is not enough.
+            bool actualBlocked = gLimitUsesPowerBlock
+                ? smc_get_power_blocked()
+                : smc_get_charge_blocked();
+            if (!actualBlocked) {
+                int r = gLimitUsesPowerBlock
+                    ? smc_set_power_block(true, gCfg.overrideOBC)
+                    : smc_set_charge_block(true, gCfg.overrideOBC);
+                if (r == SB_RESULT_OK) {
+                    engine_log(@"re-applied active limit at pct=%d after SMC state drift", pct);
+                } else if (r == SB_RESULT_OBC_TAKEN) {
+                    gState = SBCPUChargeStateOBCControlled;
+                }
+            }
+        } else {
+            // Daemon restart/reload: gLimitBlocked is volatile, while CH0C/CH0I
+            // can still contain the previous inhibit bit. At or below the upper
+            // threshold we explicitly converge to normal charging.
+            bool staleChargeBlock = smc_get_charge_blocked();
+            bool stalePowerBlock = smc_get_power_blocked();
+            if (pct < gCfg.upperLimit && (staleChargeBlock || stalePowerBlock)) {
+                if (staleChargeBlock) (void)smc_set_charge_block(false, gCfg.overrideOBC);
+                if (stalePowerBlock) (void)smc_set_power_block(false, gCfg.overrideOBC);
+            }
         }
-        // 中间区间：保持当前状态（迟滞）
+        // 中间区间（lower < pct < upper）：保持迟滞，但修复外部状态漂移。
+        engine_unlock();
         return;
     }
 
     // 优先级 4：无限制 → 正常充电
+    if (gLimitBlocked) {
+        gLimitBlocked = false;
+        gLimitUsesPowerBlock = false;
+        engine_log(@"limit disabled; reset limit state");
+    }
     if (gState != SBCPUChargeStateCharging) {
         gState = SBCPUChargeStateCharging;
         engine_log(@"no limit active; ensure charging (pct=%d)", pct);
     }
     if (smc_get_charge_blocked() || smc_get_power_blocked()) {
-        (void)smc_set_charge_block(false, true);
-        (void)smc_set_power_block(false, true);
+        (void)smc_set_charge_block(false, gCfg.overrideOBC);
+        (void)smc_set_power_block(false, gCfg.overrideOBC);
     }
+    engine_unlock();
 }
 
 void sb_engine_redecide(void) {
+    engine_lock();
     (void)sb_engine_load_config(&gCfg);
     gManualChargeBlock = gCfg.manualChargeBlock;
     gManualPowerBlock = gCfg.manualPowerBlock;
     sb_power_poll_once();
+    engine_unlock();
 }
 
 // ---------- 查询 ----------
-SBCPUChargeState sb_engine_state(void) { return gState; }
-uint8_t sb_engine_battery_percent(void) { return (uint8_t)(gBatteryPercent < 0 ? 0 : gBatteryPercent); }
-bool sb_engine_charge_blocked(void) { return smc_get_charge_blocked(); }
-bool sb_engine_power_blocked(void) { return smc_get_power_blocked(); }
-bool sb_engine_smc_available(void) { return engine_ensure_smc(); }
-bool sb_engine_obc_taken(void) { return gOBC; }
-bool sb_engine_wireless(void) { return gWireless; }
+SBCPUChargeState sb_engine_state(void) { engine_lock(); SBCPUChargeState v = gState; engine_unlock(); return v; }
+uint8_t sb_engine_battery_percent(void) { engine_lock(); uint8_t v = (uint8_t)(gBatteryPercent < 0 ? 0 : gBatteryPercent); engine_unlock(); return v; }
+bool sb_engine_charge_blocked(void) { engine_lock(); bool v = smc_get_charge_blocked(); engine_unlock(); return v; }
+bool sb_engine_power_blocked(void) { engine_lock(); bool v = smc_get_power_blocked(); engine_unlock(); return v; }
+bool sb_engine_smc_available(void) { engine_lock(); bool v = engine_ensure_smc(); engine_unlock(); return v; }
+bool sb_engine_obc_taken(void) { engine_lock(); bool v = gOBC; engine_unlock(); return v; }
+bool sb_engine_wireless(void) { engine_lock(); bool v = gWireless; engine_unlock(); return v; }

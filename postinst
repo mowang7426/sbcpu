@@ -60,13 +60,14 @@ if [ -n "$LC" ] && [ -f "$PLIST" ]; then
     sleep 2
 fi
 
-# 6) 校验 launchd 是否真的托管；未托管则兜底手动起一个（flock 保证全局单实例）
+# 6) 校验 launchd 是否真的托管。
+# 不再 nohup 手动启动 daemon：launchd 与手动实例并存会造成状态/日志竞争。
 RUNNING=0
 if [ -n "$LC" ] && "$LC" list 2>/dev/null | grep -q "$LABEL"; then RUNNING=1; fi
-if [ "$RUNNING" != "1" ] && [ -x "$DAEMON" ]; then
-    ilog "launchd 未托管，兜底启动(nohup)"
-    ( nohup "$DAEMON" >/dev/null 2>&1 & ) 2>/dev/null || ( "$DAEMON" >/dev/null 2>&1 & )
-    sleep 2
+if [ "$RUNNING" = "1" ]; then
+    ilog "launchd 正在托管 $LABEL"
+else
+    ilog "launchd 未确认托管 $LABEL；不手动启动，保留诊断信息"
 fi
 
 # 7) 记录最终状态，便于排查

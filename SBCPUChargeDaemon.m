@@ -67,10 +67,36 @@ static void power_event_cb(int pct, bool charging, bool wireless) {
 }
 
 // ================= Socket 命令处理 =================
+// Unix SOCK_STREAM 不保证一次 read/write 传完整结构体，统一用全量读写
+static bool read_full(int fd, void *buf, size_t len) {
+    size_t done = 0;
+    while (done < len) {
+        ssize_t n = read(fd, (uint8_t *)buf + done, len - done);
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR) continue;
+            return false;
+        }
+        done += (size_t)n;
+    }
+    return true;
+}
+
+static bool write_full(int fd, const void *buf, size_t len) {
+    size_t done = 0;
+    while (done < len) {
+        ssize_t n = write(fd, (const uint8_t *)buf + done, len - done);
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR) continue;
+            return false;
+        }
+        done += (size_t)n;
+    }
+    return true;
+}
+
 static void handle_client(int fd) {
     sb_cmd_t cmd;
-    ssize_t n = read(fd, &cmd, sizeof(cmd));
-    if (n != (ssize_t)sizeof(cmd)) return;
+    if (!read_full(fd, &cmd, sizeof(cmd))) return;
 
     sb_resp_t resp = {0};
     resp.magic = SB_MAGIC;
@@ -79,7 +105,7 @@ static void handle_client(int fd) {
 
     if (cmd.magic != SB_MAGIC) {
         resp.result = SB_RESULT_IO_ERROR;
-        write(fd, &resp, sizeof(resp));
+        write_full(fd, &resp, sizeof(resp));
         return;
     }
 
@@ -114,8 +140,7 @@ static void handle_client(int fd) {
         case SB_CMD_SET_LIMITS: {
             // 读取载荷并写入偏好（engine 下次决策自动生效）
             sb_limits_t lim;
-            ssize_t rn = read(fd, &lim, sizeof(lim));
-            if (rn != (ssize_t)sizeof(lim)) {
+            if (!read_full(fd, &lim, sizeof(lim))) {
                 resp.result = SB_RESULT_IO_ERROR;
                 break;
             }
@@ -143,7 +168,7 @@ static void handle_client(int fd) {
             SBCPUChargeConfig cfg;
             bool ok = sb_engine_load_config(&cfg);
             resp.result = ok ? SB_RESULT_OK : SB_RESULT_IO_ERROR;
-            write(fd, &resp, sizeof(resp));
+            write_full(fd, &resp, sizeof(resp));
             if (ok) {
                 sb_limits_t lim = {0};
                 lim.smartChargeEnabled = cfg.smartChargeEnabled;
@@ -154,7 +179,7 @@ static void handle_client(int fd) {
                 lim.manualChargeBlock = cfg.manualChargeBlock;
                 lim.manualPowerBlock = cfg.manualPowerBlock;
                 lim.scheduleEnabled = cfg.scheduleEnabled;
-                write(fd, &lim, sizeof(lim));
+                write_full(fd, &lim, sizeof(lim));
             }
             return; // 已写 resp
         }
@@ -183,15 +208,15 @@ static void handle_client(int fd) {
             st.lastSMCError = smc_last_error();
             resp.result = SB_RESULT_OK;
             resp.value = st.engineState;
-            write(fd, &resp, sizeof(resp));
-            write(fd, &st, sizeof(st));
+            write_full(fd, &resp, sizeof(resp));
+            write_full(fd, &st, sizeof(st));
             return;
         }
         case SB_CMD_STOP: {
             sb_log(@"STOP requested; reset SMC and exit");
             sb_engine_shutdown();
             resp.result = SB_RESULT_OK;
-            write(fd, &resp, sizeof(resp));
+            write_full(fd, &resp, sizeof(resp));
             // 清锁后退出
             if (gLockFD >= 0) {
                 flock(gLockFD, LOCK_UN);
@@ -204,7 +229,7 @@ static void handle_client(int fd) {
             resp.result = SB_RESULT_IO_ERROR;
             break;
     }
-    write(fd, &resp, sizeof(resp));
+    write_full(fd, &resp, sizeof(resp));
 }
 
 static void *socket_server(void *arg) {
@@ -261,6 +286,13 @@ static void sbcpu_on_term(int sig) {
     CFRunLoopStop(CFRunLoopGetMain());
 }
 
+// 兜底 watchdog：IOKit 电源通知事件驱动不可用时，10 秒轮询一次仍保证充电控制工作，
+// 同时保证主 runloop 有事件源不会立即返回（否则 daemon 秒退、launchd 反复重启）
+static void poll_watchdog_cb(CFRunLoopTimerRef timer, void *info) {
+    (void)timer; (void)info;
+    sb_power_poll_once();
+}
+
 int main(int argc, char *argv[]) {
     signal(SIGPIPE, SIG_IGN);
     signal(SIGCHLD, SIG_IGN);
@@ -293,6 +325,15 @@ int main(int argc, char *argv[]) {
         CFRunLoopSourceRef src = sb_power_runloop_source();
         if (src) {
             CFRunLoopAddSource(CFRunLoopGetMain(), src, kCFRunLoopCommonModes);
+        }
+        // 兜底 watchdog：无论如何主 runloop 都有常驻 timer（10s），
+        // 避免 IOKit 通知不可用时 CFRunLoopRun 因无事件源立即返回导致 daemon 秒退。
+        CFRunLoopTimerRef wdt = CFRunLoopTimerCreate(kCFAllocatorDefault,
+            CFAbsoluteTimeGetCurrent() + 5.0, 10.0, 0, 0,
+            (CFRunLoopTimerCallBack)poll_watchdog_cb, NULL);
+        if (wdt) {
+            CFRunLoopAddTimer(CFRunLoopGetMain(), wdt, kCFRunLoopCommonModes);
+            CFRelease(wdt);
         }
         CFRunLoopRun(); // 常驻（launchd KeepAlive 兜底）
 

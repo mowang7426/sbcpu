@@ -76,9 +76,10 @@ static void handle_service(io_service_t service) {
     gCallback(pct, charging, sb_power_wireless());
 }
 
-static void service_interest_cb(io_service_t service, uint32_t messageType, void *argument) {
-    (void)argument; (void)messageType;
+static void service_interest_cb(void *refcon, io_service_t service, uint32_t messageType, void *messageArgument) {
+    (void)refcon; (void)messageArgument;
     // kIOPMMessageBatteryStatusHasChanged 等任何电池/电源事件都触发一次决策
+    if (service == IO_OBJECT_NULL) return;
     handle_service(service);
 }
 
@@ -86,10 +87,14 @@ static void match_cb(void *refcon, io_iterator_t iterator) {
     (void)refcon;
     io_service_t service;
     while ((service = IOIteratorNext(iterator))) {
-        // 给每台电源设备挂 interest 通知
-        IOServiceAddInterestNotification(gNotifyPort, service,
-            kIOGeneralInterest, (IOServiceInterestCallback)service_interest_cb,
-            NULL, NULL);
+        // 给每台电源设备挂 interest 通知（不强制转换，保持原生 4 参数签名）
+        io_object_t notif = 0;
+        kern_return_t kr = IOServiceAddInterestNotification(gNotifyPort, service,
+            kIOGeneralInterest, service_interest_cb,
+            NULL, &notif);
+        if (kr != KERN_SUCCESS) {
+            NSLog(@"[SBCPUChargePowerSource] IOServiceAddInterestNotification failed: 0x%08x", (unsigned)kr);
+        }
         handle_service(service);
         IOObjectRelease(service);
     }
@@ -100,17 +105,22 @@ void sb_power_subscribe(SBCPUPowerEventCallback cb) {
     if (gMonitoring) return;
 
     gNotifyPort = IONotificationPortCreate(kIOMasterPortDefault);
-    if (!gNotifyPort) return;
+    if (!gNotifyPort) {
+        NSLog(@"[SBCPUChargePowerSource] IONotificationPortCreate failed");
+        return;
+    }
 
     kern_return_t kr = IOServiceAddMatchingNotification(gNotifyPort,
         kIOFirstMatchNotification,
         IOServiceMatching("IOPMPowerSource"),
         (IOServiceMatchingCallback)match_cb, NULL, &gNotifyIter);
     if (kr != KERN_SUCCESS) {
+        NSLog(@"[SBCPUChargePowerSource] IOServiceAddMatchingNotification failed: 0x%08x", (unsigned)kr);
         IONotificationPortDestroy(gNotifyPort);
         gNotifyPort = NULL;
         return;
     }
+    NSLog(@"[SBCPUChargePowerSource] IOPMPowerSource notification registered OK");
     // 立即处理当前已存在的电源设备（含首次电量）
     match_cb(NULL, gNotifyIter);
     gMonitoring = true;
@@ -120,6 +130,10 @@ void sb_power_subscribe(SBCPUPowerEventCallback cb) {
 CFRunLoopSourceRef sb_power_runloop_source(void) {
     if (gNotifyPort) {
         gRunLoopSource = IONotificationPortGetRunLoopSource(gNotifyPort);
+    }
+    if (!gRunLoopSource) {
+        NSLog(@"[SBCPUChargePowerSource] runloop source unavailable (port=%p); will use poll watchdog",
+              (void *)gNotifyPort);
     }
     return gRunLoopSource;
 }

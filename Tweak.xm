@@ -358,6 +358,8 @@ static NSInteger smartChargeMode = 0;          // 0=日常80%, 1=出行100%, 2=�
 static BOOL smartChargeStopped = NO;           // 当前是否处于停充状态
 static BOOL blockChargingEnable = NO;          // V4.21 — 阻止充电（SMC CH0C，经 daemon）
 static BOOL blockPowerEnable = NO;             // V4.21 — 阻止外部供电（SMC CH0I，经 daemon）
+static BOOL chargeKeepAC = YES;                // V4.25 — 达到上限时保留外部供电（只停充不断 AC）
+static BOOL chargeOverrideOBC = NO;            // V4.25 — 覆盖系统"优化电池充电"接管（OBC）
 
 static CGRect keyboardBeforeFrame;
 static BOOL keyboardMoved = NO;
@@ -971,6 +973,8 @@ static void LoadPreferences(void) {
     smartChargeMode = (NSInteger)getFloatPref(CFSTR("smartChargeMode"), 0.0f);
     blockChargingEnable = getBoolPref(CFSTR("blockChargingEnable"), NO);
     blockPowerEnable = getBoolPref(CFSTR("blockPowerEnable"), NO);
+    chargeKeepAC = getBoolPref(CFSTR("chargeKeepAC"), YES);
+    chargeOverrideOBC = getBoolPref(CFSTR("chargeOverrideOBC"), NO);
     glassDimOpacity = getFloatPref(CFSTR("glassDimOpacity"), 0.90f);
     if (glassDimOpacity < 0.40f) glassDimOpacity = 0.90f; // 旧版语义（白雾透明度）迁移为玻璃不透明度
     glassBlurRadius = getFloatPref(CFSTR("glassBlurRadius"), 50.0f);
@@ -1036,6 +1040,8 @@ static void SavePreferencesAndNotify(void) {
     setFloatPref(CFSTR("smartChargeMode"), (float)smartChargeMode);
     setBoolPref(CFSTR("blockChargingEnable"), blockChargingEnable);
     setBoolPref(CFSTR("blockPowerEnable"), blockPowerEnable);
+    setBoolPref(CFSTR("chargeKeepAC"), chargeKeepAC);
+    setBoolPref(CFSTR("chargeOverrideOBC"), chargeOverrideOBC);
     setFloatPref(CFSTR("glassDimOpacity"), glassDimOpacity);
     setFloatPref(CFSTR("glassBlurRadius"), glassBlurRadius);
     setFloatPref(CFSTR("glassCardOpacity"), glassCardOpacity);
@@ -1173,7 +1179,7 @@ enum {
 
 #define SB_SOCKET_PATH "/var/mobile/Library/Preferences/sbcpu_charge.sock"
 #define SB_MAGIC 0x53424350
-#define SB_DAEMON_VERSION 2
+#define SB_DAEMON_VERSION 3
 
 // daemon 返回的 result 语义（与 SBCPUChargeProtocol.h SB_RESULT_* 对齐）
 enum {
@@ -1271,6 +1277,33 @@ static int sbSMCConnect(void) {
     return fd;
 }
 
+// SOCK_STREAM 不保证一次读写完整结构体：全量读写，避免偶发通信失败
+static bool sbSMCReadFull(int fd, void *buf, size_t len) {
+    size_t done = 0;
+    while (done < len) {
+        ssize_t n = read(fd, (uint8_t *)buf + done, len - done);
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR) continue;
+            return false;
+        }
+        done += (size_t)n;
+    }
+    return true;
+}
+
+static bool sbSMCWriteFull(int fd, const void *buf, size_t len) {
+    size_t done = 0;
+    while (done < len) {
+        ssize_t n = write(fd, (const uint8_t *)buf + done, len - done);
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR) continue;
+            return false;
+        }
+        done += (size_t)n;
+    }
+    return true;
+}
+
 static IOReturn sbSMCRequest(uint8_t cmd, uint8_t value, uint8_t *outValue) {
     int fd = sbSMCConnect();
     if (fd < 0) return kIOReturnNotOpen;
@@ -1278,15 +1311,14 @@ static IOReturn sbSMCRequest(uint8_t cmd, uint8_t value, uint8_t *outValue) {
     c.magic = SB_MAGIC;
     c.cmd = cmd;
     c.value = value;
-    ssize_t n = write(fd, &c, sizeof(c));
-    if (n != (ssize_t)sizeof(c)) {
+    if (!sbSMCWriteFull(fd, &c, sizeof(c))) {
         close(fd);
         return kIOReturnIOError;
     }
     sb_resp_t r = {0};
-    n = read(fd, &r, sizeof(r));
+    bool ok = sbSMCReadFull(fd, &r, sizeof(r));
     close(fd);
-    if (n != (ssize_t)sizeof(r) || r.magic != SB_MAGIC)
+    if (!ok || r.magic != SB_MAGIC)
         return kIOReturnIOError;
     if (outValue) *outValue = r.value;
     return (IOReturn)r.result;
@@ -1312,7 +1344,7 @@ static IOReturn sbSMCInit(void) {
     return kIOReturnSuccess;
 }
 
-// V4.22 — 智能充电配置载荷（与 daemon 协议一致）
+// V4.26 — 智能充电配置载荷（与 daemon 协议一致）
 typedef struct {
     uint8_t  smartChargeEnabled;
     uint8_t  chargeLimitEnabled;
@@ -1347,25 +1379,23 @@ static IOReturn sbSMCSendLimits(void) {
     sb_cmd_t c = {0};
     c.magic = SB_MAGIC;
     c.cmd = kSBCmdSetLimits;
-    ssize_t n = write(fd, &c, sizeof(c));
-    if (n != (ssize_t)sizeof(c)) { close(fd); return kIOReturnIOError; }
+    if (!sbSMCWriteFull(fd, &c, sizeof(c))) { close(fd); return kIOReturnIOError; }
 
     sb_limits_t lim = {0};
     lim.smartChargeEnabled = smartChargeEnable ? 1 : 0;
-    lim.chargeLimitEnabled = smartChargeEnable ? 1 : 0; // V1 与智能充电同源
+    lim.chargeLimitEnabled = smartChargeEnable ? 1 : 0; // V1：与智能充电共用总开关
     lim.upperLimit = (uint8_t)smartChargeUpperLimit;
     lim.lowerLimit = (uint8_t)smartChargeLowerLimit;
-    lim.drainMode = 1; // 默认保留外部供电（只停充不断 AC）
+    lim.drainMode = (chargeKeepAC ? 1 : 0) | (chargeOverrideOBC ? 2 : 0); // bit0=keepAC bit1=overrideOBC
     lim.manualChargeBlock = blockChargingEnable ? 1 : 0;
     lim.manualPowerBlock = blockPowerEnable ? 1 : 0;
     lim.scheduleEnabled = 0;
-    n = write(fd, &lim, sizeof(lim));
-    if (n != (ssize_t)sizeof(lim)) { close(fd); return kIOReturnIOError; }
+    if (!sbSMCWriteFull(fd, &lim, sizeof(lim))) { close(fd); return kIOReturnIOError; }
 
     sb_resp_t r = {0};
-    n = read(fd, &r, sizeof(r));
+    bool ok = sbSMCReadFull(fd, &r, sizeof(r));
     close(fd);
-    if (n != (ssize_t)sizeof(r) || r.magic != SB_MAGIC)
+    if (!ok || r.magic != SB_MAGIC)
         return kIOReturnIOError;
     return (IOReturn)r.result;
 }
@@ -1384,13 +1414,12 @@ static BOOL sbSMCGetStatus(sb_status_t *out) {
     sb_cmd_t c = {0};
     c.magic = SB_MAGIC;
     c.cmd = kSBCmdGetStatus;
-    if (write(fd, &c, sizeof(c)) != (ssize_t)sizeof(c)) { close(fd); return NO; }
+    if (!sbSMCWriteFull(fd, &c, sizeof(c))) { close(fd); return NO; }
     sb_resp_t r = {0};
-    ssize_t n = read(fd, &r, sizeof(r));
-    if (n != (ssize_t)sizeof(r) || r.magic != SB_MAGIC) { close(fd); return NO; }
-    n = read(fd, out, sizeof(sb_status_t));
+    if (!sbSMCReadFull(fd, &r, sizeof(r)) || r.magic != SB_MAGIC) { close(fd); return NO; }
+    bool ok = sbSMCReadFull(fd, out, sizeof(sb_status_t));
     close(fd);
-    return n == (ssize_t)sizeof(sb_status_t);
+    return ok;
 }
 
 static IOReturn sbSMCSetChargeBlock(BOOL inhibit, BOOL overrideOBC) {
