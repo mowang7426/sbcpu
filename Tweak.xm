@@ -236,6 +236,8 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) NSTimer *notificationTimer;
 
 @property (nonatomic, assign) BOOL isCollapsed;
+// 展开/收起动画期间锁住周期性 updateFloatingSize，避免 1s 刷新打断尺寸动画造成“打开后又扩大一下”。
+@property (nonatomic, assign) BOOL layoutTransitionAnimating;
 @property (nonatomic, strong) NSTimer *inactivityTimer;
 @property (nonatomic, strong) UITapGestureRecognizer *singleTapGesture;
 @property (nonatomic, strong) UILongPressGestureRecognizer *longPressGesture;
@@ -2136,6 +2138,8 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
 
 static void updateFloatingSize(void) {
     if (!floatingView) return;
+    // 展开/收起动画自己管理 bounds/transform；每秒刷新不能在中途抢回布局。
+    if (floatingView.layoutTransitionAnimating) return;
 
     BOOL charging = isChargingInternal();
     // CH0I 智能停充会让 AppleSmartBattery.IsCharging 变成 NO。
@@ -2863,12 +2867,18 @@ static void LGRemoveLabelShadowInView(UIView *view) {
     // Native Glass 不可用时，保留旧 UIVisualEffectView 作为安全 fallback；
     // Native Glass 可用时，关闭开关则回退到这个普通背景。
     if (_blurView) {
-        _blurView.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialLight];
+        // 关闭液态玻璃 = 回退到旧版泛白毛玻璃，而不是透明背景。
+        _blurView.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialLight];
+        _blurView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.18];
         _blurView.hidden = (_usingNativeLiquidGlass && enabled);
+        _blurView.frame = self.bounds;
+        _blurView.layer.cornerRadius = MIN(floatingCornerRadius, MAX(0.0, self.bounds.size.height * 0.5));
+        _blurView.layer.cornerCurve = kCACornerCurveContinuous;
+        _blurView.layer.masksToBounds = YES;
     }
 
     UIView *surface = _glassSurfaceView ?: (UIView *)_blurView;
-    if (surface && !_usingNativeLiquidGlass) {
+    if (surface && (!_usingNativeLiquidGlass || !enabled)) {
         // 仅旧版 UIBlurEffect fallback 使用自有圆角裁剪。
         surface.layer.masksToBounds = YES;
         CGFloat r = floatingCornerRadius;
@@ -3055,6 +3065,12 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _usingNativeLiquidGlass = NO;
         _glassSurfaceView = nil;
 
+        // 始终把旧版毛玻璃作为备用表面放在最底层。
+        // 开启液态玻璃时隐藏它；关闭液态玻璃时直接显示它，恢复以前的泛白毛玻璃观感。
+        _blurView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.18];
+        _blurView.layer.masksToBounds = YES;
+        [self insertSubview:_blurView atIndex:0];
+
         @try {
             LGLiveBackdropView *glass = [[LGLiveBackdropView alloc]
                 initWithFrame:CGRectZero
@@ -3066,7 +3082,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
                 _nativeLiquidGlassView = glass;
                 _usingNativeLiquidGlass = YES;
                 _glassSurfaceView = glass;
-                [self insertSubview:glass atIndex:0];
+                [self insertSubview:glass atIndex:1];
                 NSLog(@"[SBCPUFloating] V4.36 Metal Liquid Glass renderer installed");
             }
         } @catch (NSException *e) {
@@ -3077,7 +3093,6 @@ static void LGRemoveLabelShadowInView(UIView *view) {
 
         if (!_usingNativeLiquidGlass) {
             _glassSurfaceView = _blurView;
-            [self insertSubview:_blurView atIndex:0];
         }
 
         // 内容与背景完全分离；这样收起/展开时不会留下独立的玻璃框。
@@ -3086,6 +3101,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         [self addSubview:_glassContentView];
 
         _blurView.hidden = (_usingNativeLiquidGlass && liquidGlassEnabled);
+        _blurView.frame = self.bounds;
         _nativeLiquidGlassView.hidden = !(_usingNativeLiquidGlass && liquidGlassEnabled);
 
         _marqueeLayer = [CAShapeLayer layer];
@@ -3905,6 +3921,7 @@ return self;
     }
 
     _glassSurfaceView.frame = CGRectMake(0, 0, finalW, currentY);
+    if (_blurView) _blurView.frame = _glassSurfaceView.bounds;
     _glassContentView.frame = _glassSurfaceView.bounds;
     [self refreshNativeLiquidGlass];
     
@@ -3912,6 +3929,11 @@ return self;
     if (cornerRad > currentY / 2.0f) cornerRad = currentY / 2.0f;
     
     _glassSurfaceView.layer.cornerRadius = cornerRad;
+    if (_blurView) {
+        _blurView.layer.cornerRadius = cornerRad;
+        _blurView.layer.cornerCurve = kCACornerCurveContinuous;
+        _blurView.layer.masksToBounds = YES;
+    }
     if (_nativeLiquidGlassView && _usingNativeLiquidGlass) {
         // V4.35.2: CCLiquidGlassView is the actual floating surface, so it
         // must clip its rectangular layer to the same rounded shape.
@@ -4031,6 +4053,9 @@ return self;
 
     CGPoint targetCenter = CGPointMake(targetX, targetY);
 
+    // 锁住周期性刷新，避免收起动画中 updateFloatingSize 抢改尺寸。
+    self.layoutTransitionAnimating = YES;
+
     self.performanceContainer.hidden = NO;
     self.performanceContainer.alpha = 1.0;
     self.collapsedContainerView.hidden = NO;
@@ -4131,6 +4156,8 @@ return self;
             self.collapsedContainerView.hidden = NO;
             self.collapsedContainerView.alpha = 1.0;
         }
+        self.layoutTransitionAnimating = NO;
+        updateFloatingSize();
     };
 
     if (animated) {
@@ -4294,6 +4321,9 @@ return self;
     CGFloat expandedCornerRad = floatingCornerRadius;
     if (expandedCornerRad > expandedH / 2.0f) expandedCornerRad = expandedH / 2.0f;
 
+    // 锁住 1 秒刷新，避免动画中 updateFloatingSize 抢改 bounds/transform。
+    self.layoutTransitionAnimating = YES;
+
     void (^animationsBlock)(void) = ^{
         // ★ 尺寸过渡：胶囊 → 完整面板（与收起动画对称，视觉上平滑“膨胀”展开）
         self.bounds = CGRectMake(0, 0, expandedW, expandedH);
@@ -4337,6 +4367,9 @@ return self;
             self.collapsedContainerView.hidden = YES;
             self.collapsedContainerView.alpha = 0.0;
         }
+        self.layoutTransitionAnimating = NO;
+        // 动画结束后做一次无动画最终同步，确保当前充电/显示项与最终尺寸一致。
+        updateFloatingSize();
         [self resetInactivityTimer];
     };
 
@@ -4446,12 +4479,19 @@ return self;
 
     _cpuFreqLabel.text = [NSString stringWithFormat:@"%.0f MHz", cpuFreq];
     _fpsValueLabel.text = [NSString stringWithFormat:@"%.0f", fps];
+    // 电量主值固定只显示百分比，避免充电会话的“+mAh”把 14pt 字体压缩到很小。
     _batteryValueLabel.text = [NSString stringWithFormat:@"%ld%%", (long)battery];
+    _batteryValueLabel.adjustsFontSizeToFitWidth = NO;
+    _batteryValueLabel.font = [UIFont monospacedDigitSystemFontOfSize:14.0 weight:UIFontWeightBold];
     if (isCharging && gWasExternalCharging && gActiveSession) {
         double duration = [NSDate timeIntervalSinceReferenceDate] - gSessStartTime;
         if (duration >= 5 && gSessBatteryMah >= 1) {
-            _batteryValueLabel.text = [NSString stringWithFormat:@"%ld%% +%.0fmAh", (long)battery, gSessBatteryMah];
+            _batterySubLabel.text = [NSString stringWithFormat:@"+%.0fmAh", gSessBatteryMah];
+        } else {
+            _batterySubLabel.text = @"电量";
         }
+    } else {
+        _batterySubLabel.text = @"电量";
     }
     _tempValueLabel.text = (temp > 0) ? [NSString stringWithFormat:@"%.1f°C", temp] : @"--°C";
     // 智能停充 = CH0I 已验证阻断外部供电；此时 AppleSmartBattery 的
