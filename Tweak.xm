@@ -3030,7 +3030,6 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         // === V4.34：原浮窗背景直接切换为 CCLiquidGlassView ===
         UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialLight];
         _blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
-        CGFloat cornerRad = floatingCornerRadius;
         _blurView.userInteractionEnabled = NO;
 
         _nativeLiquidGlassView = nil;
