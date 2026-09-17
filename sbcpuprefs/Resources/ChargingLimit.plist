@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>items</key><array>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>充电限制（实验性）</string><key>footerText</key><string>达到上限后停充，降到下限后恢复。上下限必须保持间隔。</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>启用充电限制</string><key>key</key><string>smartChargeEnable</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSSliderCell</string><key>label</key><string>充电上限（%）</string><key>key</key><string>smartChargeUpperLimit</string><key>default</key><integer>80</integer><key>min</key><integer>50</integer><key>max</key><integer>100</integer><key>showValue</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSSliderCell</string><key>label</key><string>回充下限（%）</string><key>key</key><string>smartChargeLowerLimit</string><key>default</key><integer>70</integer><key>min</key><integer>20</integer><key>max</key><integer>95</integer><key>showValue</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>达到上限时的行为</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>保留外部电源</string><key>key</key><string>chargeKeepAC</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>覆盖 OBC</string><key>key</key><string>chargeOverrideOBC</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>footerText</key><string>值守进程由 launchd 常驻运行；不要手动启动第二个 SBCPUChargeDaemon。</string></dict>
+</array><key>title</key><string>充电限制</string>
+</dict></plist>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>items</key><array>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>通用</string><key>footerText</key><string>底层控制由 SBCPUChargeDaemon 执行，设置页只负责保存配置和通知守护进程重新判断。</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>阻止充电</string><key>key</key><string>blockChargingEnable</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>阻止外部供电</string><key>key</key><string>blockPowerEnable</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>智能充电</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>智能充电</string><key>key</key><string>smartChargeEnable</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>footerText</key><string>建议先连接有线充电器再启用手动阻止。无线充电不执行智能停充。</string></dict>
+</array><key>title</key><string>充电管理</string>
+</dict></plist>
