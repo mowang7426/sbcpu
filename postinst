@@ -57,10 +57,6 @@ if [ -n "$LC" ] && [ -f "$PLIST" ]; then
     else
         "$LC" load -w "$PLIST" >>"$INSTLOG" 2>&1 && ilog "load OK" || ilog "load FAILED"
     fi
-    # V4.40: explicitly kick the label after bootstrap/load. KeepAlive=true
-    # then takes over if the process exits unexpectedly.
-    "$LC" enable system/$LABEL >>"$INSTLOG" 2>&1 || true
-    "$LC" kickstart -k system/$LABEL >>"$INSTLOG" 2>&1 || true
     sleep 2
 fi
 
