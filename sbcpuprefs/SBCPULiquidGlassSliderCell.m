@@ -4,7 +4,7 @@
 #import "SBCPUChargePreferencesCommon.h"
 
 @interface SBCPULiquidGlassSliderCell ()
-@property(nonatomic,strong) UILabel *titleLabel;
+@property(nonatomic,strong) UILabel *nameLabel;
 @property(nonatomic,strong) UILabel *valueLabel;
 @property(nonatomic,strong) UILabel *detailLabel;
 @property(nonatomic,strong) UISlider *slider;
@@ -21,10 +21,10 @@
     self.selectionStyle = UITableViewCellSelectionStyleNone;
     self.backgroundColor = UIColor.clearColor;
 
-    _titleLabel = [UILabel new];
-    _titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
-    _titleLabel.textColor = UIColor.labelColor;
-    [self.contentView addSubview:_titleLabel];
+    _nameLabel = [UILabel new];
+    _nameLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    _nameLabel.textColor = UIColor.labelColor;
+    [self.contentView addSubview:_nameLabel];
 
     _valueLabel = [UILabel new];
     _valueLabel.font = [UIFont monospacedDigitSystemFontOfSize:15 weight:UIFontWeightMedium];
@@ -44,7 +44,7 @@
     [_slider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [self.contentView addSubview:_slider];
 
-    _titleLabel.text = [specifier propertyForKey:@"label"] ?: @"参数";
+    _nameLabel.text = [specifier propertyForKey:@"label"] ?: @"参数";
     _detailLabel.text = [specifier propertyForKey:@"description"] ?: @"";
     [self reloadValue];
     return self;
@@ -58,7 +58,7 @@
     CGFloat valueW = 72.0;
     CGFloat top = 7.0;
 
-    self.titleLabel.frame = CGRectMake(pad, top, w - pad * 2 - valueW, 21.0);
+    self.nameLabel.frame = CGRectMake(pad, top, w - pad * 2 - valueW, 21.0);
     self.valueLabel.frame = CGRectMake(w - pad - valueW, top, valueW, 21.0);
     self.detailLabel.frame = CGRectMake(pad, top + 21.0, w - pad * 2, 29.0);
     self.slider.frame = CGRectMake(pad - 3.0, h - 31.0, w - (pad - 3.0) * 2.0, 28.0);
