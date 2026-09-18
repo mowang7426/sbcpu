@@ -131,3 +131,15 @@
 }
 
 @end
+
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    if (self.window) {
+        [self reloadValue];
+    }
+}
+
+- (void)prepareForReuse {
+    [super prepareForReuse];
+    [self reloadValue];
+}

@@ -11,9 +11,19 @@
 @implementation SBCPUChargePreferencesCommon
 
 + (id)valueForKey:(NSString *)key defaultValue:(id)defaultValue {
+    // 优先读取 SBCPU 共享持久化 plist；child preference controller
+    // 离开/重新进入页面时始终得到上一次保存的值。
     NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@SB_PREF_FILE];
     id v = d[key];
-    return v ?: defaultValue;
+    if (v) return v;
+
+    // 兼容由系统 PreferenceLoader 写入的 CFPreferences。
+    CFPropertyListRef cfv = CFPreferencesCopyValue((__bridge CFStringRef)key,
+                                                   CFSTR(SB_PREF_DOMAIN),
+                                                   kCFPreferencesCurrentUser,
+                                                   kCFPreferencesAnyHost);
+    if (cfv) return CFBridgingRelease(cfv);
+    return defaultValue;
 }
 
 + (void)setValue:(id)value forKey:(NSString *)key {
@@ -40,15 +50,17 @@
         if (lower >= upper) d[@"smartChargeUpperLimit"] = @(MIN(100, lower + 1));
     }
 
+    // 同时保存到 SBCPU plist 和 CFPreferences；通知之前先完成同步。
     [d writeToFile:@SB_PREF_FILE atomically:YES];
 
-    // Keep CFPreferences in sync for SpringBoard/powerd consumers.
     CFPreferencesSetValue((__bridge CFStringRef)key,
                           (__bridge CFPropertyListRef)value,
                           CFSTR(SB_PREF_DOMAIN),
                           kCFPreferencesCurrentUser,
                           kCFPreferencesAnyHost);
-    CFPreferencesAppSynchronize(CFSTR(SB_PREF_DOMAIN));
+    CFPreferencesSynchronize(CFSTR(SB_PREF_DOMAIN),
+                             kCFPreferencesCurrentUser,
+                             kCFPreferencesAnyHost);
 
     // Keep the SpringBoard-side cached settings in sync immediately, even when
     // the user changes values from these child preference controllers.
