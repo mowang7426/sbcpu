@@ -46,6 +46,16 @@
 			<key>cell</key>
 			<string>PSLinkCell</string>
 			<key>label</key>
+			<string>🌐 莫忘越狱源</string>
+			<key>detail</key>
+			<string>打开莫忘越狱源</string>
+			<key>url</key>
+			<string>https://mowang7426.github.io/MoWang/</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
 			<string>充电管理</string>
 			<key>detail</key>
 			<string>SBCPUChargeManagementController</string>
