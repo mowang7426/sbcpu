@@ -9529,39 +9529,37 @@ static void performLockScreenCleanup(void) {
     });
 }
 
-// 轮询锁屏状态：不依赖任何私有方法名，每秒检查一次锁屏状态变化
-static BOOL gWasLocked = NO;
-static void checkLockStateTick(void) {
+// 锁屏清理触发：只接受真正的 SBLockScreenManager 锁屏事件。
+// 不再监听 com.apple.springboard.lockstate，也不再轮询 isUILocked。
+// 某些 iOS 版本在下拉通知中心/展开锁屏相关 UI 时，isUILocked() 或
+// lockstate Darwin 通知可能出现短暂状态变化，从而误触发后台清理。
+// 现在只在 SBLockScreenManager 的实际 lockUIFromSource* 流程完成后触发。
+static void scheduleLockCleanupAfterRealLock(void) {
     if (!lockCleanupEnable) return;
-    BOOL locked = isSBLocked();
-    if (locked && !gWasLocked) {
-        performLockScreenCleanup();
-    }
-    gWasLocked = locked;
-}
-
-// 系统锁屏通知：com.apple.springboard.lockstate（锁定/解锁都会广播）
-static void onLockStateChanged(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
-    if (!lockCleanupEnable) return;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (isSBLocked()) performLockScreenCleanup();
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (!lockCleanupEnable) return;
+        if (isSBLocked()) {
+            performLockScreenCleanup();
+        } else {
+            NSLog(@"[SBCPUFloating] 锁屏清理：lockUI 事件后未确认真实锁屏，跳过");
+        }
     });
 }
 
-// 锁屏事件 hook：电源键锁屏 / 自动锁屏 / 手势锁屏都会走到这里
+// 锁屏事件 hook：电源键锁屏 / 自动锁屏 / 手势锁屏。
+// 不再由通知中心下拉、lockstate Darwin 通知或轮询触发。
 %hook SBLockScreenManager
 - (void)lockUIFromSource:(long long)source {
     %orig;
-    performLockScreenCleanup();
+    scheduleLockCleanupAfterRealLock();
 }
 - (void)lockUIFromSource:(long long)source withOptions:(id)options {
     %orig;
-    performLockScreenCleanup();
+    scheduleLockCleanupAfterRealLock();
 }
 - (void)_lockUIFromSource:(long long)source withOptions:(id)options {
     %orig;
-    performLockScreenCleanup();
+    scheduleLockCleanupAfterRealLock();
 }
 %end
 
@@ -10096,14 +10094,11 @@ static void onPartRepairBundleDidLoad(CFNotificationCenterRef center, void *obse
         LoadPreferences();
         registerThermalHeartbeatListener();
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onCCNotificationReceived, kPrefChangedNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        // 锁屏清理后台：注册系统锁屏通知 + 每秒轮询（双保险，不依赖单个 hook 方法）
-        // 注意：此处不能调用 isSBLocked()——SpringBoard 启动早期访问 SBLockScreenManager 会崩溃进安全模式
-        NSLog(@"[SBCPUFloating] 锁屏清理模块已加载，开关状态=%d", lockCleanupEnable);
-        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onLockStateChanged, CFSTR("com.apple.springboard.lockstate"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        // 延迟 3 秒：等 SpringBoard 完全就绪后才允许访问 SBLockScreenManager 并启动锁屏轮询
+        // 锁屏清理后台：仅由 SBLockScreenManager 的真实 lockUIFromSource* 事件触发。
+        // 不注册 lockstate Darwin 通知，也不启动 isUILocked 轮询，避免下拉通知中心时误判为锁屏。
+        NSLog(@"[SBCPUFloating] 锁屏清理模块已加载，开关状态=%d（仅真实锁屏事件触发）", lockCleanupEnable);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             gSBReady = YES;
-            [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) { checkLockStateTick(); }];
         });
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             createCPUWindow();
