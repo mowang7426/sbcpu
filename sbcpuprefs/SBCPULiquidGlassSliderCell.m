@@ -134,14 +134,12 @@
 
 - (void)didMoveToWindow {
     [super didMoveToWindow];
-    if (self.window && [self respondsToSelector:@selector(reloadValue)]) {
+    if (self.window) {
         [self reloadValue];
     }
 }
 
 - (void)prepareForReuse {
     [super prepareForReuse];
-    if ([self respondsToSelector:@selector(reloadValue)]) {
-        [self reloadValue];
-    }
+    [self reloadValue];
 }

@@ -22,16 +22,6 @@
     [SBCPUChargePreferencesCommon redecideDaemon];
 }
 
-
-- (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
-    // Preferences 可能缓存 specifier/cell；每次返回页面都重新读取持久化值。
-    [self reloadSpecifiers];
-    if ([self respondsToSelector:@selector(table)]) {
-        [[self table] reloadData];
-    }
-}
-
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"充电管理";
