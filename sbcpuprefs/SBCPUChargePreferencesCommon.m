@@ -11,13 +11,10 @@
 @implementation SBCPUChargePreferencesCommon
 
 + (id)valueForKey:(NSString *)key defaultValue:(id)defaultValue {
-    // 优先读取 SBCPU 共享持久化 plist；child preference controller
-    // 离开/重新进入页面时始终得到上一次保存的值。
     NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@SB_PREF_FILE];
     id v = d[key];
     if (v) return v;
 
-    // 兼容由系统 PreferenceLoader 写入的 CFPreferences。
     CFPropertyListRef cfv = CFPreferencesCopyValue((__bridge CFStringRef)key,
                                                    CFSTR(SB_PREF_DOMAIN),
                                                    kCFPreferencesCurrentUser,
@@ -50,7 +47,6 @@
         if (lower >= upper) d[@"smartChargeUpperLimit"] = @(MIN(100, lower + 1));
     }
 
-    // 同时保存到 SBCPU plist 和 CFPreferences；通知之前先完成同步。
     [d writeToFile:@SB_PREF_FILE atomically:YES];
 
     CFPreferencesSetValue((__bridge CFStringRef)key,
