@@ -130,8 +130,9 @@
     self.valueLabel.text = [self displayValue:slider.value key:key];
 }
 
-@end
 
+// PreferenceLoader can retain this cell while navigating. Refresh the slider
+// from the persistent preference whenever the cell is shown/reused.
 - (void)didMoveToWindow {
     [super didMoveToWindow];
     if (self.window) {
@@ -143,3 +144,5 @@
     [super prepareForReuse];
     [self reloadValue];
 }
+
+@end

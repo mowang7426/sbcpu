@@ -49,6 +49,8 @@
 
     [d writeToFile:@SB_PREF_FILE atomically:YES];
 
+    // Persist to both stores and synchronize immediately so PreferenceLoader
+    // does not fall back to the plist defaults after navigation.
     CFPreferencesSetValue((__bridge CFStringRef)key,
                           (__bridge CFPropertyListRef)value,
                           CFSTR(SB_PREF_DOMAIN),
