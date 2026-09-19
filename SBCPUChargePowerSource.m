@@ -15,6 +15,20 @@ static io_iterator_t gNotifyIter = MACH_PORT_NULL;
 static CFRunLoopSourceRef gRunLoopSource = NULL;
 static bool gMonitoring = false;
 
+static double read_battery_temperature(io_service_t service) {
+    CFTypeRef value = IORegistryEntryCreateCFProperty(service, CFSTR("Temperature"), kCFAllocatorDefault, 0);
+    double temperature = -1.0;
+    if (value && CFGetTypeID(value) == CFNumberGetTypeID()) {
+        int raw = 0;
+        CFNumberGetValue((CFNumberRef)value, kCFNumberIntType, &raw);
+        if (raw > 1000) temperature = raw / 100.0;
+        else if (raw > 200) temperature = raw / 10.0 - 273.15;
+        else if (raw > 0) temperature = raw;
+    }
+    if (value) CFRelease(value);
+    return temperature;
+}
+
 // 读电量百分比（0-100），失败返回 -1
 int sb_power_read_percent(void) {
     io_service_t service = IOServiceGetMatchingService(0, IOServiceMatching("IOPMPowerSource"));
@@ -73,7 +87,7 @@ static void handle_service(io_service_t service) {
         if (CFGetTypeID(ext) == CFBooleanGetTypeID()) charging = CFBooleanGetValue(ext);
         CFRelease(ext);
     }
-    gCallback(pct, charging, sb_power_wireless());
+    gCallback(pct, charging, sb_power_wireless(), read_battery_temperature(service));
 }
 
 static void service_interest_cb(void *refcon, io_service_t service, uint32_t messageType, void *messageArgument) {
@@ -139,8 +153,16 @@ CFRunLoopSourceRef sb_power_runloop_source(void) {
 }
 
 void sb_power_poll_once(void) {
-    int pct = sb_power_read_percent();
-    if (pct < 0) return;
-    bool charging = sb_power_external_connected();
-    if (gCallback) gCallback(pct, charging, sb_power_wireless());
+    io_service_t service = IOServiceGetMatchingService(0, IOServiceMatching("IOPMPowerSource"));
+    if (service == IO_OBJECT_NULL) return;
+    int pct = -1;
+    CFNumberRef cap = IORegistryEntryCreateCFProperty(service, CFSTR("CurrentCapacity"), kCFAllocatorDefault, 0);
+    if (cap) { CFNumberGetValue(cap, kCFNumberIntType, &pct); CFRelease(cap); }
+    bool charging = false;
+    CFBooleanRef ext = IORegistryEntryCreateCFProperty(service, CFSTR("ExternalConnected"), kCFAllocatorDefault, 0);
+    if (ext && CFGetTypeID(ext) == CFBooleanGetTypeID()) charging = CFBooleanGetValue(ext);
+    if (ext) CFRelease(ext);
+    double temperature = read_battery_temperature(service);
+    IOObjectRelease(service);
+    if (pct >= 0 && gCallback) gCallback(pct, charging, sb_power_wireless(), temperature);
 }

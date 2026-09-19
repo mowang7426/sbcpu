@@ -29,8 +29,10 @@ static bool gManualChargeBlock = false;  // 手动状态持久于内存（daemon
 static bool gManualPowerBlock = false;
 // 智能充电限制的独立状态（不从 CH0C 反推；keepAC=NO 用 CH0I 停充时 CH0C 仍为 0）
 static bool gLimitBlocked = false;        // 当前是否处于"达到上限停充"状态
-static bool gLimitUsesPowerBlock = false; // 本次停充用的是 CH0I（keepAC=NO）而非 CH0C
-static bool gPowerBlockUserReleased = false; // 用户手动关闭断供后的临时释放，避免智能停充立即把 CH0I 再次拉高
+static bool gLimitUsesPowerBlock = false;
+static bool gPowerBlockUserReleased = false;
+static bool gThermalBlocked = false;
+static double gBatteryTemperatureC = -1.0;
 
 // IOKit callbacks run on the daemon run-loop while socket commands arrive on a
 // separate thread. Keep all state-machine mutations serialized. Recursive is
@@ -108,11 +110,17 @@ bool sb_engine_load_config(SBCPUChargeConfig *cfg) {
     c.manualChargeBlock = pref_bool(d, @"blockChargingEnable", false);
     c.manualPowerBlock = pref_bool(d, @"blockPowerEnable", false);
     c.scheduleEnabled = pref_bool(d, @"chargeScheduleEnabled", false);
+    c.smartThermalEnabled = pref_bool(d, @"smartThermalChargeEnable", false);
+    c.thermalUpperC = (uint8_t)pref_int(d, @"smartThermalUpperC", 42);
+    c.thermalLowerC = (uint8_t)pref_int(d, @"smartThermalLowerC", 38);
 
     // 防御：上下限有效性
     if (c.upperLimit > 100) c.upperLimit = 100;
     if (c.lowerLimit > 99) c.lowerLimit = 99;
     if (c.upperLimit <= c.lowerLimit) { c.upperLimit = 80; c.lowerLimit = 70; }
+    if (c.thermalUpperC > 60) c.thermalUpperC = 60;
+    if (c.thermalLowerC < 25) c.thermalLowerC = 25;
+    if (c.thermalUpperC <= c.thermalLowerC) { c.thermalUpperC = 42; c.thermalLowerC = 38; }
 
     if (cfg) *cfg = c;
     return true;
@@ -208,9 +216,10 @@ int sb_engine_manual_power_block(bool block) {
 }
 
 // 核心决策
-void sb_engine_decide(int pct, bool charging, bool wireless) {
+void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC) {
     engine_lock();
     if (pct >= 0) gBatteryPercent = pct;
+    if (temperatureC > 0.0 && temperatureC < 100.0) gBatteryTemperatureC = temperatureC;
     gWireless = wireless;
     if (!engine_ensure_smc()) {
         gState = SBCPUChargeStateError;
@@ -253,6 +262,11 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
             gLimitUsesPowerBlock = false;
         }
 
+        if (gThermalBlocked && (!gCfg.smartThermalEnabled || oldCfg.smartThermalEnabled != gCfg.smartThermalEnabled || oldCfg.thermalUpperC != gCfg.thermalUpperC || oldCfg.thermalLowerC != gCfg.thermalLowerC)) {
+            (void)smc_set_power_block(false, oldCfg.overrideOBC);
+            gThermalBlocked = false;
+        }
+
         engine_log(@"config updated: smart=%d upper=%d lower=%d keepAC=%d obc=%d",
             gCfg.smartChargeEnabled, gCfg.upperLimit, gCfg.lowerLimit, gCfg.keepAC, gCfg.overrideOBC);
     }
@@ -278,6 +292,18 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
                 return;
             }
             engine_log(@"smart recovery: pct=%d <= %d release failed result=%d", pct, gCfg.lowerLimit, rr);
+        }
+    }
+
+    // CH0I 生效后 ExternalConnected 可能暂时变为 false；先处理温度迟滞恢复，
+    // 再进入无外部电源分支，避免温度降下来后无法解除阻止充电。
+    if (gThermalBlocked && gBatteryTemperatureC > 0.0 && gBatteryTemperatureC <= gCfg.thermalLowerC &&
+        !gCfg.manualChargeBlock && !gCfg.manualPowerBlock) {
+        int rr = smc_set_power_block(false, gCfg.overrideOBC);
+        if (rr == SB_RESULT_OK) {
+            gThermalBlocked = false;
+            gState = SBCPUChargeStateCharging;
+            engine_log(@"thermal recovery before power check: %.1fC <= %dC -> release CH0I", gBatteryTemperatureC, gCfg.thermalLowerC);
         }
     }
 
@@ -320,7 +346,38 @@ void sb_engine_decide(int pct, bool charging, bool wireless) {
         return;
     }
 
-    // 优先级 3：智能充电限制（迟滞，独立状态变量，不从 CH0C 反推）
+    // 优先级 3：智能温度停充。它只使用 CH0I，避免改写原有 thermalmonitord 温控策略。
+    if (gCfg.smartThermalEnabled && gBatteryTemperatureC > 0.0) {
+        if (!gThermalBlocked && gBatteryTemperatureC >= gCfg.thermalUpperC) {
+            int r = smc_set_power_block(true, gCfg.overrideOBC);
+            if (r == SB_RESULT_OK) {
+                gThermalBlocked = true;
+                gState = SBCPUChargeStateBlocked;
+                engine_log(@"thermal limit: %.1fC >= %dC -> block power (CH0I)", gBatteryTemperatureC, gCfg.thermalUpperC);
+            } else if (r == SB_RESULT_OBC_TAKEN) {
+                gState = SBCPUChargeStateOBCControlled;
+            }
+        } else if (gThermalBlocked && gBatteryTemperatureC <= gCfg.thermalLowerC) {
+            int r = smc_set_power_block(false, gCfg.overrideOBC);
+            if (r == SB_RESULT_OK) {
+                gThermalBlocked = false;
+                gState = SBCPUChargeStateCharging;
+                engine_log(@"thermal recovery: %.1fC <= %dC -> release power block", gBatteryTemperatureC, gCfg.thermalLowerC);
+            }
+        } else if (gThermalBlocked && !smc_get_power_blocked()) {
+            (void)smc_set_power_block(true, gCfg.overrideOBC);
+        }
+        if (gThermalBlocked) {
+            engine_unlock();
+            return;
+        }
+    } else if (gThermalBlocked) {
+        (void)smc_set_power_block(false, gCfg.overrideOBC);
+        gThermalBlocked = false;
+        engine_log(@"thermal limit disabled or temperature unavailable -> release CH0I");
+    }
+
+    // 优先级 4：智能充电限制（迟滞，独立状态变量，不从 CH0C 反推）
     if (gCfg.smartChargeEnabled || gCfg.chargeLimitEnabled) {
         // 用户刚刚手动关闭“阻止外部供电”时，优先确保 CH0I 已释放；
         // 在回充下限之前保持这次人工释放，避免 UI 关闭后下一次轮询又立刻断供。

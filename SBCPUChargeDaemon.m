@@ -61,9 +61,9 @@ static bool acquire_singleton(void) {
 }
 
 // ================= 电池事件 → 引擎 =================
-static void power_event_cb(int pct, bool charging, bool wireless) {
+static void power_event_cb(int pct, bool charging, bool wireless, double temperatureC) {
     // 事件到达即决策（不依赖浮窗/SpringBoard）
-    sb_engine_decide(pct, charging, wireless);
+    sb_engine_decide(pct, charging, wireless, temperatureC);
 }
 
 // ================= Socket 命令处理 =================
@@ -167,6 +167,9 @@ static void handle_client(int fd) {
             d[@"blockChargingEnable"] = @(lim.manualChargeBlock ? YES : NO);
             d[@"blockPowerEnable"] = @(lim.manualPowerBlock ? YES : NO);
             d[@"chargeScheduleEnabled"] = @(lim.scheduleEnabled ? YES : NO);
+            d[@"smartThermalChargeEnable"] = @(lim.smartThermalEnabled ? YES : NO);
+            d[@"smartThermalUpperC"] = @(lim.thermalUpperC);
+            d[@"smartThermalLowerC"] = @(lim.thermalLowerC);
             [d writeToFile:@SB_PREF_FILE atomically:YES];
             if (prefLock >= 0) { flock(prefLock, LOCK_UN); close(prefLock); }
             sb_log([NSString stringWithFormat:@"limits set: smart=%d upper=%d lower=%d keepAC=%d obc=%d",
@@ -192,6 +195,9 @@ static void handle_client(int fd) {
                 lim.manualChargeBlock = cfg.manualChargeBlock;
                 lim.manualPowerBlock = cfg.manualPowerBlock;
                 lim.scheduleEnabled = cfg.scheduleEnabled;
+                lim.smartThermalEnabled = cfg.smartThermalEnabled;
+                lim.thermalUpperC = cfg.thermalUpperC;
+                lim.thermalLowerC = cfg.thermalLowerC;
                 write_full(fd, &lim, sizeof(lim));
             }
             return; // 已写 resp

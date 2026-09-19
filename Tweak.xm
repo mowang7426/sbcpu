@@ -2194,7 +2194,8 @@ static void createCPUWindow(void) {
 
     cpuWindow = [[SBCPUWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     cpuWindow.windowScene = scene;
-    cpuWindow.windowLevel = UIWindowLevelAlert + 100.0; 
+    // 保持浮窗高于普通 App 内容，但不压过系统弹窗、控制中心和授权界面。
+    cpuWindow.windowLevel = UIWindowLevelNormal + 1.0;
     cpuWindow.backgroundColor = UIColor.clearColor;
     cpuWindow.opaque = NO;
     cpuWindow.rootViewController = [[SBCPURootViewController alloc] init];
@@ -2247,7 +2248,7 @@ static void openSettings(void) {
 
     // 方案C：浮窗原地展开卡片（非全屏，锚点=浮窗中心，弹性展开）
     UIViewController *container = [UIViewController new];
-    container.view.backgroundColor = [UIColor clearColor];
+    container.view.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.10];
     container.view.tag = 8840; // 容器标记
     container.modalPresentationStyle = UIModalPresentationOverFullScreen;
 
@@ -2258,6 +2259,11 @@ static void openSettings(void) {
     // 浅色原生：细描边淡灰
     nav.view.layer.borderWidth = 1.0f;
     nav.view.layer.borderColor = [UIColor colorWithWhite:0.0 alpha:0.10].CGColor;
+    nav.view.layer.shadowColor = [UIColor blackColor].CGColor;
+    nav.view.layer.shadowOpacity = 0.16f;
+    nav.view.layer.shadowRadius = 18.0f;
+    nav.view.layer.shadowOffset = CGSizeMake(0.0f, 8.0f);
+    nav.view.layer.masksToBounds = NO;
 
     [root presentViewController:container animated:NO completion:^{
         CGFloat W = container.view.bounds.size.width;

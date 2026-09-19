@@ -34,6 +34,9 @@ typedef struct {
     bool manualChargeBlock;    // 手动阻止充电（优先级最高）
     bool manualPowerBlock;     // 手动阻止外部供电
     bool scheduleEnabled;      // 充电计划（V1 预留）
+    bool smartThermalEnabled;  // 智能温度停充
+    uint8_t thermalUpperC;     // 温度上限 °C
+    uint8_t thermalLowerC;     // 温度下限 °C
 } SBCPUChargeConfig;
 
 // 引擎初始化/收尾
@@ -45,7 +48,7 @@ bool sb_engine_load_config(SBCPUChargeConfig *cfg);
 
 // 核心决策：根据电量/电源状态执行一次状态机（事件驱动入口）
 // pct: 0-100；charging: 是否接入外部电源；wireless: 是否无线充电
-void sb_engine_decide(int pct, bool charging, bool wireless);
+void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC);
 
 // 立即重读配置并决策（配置变化后调用）
 void sb_engine_redecide(void);

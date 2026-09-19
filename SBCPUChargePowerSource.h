@@ -13,7 +13,7 @@ extern "C" {
 #endif
 
 // 电池事件回调
-typedef void (*SBCPUPowerEventCallback)(int batteryPercent, bool charging, bool wireless);
+typedef void (*SBCPUPowerEventCallback)(int batteryPercent, bool charging, bool wireless, double temperatureC);
 
 // 订阅 IOPMPowerSource 事件；回调在通知到达时同步执行（run loop 上下文）
 void sb_power_subscribe(SBCPUPowerEventCallback cb);
