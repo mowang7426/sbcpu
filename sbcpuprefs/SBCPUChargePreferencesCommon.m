@@ -49,6 +49,14 @@
         NSInteger lower = [value integerValue];
         NSInteger upper = [d[@"smartChargeUpperLimit"] integerValue];
         if (lower >= upper) d[@"smartChargeUpperLimit"] = @(MIN(100, lower + 1));
+    } else if ([key isEqualToString:@"smartThermalUpperC"]) {
+        NSInteger upper = [value integerValue];
+        NSInteger lower = [d[@"smartThermalLowerC"] integerValue];
+        if (upper <= lower) d[@"smartThermalLowerC"] = @(MAX(25, upper - 1));
+    } else if ([key isEqualToString:@"smartThermalLowerC"]) {
+        NSInteger lower = [value integerValue];
+        NSInteger upper = [d[@"smartThermalUpperC"] integerValue];
+        if (lower >= upper) d[@"smartThermalUpperC"] = @(MIN(60, lower + 1));
     }
 
     [d writeToFile:@SB_PREF_FILE atomically:YES];
