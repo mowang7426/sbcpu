@@ -24,7 +24,8 @@ static NSString *LGGlassPreferencesPath(void) {
     static NSString *path;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        path = jbroot(@"/var/mobile/Library/Preferences/com.yourname.sbcpufloating.plist");
+        const char *resolved = jbroot("/var/mobile/Library/Preferences/com.yourname.sbcpufloating.plist");
+        path = resolved ? [NSString stringWithUTF8String:resolved] : @"/var/mobile/Library/Preferences/com.yourname.sbcpufloating.plist";
     });
     return path;
 }
