@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>items</key><array>
-<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>通用</string><key>footerText</key><string>底层控制由 SBCPUChargeDaemon 执行，设置页只负责保存配置和通知守护进程重新判断。</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>通用</string><key>footerText</key><string>底层控制由 SBCPUChargeDaemon 执行。修改设置后会立即保存并通知后台重新判断；请勿同时运行多个值守进程。</string></dict>
 <dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>阻止充电</string><key>key</key><string>blockChargingEnable</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 <dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>阻止外部供电</string><key>key</key><string>blockPowerEnable</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 <dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>智能充电</string></dict>
