@@ -11,7 +11,11 @@
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
-	<true/>
+	<dict>
+		<!-- 崩溃/异常退出自动拉起；SIGTERM 正常退出不重复拉起。 -->
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
 	<key>ProcessType</key>
 	<string>Background</string>
 	<key>ThrottleInterval</key>

@@ -94,7 +94,17 @@ static bool write_full(int fd, const void *buf, size_t len) {
     return true;
 }
 
+static bool authorized_client(int fd) {
+    uid_t peerUID = (uid_t)-1;
+    gid_t peerGID = (gid_t)-1;
+    if (getpeereid(fd, &peerUID, &peerGID) != 0) return false;
+    if (peerUID == 0) return true;
+    struct passwd *mobile = getpwnam("mobile");
+    return mobile && peerUID == mobile->pw_uid;
+}
+
 static void handle_client(int fd) {
+    if (!authorized_client(fd)) return;
     sb_cmd_t cmd;
     if (!read_full(fd, &cmd, sizeof(cmd))) return;
 
@@ -144,6 +154,8 @@ static void handle_client(int fd) {
                 resp.result = SB_RESULT_IO_ERROR;
                 break;
             }
+            int prefLock = open(SB_PREF_WRITE_LOCK_PATH, O_CREAT | O_RDWR, 0644);
+            if (prefLock >= 0) flock(prefLock, LOCK_EX);
             NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:@SB_PREF_FILE];
             if (!d) d = [NSMutableDictionary dictionary];
             d[@"smartChargeEnable"] = @(lim.smartChargeEnabled ? YES : NO);
@@ -156,6 +168,7 @@ static void handle_client(int fd) {
             d[@"blockPowerEnable"] = @(lim.manualPowerBlock ? YES : NO);
             d[@"chargeScheduleEnabled"] = @(lim.scheduleEnabled ? YES : NO);
             [d writeToFile:@SB_PREF_FILE atomically:YES];
+            if (prefLock >= 0) { flock(prefLock, LOCK_UN); close(prefLock); }
             sb_log([NSString stringWithFormat:@"limits set: smart=%d upper=%d lower=%d keepAC=%d obc=%d",
                 lim.smartChargeEnabled, lim.upperLimit, lim.lowerLimit,
                 (lim.drainMode & 1) != 0, (lim.drainMode & 2) != 0]);
@@ -213,7 +226,14 @@ static void handle_client(int fd) {
             return;
         }
         case SB_CMD_STOP: {
-            sb_log(@"STOP requested; reset SMC and exit");
+            // STOP 会执行 SMC 复位并退出，只允许 root/launchd 侧使用。
+            uid_t peerUID = (uid_t)-1;
+            gid_t peerGID = (gid_t)-1;
+            if (getpeereid(fd, &peerUID, &peerGID) != 0 || peerUID != 0) {
+                resp.result = SB_RESULT_IO_ERROR;
+                break;
+            }
+            sb_log(@"STOP requested by root; reset SMC and exit");
             sb_engine_shutdown();
             resp.result = SB_RESULT_OK;
             write_full(fd, &resp, sizeof(resp));
@@ -278,12 +298,17 @@ static void *socket_server(void *arg) {
     return NULL;
 }
 
-// SIGTERM/SIGINT：停止主 runloop，回到 main 做优雅复位（CH0C/CH0I 写回允许）后正常退出
+// 信号处理器只设置标志；不在异步信号上下文调用 CFRunLoopStop。
+// 主循环通过短周期 timer 观察标志并执行 SMC 复位。
 static volatile sig_atomic_t gShouldExit = 0;
 static void sbcpu_on_term(int sig) {
     (void)sig;
     gShouldExit = 1;
-    CFRunLoopStop(CFRunLoopGetMain());
+}
+
+static void signal_watchdog_cb(CFRunLoopTimerRef timer, void *info) {
+    (void)timer; (void)info;
+    if (gShouldExit) CFRunLoopStop(CFRunLoopGetMain());
 }
 
 // 兜底 watchdog：IOKit 电源通知事件驱动不可用时，10 秒轮询一次仍保证充电控制工作，
@@ -316,10 +341,12 @@ int main(int argc, char *argv[]) {
 
         // socket 服务线程
         pthread_t tid;
-        if (pthread_create(&tid, NULL, socket_server, NULL) != 0) {
-            sb_log(@"failed to create socket thread");
+        int threadResult = pthread_create(&tid, NULL, socket_server, NULL);
+        if (threadResult == 0) {
+            pthread_detach(tid);
+        } else {
+            sb_log([NSString stringWithFormat:@"failed to create socket thread: %s", strerror(threadResult)]);
         }
-        pthread_detach(tid);
 
         // 主线程跑 CFRunLoop：电源事件在此派发（iOS 无 IONotificationPortSetDispatchQueue）
         CFRunLoopSourceRef src = sb_power_runloop_source();
@@ -334,6 +361,13 @@ int main(int argc, char *argv[]) {
         if (wdt) {
             CFRunLoopAddTimer(CFRunLoopGetMain(), wdt, kCFRunLoopCommonModes);
             CFRelease(wdt);
+        }
+        CFRunLoopTimerRef sigTimer = CFRunLoopTimerCreate(kCFAllocatorDefault,
+            CFAbsoluteTimeGetCurrent() + 0.25, 0.25, 0, 0,
+            (CFRunLoopTimerCallBack)signal_watchdog_cb, NULL);
+        if (sigTimer) {
+            CFRunLoopAddTimer(CFRunLoopGetMain(), sigTimer, kCFRunLoopCommonModes);
+            CFRelease(sigTimer);
         }
         CFRunLoopRun(); // 常驻（launchd KeepAlive 兜底）
 

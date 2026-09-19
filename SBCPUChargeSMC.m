@@ -316,7 +316,8 @@ int smc_set_charge_block(bool inhibit, bool overrideOBC) {
             NSLog(@"[SBCPUChargeSMC] failed to disable OBC before CH0C write");
             return SB_RESULT_IO_ERROR;
         }
-        IOReturn obcWrite = smc_write_key('CH0B', &inhibit, 1);
+        uint8_t obcValue = inhibit ? 1 : 0;
+        IOReturn obcWrite = smc_write_key('CH0B', &obcValue, sizeof(obcValue));
         if (obcWrite != kIOReturnSuccess) {
             NSLog(@"[SBCPUChargeSMC] write CH0B=%d failed 0x%08x", inhibit, smc_last_error());
             return SB_RESULT_IO_ERROR;
@@ -325,7 +326,8 @@ int smc_set_charge_block(bool inhibit, bool overrideOBC) {
 
     int target = 1;
     if (((cur & 1) != target) || gChargeCache != target) {
-        IOReturn r = smc_write_key('CH0C', &inhibit, 1);
+        uint8_t chargeValue = inhibit ? 1 : 0;
+        IOReturn r = smc_write_key('CH0C', &chargeValue, sizeof(chargeValue));
         if (r != kIOReturnSuccess) {
             NSLog(@"[SBCPUChargeSMC] write CH0C=%d failed 0x%08x", inhibit, smc_last_error());
             return SB_RESULT_IO_ERROR;

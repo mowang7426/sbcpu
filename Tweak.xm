@@ -2264,7 +2264,10 @@ static void openSettings(void) {
         CGFloat H = container.view.bounds.size.height;
         BOOL landscape = (W > H);
         CGFloat cw = landscape ? (W * 0.90f) : (W * 0.80f);
-        CGFloat ch = landscape ? (H - 30.0f) : (H - 84.0f - 74.0f);
+        // 保留安全区，且在小屏/分屏场景下限制最小尺寸，避免设置卡片超出屏幕。
+        CGFloat maxH = landscape ? (H - 30.0f) : (H - 84.0f - 74.0f);
+        CGFloat ch = MAX(320.0f, maxH);
+        if (ch > H - (landscape ? 30.0f : 84.0f)) ch = H - (landscape ? 30.0f : 84.0f);
         CGFloat cx = (W - cw) / 2.0f;
         CGFloat cy = landscape ? 15.0f : 84.0f;
         nav.view.frame = CGRectMake(cx, cy, cw, ch);
