@@ -6,6 +6,8 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/file.h>
+#include <fcntl.h>
 #include "../include/SBCPUChargeProtocol.h"
 
 @implementation SBCPUChargePreferencesCommon
@@ -24,6 +26,8 @@
 }
 
 + (void)setValue:(id)value forKey:(NSString *)key {
+    int prefLock = open(SB_PREF_WRITE_LOCK_PATH, O_CREAT | O_RDWR, 0644);
+    if (prefLock >= 0) flock(prefLock, LOCK_EX);
     NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:@SB_PREF_FILE];
     if (!d) d = [NSMutableDictionary dictionary];
     if (value) d[key] = value;
@@ -48,6 +52,7 @@
     }
 
     [d writeToFile:@SB_PREF_FILE atomically:YES];
+    if (prefLock >= 0) { flock(prefLock, LOCK_UN); close(prefLock); }
 
     // Persist to both stores and synchronize immediately so PreferenceLoader
     // does not fall back to the plist defaults after navigation.
