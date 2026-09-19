@@ -75,7 +75,10 @@ typedef struct {
     uint8_t  manualChargeBlock;   // 手动阻止充电（优先级最高）
     uint8_t  manualPowerBlock;    // 手动阻止外部供电
     uint8_t  scheduleEnabled;     // 充电计划开关（V1 预留，默认关）
-} sb_limits_t; // 8 字节
+    uint8_t  smartThermalEnabled; // 智能温度停充
+    uint8_t  thermalUpperC;        // 温度上限 °C
+    uint8_t  thermalLowerC;        // 温度下限 °C
+} sb_limits_t; // 11 字节
 
 // ---------- GET_STATUS 载荷（紧随 sb_resp_t 后发送） ----------
 typedef struct {
