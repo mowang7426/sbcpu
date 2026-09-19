@@ -382,6 +382,10 @@ static BOOL blockPowerEnable = NO;             // V4.21 — 阻止外部供电�
 static BOOL chargeKeepAC = YES;                // V4.25 — 达到上限时保留外部供电（只停充不断 AC）
 static BOOL gSmartChargeHoldDisplay = NO; // V4.34：CH0I 停充时仍保持浮窗充电布局
 static BOOL chargeOverrideOBC = NO;            // V4.25 — 覆盖系统"优化电池充电"接管（OBC）
+// 双击浮窗设置：智能温度停充（独立于 CPU thermalmonitord 温控）
+static BOOL smartThermalChargeEnable = NO;
+static NSInteger smartThermalUpperC = 42;
+static NSInteger smartThermalLowerC = 38;
 
 static CGRect keyboardBeforeFrame;
 static BOOL keyboardMoved = NO;
@@ -1006,6 +1010,10 @@ static void LoadPreferences(void) {
     blockPowerEnable = getBoolPref(CFSTR("blockPowerEnable"), NO);
     chargeKeepAC = getBoolPref(CFSTR("chargeKeepAC"), YES);
     chargeOverrideOBC = getBoolPref(CFSTR("chargeOverrideOBC"), NO);
+    smartThermalChargeEnable = getBoolPref(CFSTR("smartThermalChargeEnable"), NO);
+    smartThermalUpperC = MAX(35, MIN(60, (NSInteger)getFloatPref(CFSTR("smartThermalUpperC"), 42.0f)));
+    smartThermalLowerC = MAX(25, MIN(55, (NSInteger)getFloatPref(CFSTR("smartThermalLowerC"), 38.0f)));
+    if (smartThermalLowerC >= smartThermalUpperC) smartThermalLowerC = MAX(25, smartThermalUpperC - 1);
     glassDimOpacity = getFloatPref(CFSTR("glassDimOpacity"), 0.90f);
     if (glassDimOpacity < 0.40f) glassDimOpacity = 0.90f; // 旧版语义（白雾透明度）迁移为玻璃不透明度
     glassBlurRadius = getFloatPref(CFSTR("glassBlurRadius"), 50.0f);
@@ -1081,6 +1089,9 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("blockPowerEnable"), blockPowerEnable);
     setBoolPref(CFSTR("chargeKeepAC"), chargeKeepAC);
     setBoolPref(CFSTR("chargeOverrideOBC"), chargeOverrideOBC);
+    setBoolPref(CFSTR("smartThermalChargeEnable"), smartThermalChargeEnable);
+    setFloatPref(CFSTR("smartThermalUpperC"), (float)smartThermalUpperC);
+    setFloatPref(CFSTR("smartThermalLowerC"), (float)smartThermalLowerC);
     setFloatPref(CFSTR("glassDimOpacity"), glassDimOpacity);
     setFloatPref(CFSTR("glassBlurRadius"), glassBlurRadius);
     setFloatPref(CFSTR("glassCardOpacity"), glassCardOpacity);
@@ -1393,6 +1404,9 @@ typedef struct {
     uint8_t  manualChargeBlock;
     uint8_t  manualPowerBlock;
     uint8_t  scheduleEnabled;
+    uint8_t  smartThermalEnabled;
+    uint8_t  thermalUpperC;
+    uint8_t  thermalLowerC;
 } sb_limits_t;
 
 typedef struct {
@@ -1429,6 +1443,9 @@ static IOReturn sbSMCSendLimits(void) {
     lim.manualChargeBlock = blockChargingEnable ? 1 : 0;
     lim.manualPowerBlock = blockPowerEnable ? 1 : 0;
     lim.scheduleEnabled = 0;
+    lim.smartThermalEnabled = smartThermalChargeEnable ? 1 : 0;
+    lim.thermalUpperC = (uint8_t)smartThermalUpperC;
+    lim.thermalLowerC = (uint8_t)smartThermalLowerC;
     if (!sbSMCWriteFull(fd, &lim, sizeof(lim))) { close(fd); return kIOReturnIOError; }
 
     sb_resp_t r = {0};
@@ -2195,7 +2212,8 @@ static void createCPUWindow(void) {
     cpuWindow = [[SBCPUWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     cpuWindow.windowScene = scene;
     // 保持浮窗高于普通 App 内容，但不压过系统弹窗、控制中心和授权界面。
-    cpuWindow.windowLevel = UIWindowLevelNormal + 1.0;
+    // 仅略高于普通 App 内容，低于 Alert/系统弹窗；设置卡片外区域完全透传。
+    cpuWindow.windowLevel = UIWindowLevelNormal + 0.1;
     cpuWindow.backgroundColor = UIColor.clearColor;
     cpuWindow.opaque = NO;
     cpuWindow.rootViewController = [[SBCPURootViewController alloc] init];
@@ -2248,7 +2266,8 @@ static void openSettings(void) {
 
     // 方案C：浮窗原地展开卡片（非全屏，锚点=浮窗中心，弹性展开）
     UIViewController *container = [UIViewController new];
-    container.view.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.10];
+    // 不再用全屏半透明黑色遮罩；设置卡片外区域保持透明并向下透传。
+    container.view.backgroundColor = UIColor.clearColor;
     container.view.tag = 8840; // 容器标记
     container.modalPresentationStyle = UIModalPresentationOverFullScreen;
 
@@ -2263,7 +2282,9 @@ static void openSettings(void) {
     nav.view.layer.shadowOpacity = 0.16f;
     nav.view.layer.shadowRadius = 18.0f;
     nav.view.layer.shadowOffset = CGSizeMake(0.0f, 8.0f);
-    nav.view.layer.masksToBounds = NO;
+    // 设置卡片自身裁剪内容，四角圆角才能真正生效；阴影交给外层容器绘制。
+    nav.view.layer.masksToBounds = YES;
+    nav.view.clipsToBounds = YES;
 
     [root presentViewController:container animated:NO completion:^{
         CGFloat W = container.view.bounds.size.width;
@@ -5647,7 +5668,16 @@ static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
 
 @implementation SBCPUWindow
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    if (settingsShowing || detailShowing || self.rootViewController.presentedViewController) {
+    // 设置页只拦截卡片本身；卡片以外的区域透传给下面的 App/系统界面。
+    if (settingsShowing) {
+        UIView *card = [self viewWithTag:8841];
+        if (card && !card.hidden && card.alpha > 0.01) {
+            CGPoint p = [self convertPoint:point toView:card];
+            if ([card pointInside:p withEvent:event]) return [super hitTest:point withEvent:event];
+        }
+        return nil;
+    }
+    if (detailShowing || self.rootViewController.presentedViewController) {
         return [super hitTest:point withEvent:event];
     }
 
@@ -6271,6 +6301,8 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 4) return 3;
     if (section == 5) return 1;
     if (section == 6) return 10;
+    // 智能温控停充嵌入双击设置页，避免用户必须跳转独立偏好页
+    if (section == 9) return 8;
     if (section == 7) return 6; // 充电增强：充电增强/满血快充/屏蔽维修/充电历史/阻止充电/阻止外部供电
     if (section == 8) return 9; // 位置与显示（含 📶 显示信号强度）
     if (section == 9) return 5; // 🔋 智能停充
@@ -6604,6 +6636,69 @@ static NSString *stripLeadingEmoji(NSString *s) {
             slider.tag = 931;
             [slider addTarget:self action:@selector(changeSmartChargeUpper:) forControlEvents:UIControlEventValueChanged];
             [slider addTarget:self action:@selector(commitSmartChargeUpper:) forControlEvents:(UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel)];
+            [cell.contentView addSubview:slider];
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else if (indexPath.row == 5) {
+            cell.textLabel.hidden = YES;
+            cell.detailTextLabel.hidden = YES;
+            UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 10, cw - 90, 24)];
+            titleLbl.text = @"智能温度停充";
+            titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+            titleLbl.textColor = [UIColor labelColor];
+            [cell.contentView addSubview:titleLbl];
+            UILabel *desc = [[UILabel alloc] initWithFrame:CGRectMake(16, 38, cw - 100, 28)];
+            desc.text = @"高于上限用 CH0I 阻止充电，低于下限自动恢复";
+            desc.font = [UIFont systemFontOfSize:11.5 weight:UIFontWeightRegular];
+            desc.textColor = [UIColor secondaryLabelColor];
+            desc.numberOfLines = 2;
+            [cell.contentView addSubview:desc];
+            UISwitch *sw = [UISwitch new];
+            sw.on = smartThermalChargeEnable;
+            [sw addTarget:self action:@selector(changeSmartThermalEnable:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else if (indexPath.row == 6) {
+            cell.textLabel.hidden = YES;
+            cell.detailTextLabel.hidden = YES;
+            UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, 150, 26)];
+            titleLbl.text = @"温度上限";
+            titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+            titleLbl.textColor = [UIColor labelColor];
+            [cell.contentView addSubview:titleLbl];
+            UILabel *value = [[UILabel alloc] initWithFrame:CGRectMake(cw - 85, 8, 70, 26)];
+            value.text = [NSString stringWithFormat:@"%ld°C", (long)smartThermalUpperC];
+            value.textAlignment = NSTextAlignmentRight;
+            value.font = [UIFont monospacedDigitSystemFontOfSize:17 weight:UIFontWeightBold];
+            value.textColor = [UIColor systemRedColor];
+            value.tag = 951;
+            [cell.contentView addSubview:value];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(16, 40, cw - 32, 30)];
+            slider.minimumValue = 35; slider.maximumValue = 55; slider.value = smartThermalUpperC; slider.tag = 952;
+            slider.minimumTrackTintColor = [UIColor systemRedColor];
+            [slider addTarget:self action:@selector(changeSmartThermalUpper:) forControlEvents:UIControlEventValueChanged];
+            [slider addTarget:self action:@selector(commitSmartThermal:) forControlEvents:UIControlEventTouchUpInside|UIControlEventTouchUpOutside|UIControlEventTouchCancel];
+            [cell.contentView addSubview:slider];
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else if (indexPath.row == 7) {
+            cell.textLabel.hidden = YES;
+            cell.detailTextLabel.hidden = YES;
+            UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, 150, 26)];
+            titleLbl.text = @"温度下限";
+            titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+            titleLbl.textColor = [UIColor labelColor];
+            [cell.contentView addSubview:titleLbl];
+            UILabel *value = [[UILabel alloc] initWithFrame:CGRectMake(cw - 85, 8, 70, 26)];
+            value.text = [NSString stringWithFormat:@"%ld°C", (long)smartThermalLowerC];
+            value.textAlignment = NSTextAlignmentRight;
+            value.font = [UIFont monospacedDigitSystemFontOfSize:17 weight:UIFontWeightBold];
+            value.textColor = [UIColor systemBlueColor];
+            value.tag = 953;
+            [cell.contentView addSubview:value];
+            UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(16, 40, cw - 32, 30)];
+            slider.minimumValue = 30; slider.maximumValue = 50; slider.value = smartThermalLowerC; slider.tag = 954;
+            slider.minimumTrackTintColor = [UIColor systemBlueColor];
+            [slider addTarget:self action:@selector(changeSmartThermalLower:) forControlEvents:UIControlEventValueChanged];
+            [slider addTarget:self action:@selector(commitSmartThermal:) forControlEvents:UIControlEventTouchUpInside|UIControlEventTouchUpOutside|UIControlEventTouchCancel];
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 4) {
@@ -7877,6 +7972,44 @@ static NSString *stripLeadingEmoji(NSString *s) {
     [self.tableView reloadData];
 }
 
+- (void)changeSmartThermalEnable:(UISwitch *)sw {
+    smartThermalChargeEnable = sw.isOn;
+    SavePreferencesAndNotify();
+    updateSmartCharge();
+    [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:9] withRowAnimation:UITableViewRowAnimationNone];
+}
+
+- (void)changeSmartThermalUpper:(UISlider *)slider {
+    smartThermalUpperC = (NSInteger)lrintf(slider.value);
+    if (smartThermalLowerC >= smartThermalUpperC) smartThermalLowerC = MAX(25, smartThermalUpperC - 1);
+    UILabel *value = [slider.superview viewWithTag:951];
+    if (value) value.text = [NSString stringWithFormat:@"%ld°C", (long)smartThermalUpperC];
+    for (UITableViewCell *cell in self.tableView.visibleCells) {
+        UISlider *lower = [cell.contentView viewWithTag:954];
+        if ([lower isKindOfClass:[UISlider class]]) lower.value = smartThermalLowerC;
+        UILabel *lowerValue = [cell.contentView viewWithTag:953];
+        if (lowerValue) lowerValue.text = [NSString stringWithFormat:@"%ld°C", (long)smartThermalLowerC];
+    }
+}
+
+- (void)changeSmartThermalLower:(UISlider *)slider {
+    smartThermalLowerC = (NSInteger)lrintf(slider.value);
+    if (smartThermalLowerC >= smartThermalUpperC) smartThermalUpperC = MIN(55, smartThermalLowerC + 1);
+    for (UITableViewCell *cell in self.tableView.visibleCells) {
+        UISlider *upper = [cell.contentView viewWithTag:952];
+        if ([upper isKindOfClass:[UISlider class]]) upper.value = smartThermalUpperC;
+        UILabel *upperValue = [cell.contentView viewWithTag:951];
+        if (upperValue) upperValue.text = [NSString stringWithFormat:@"%ld°C", (long)smartThermalUpperC];
+    }
+}
+
+- (void)commitSmartThermal:(UISlider *)slider {
+    (void)slider;
+    SavePreferencesAndNotify();
+    updateSmartCharge();
+    [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:9] withRowAnimation:UITableViewRowAnimationNone];
+}
+
 // 智能停充：预设模式（V4.22：改偏好后下发 daemon 重判）
 - (void)changeSmartChargeMode:(UIButton *)btn {
     smartChargeMode = btn.tag - 900; // 按钮tag=900+i，还原为0/1/2
@@ -8923,7 +9056,8 @@ static void detectPluginConflicts(void) {
         if (indexPath.row == 0) return 84.0;  // 智能停充开关（说明两行完整显示）
         if (indexPath.row == 1) return 92.0;   // 预设按钮（卡片式）
         if (indexPath.row == 2) return 88.0;   // 充电区间可视化
-        if (indexPath.row == 3 || indexPath.row == 4) return 78.0; // 滑块
+        if (indexPath.row == 3 || indexPath.row == 4 || indexPath.row == 6 || indexPath.row == 7) return 78.0; // 百分比/温度滑块
+        if (indexPath.row == 5) return 76.0; // 智能温度开关
         return 64.0;
     }
     if (indexPath.section == 2) {
