@@ -17,6 +17,8 @@ extern "C" {
 #define SB_SOCKET_PATH          "/var/mobile/Library/Preferences/sbcpu_charge.sock"
 #define SB_DAEMON_LOG_PATH      "/var/mobile/Library/Preferences/sbcpu_charge.log"
 #define SB_DAEMON_LOCK_PATH     "/var/mobile/Library/Preferences/sbcpu_charge.lock"
+// 与 daemon 单例锁分离：用于 mobile 设置页与 root daemon 的配置读改写互斥。
+#define SB_PREF_WRITE_LOCK_PATH "/var/mobile/Library/Preferences/sbcpu_charge_prefs.lock"
 #define SB_PREF_DOMAIN          "com.yourname.sbcpufloating"
 #define SB_PREF_FILE            "/var/mobile/Library/Preferences/com.yourname.sbcpufloating.plist"
 
