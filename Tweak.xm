@@ -2212,9 +2212,10 @@ static void createCPUWindow(void) {
 
     cpuWindow = [[SBCPUWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     cpuWindow.windowScene = scene;
-    // 保持浮窗高于普通 App 内容，但不压过系统弹窗、控制中心和授权界面。
-    // 仅略高于普通 App 内容，低于 Alert/系统弹窗；设置卡片外区域完全透传。
-    cpuWindow.windowLevel = UIWindowLevelNormal + 0.1;
+    // 主浮窗必须始终位于普通 App 窗口之上。
+    // 双击设置页仍在此窗口内展示；不要为了降低设置页层级而牺牲主浮窗置顶。
+    // 使用高于系统 Alert 的自定义层级，避免打开任意 App 后浮窗被压住。
+    cpuWindow.windowLevel = UIWindowLevelAlert + 100.0;
     cpuWindow.backgroundColor = UIColor.clearColor;
     cpuWindow.opaque = NO;
     cpuWindow.rootViewController = [[SBCPURootViewController alloc] init];
