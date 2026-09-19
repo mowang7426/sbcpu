@@ -1439,6 +1439,7 @@ static IOReturn sbSMCSendLimits(void) {
     lim.chargeLimitEnabled = smartChargeEnable ? 1 : 0; // V1：与智能充电共用总开关
     lim.upperLimit = (uint8_t)smartChargeUpperLimit;
     lim.lowerLimit = (uint8_t)smartChargeLowerLimit;
+    // 智能停充固定使用 CH0I；keepAC 仍仅用于兼容旧配置/手动策略。
     lim.drainMode = (chargeKeepAC ? 1 : 0) | (chargeOverrideOBC ? 2 : 0); // bit0=keepAC bit1=overrideOBC
     lim.manualChargeBlock = blockChargingEnable ? 1 : 0;
     lim.manualPowerBlock = blockPowerEnable ? 1 : 0;
@@ -6647,7 +6648,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
             titleLbl.textColor = [UIColor labelColor];
             [cell.contentView addSubview:titleLbl];
             UILabel *desc = [[UILabel alloc] initWithFrame:CGRectMake(16, 38, cw - 100, 28)];
-            desc.text = @"高于上限用 CH0I 阻止充电，低于下限自动恢复";
+            desc.text = @"高于上限阻止充电（CH0C），低于下限自动恢复";
             desc.font = [UIFont systemFontOfSize:11.5 weight:UIFontWeightRegular];
             desc.textColor = [UIColor secondaryLabelColor];
             desc.numberOfLines = 2;
