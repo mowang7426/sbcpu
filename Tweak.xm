@@ -1229,7 +1229,7 @@ enum {
 
 #define SB_SOCKET_PATH "/var/mobile/Library/Preferences/sbcpu_charge.sock"
 #define SB_MAGIC 0x53424350
-#define SB_DAEMON_VERSION 4
+#define SB_DAEMON_VERSION 3
 
 // daemon 返回的 result 语义（与 SBCPUChargeProtocol.h SB_RESULT_* 对齐）
 enum {
@@ -1378,12 +1378,10 @@ static IOReturn sbSMCInit(void) {
     if (gSMCChecked && gSMCAvailable) return kIOReturnSuccess;
     int fd = sbSMCConnect();
     if (fd < 0) {
-        // daemon 未运行：加载后等待 socket，避免固定 600ms 导致启动慢时误报。
+        // daemon 未运行：尝试拉起一次，等待后重试
         sbSMCLoadDaemon();
-        for (int attempt = 0; attempt < 12 && fd < 0; ++attempt) {
-            usleep(200 * 1000);
-            fd = sbSMCConnect();
-        }
+        usleep(600 * 1000);
+        fd = sbSMCConnect();
     }
     if (fd < 0) {
         gSMCChecked = YES;
@@ -2268,74 +2266,15 @@ static void openSettings(void) {
     SBCPUSettingsController *vc = [[SBCPUSettingsController alloc] initWithStyle:UITableViewStyleInsetGrouped];
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
 
-    // 方案C：浮窗原地展开卡片（非全屏，锚点=浮窗中心，弹性展开）
-    UIViewController *container = [UIViewController new];
-    // 不再用全屏半透明黑色遮罩；设置卡片外区域保持透明并向下透传。
-    container.view.backgroundColor = UIColor.clearColor;
-    container.view.tag = 8840; // 容器标记
-    container.modalPresentationStyle = UIModalPresentationOverFullScreen;
-
-    nav.view.tag = 8841;                       // 卡片标记
-    nav.view.layer.cornerRadius = 26.0f;
-    nav.view.layer.masksToBounds = YES;
-    nav.view.backgroundColor = [UIColor clearColor];
-    // 浅色原生：细描边淡灰
-    nav.view.layer.borderWidth = 1.0f;
-    nav.view.layer.borderColor = [UIColor colorWithWhite:0.0 alpha:0.10].CGColor;
-    nav.view.layer.shadowColor = [UIColor blackColor].CGColor;
-    nav.view.layer.shadowOpacity = 0.16f;
-    nav.view.layer.shadowRadius = 18.0f;
-    nav.view.layer.shadowOffset = CGSizeMake(0.0f, 8.0f);
-    // 设置卡片自身裁剪内容，四角圆角才能真正生效；阴影交给外层容器绘制。
-    nav.view.layer.masksToBounds = YES;
+    // V4.41：双击浮窗打开真正的全屏设置页，使用系统安全区和导航栏。
+    nav.modalPresentationStyle = UIModalPresentationOverFullScreen;
+    nav.modalTransitionStyle = UIModalTransitionStyleCoverVertical;
+    nav.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    nav.view.layer.cornerRadius = 0.0f;
+    nav.view.layer.borderWidth = 0.0f;
     nav.view.clipsToBounds = YES;
 
-    [root presentViewController:container animated:NO completion:^{
-        CGFloat W = container.view.bounds.size.width;
-        CGFloat H = container.view.bounds.size.height;
-        BOOL landscape = (W > H);
-        CGFloat cw = landscape ? (W * 0.90f) : (W * 0.80f);
-        // 保留安全区，且在小屏/分屏场景下限制最小尺寸，避免设置卡片超出屏幕。
-        CGFloat maxH = landscape ? (H - 30.0f) : (H - 84.0f - 74.0f);
-        CGFloat ch = MAX(320.0f, maxH);
-        if (ch > H - (landscape ? 30.0f : 84.0f)) ch = H - (landscape ? 30.0f : 84.0f);
-        CGFloat cx = (W - cw) / 2.0f;
-        CGFloat cy = landscape ? 15.0f : 84.0f;
-        nav.view.frame = CGRectMake(cx, cy, cw, ch);
-
-        // 展开起点 = 浮窗中心（容器坐标）
-        CGPoint fp = CGPointMake(W / 2.0f, 213.0f);
-        if (floatingView && floatingView.superview) {
-            fp = [floatingView.superview convertPoint:CGPointMake(CGRectGetMidX(floatingView.frame),
-                                                                  CGRectGetMidY(floatingView.frame))
-                                               toView:container.view];
-        }
-        CGPoint C0 = CGPointMake(cx + cw / 2.0f, cy + ch / 2.0f);
-        // translate+scale 组合：视觉中心从浮窗处平滑移到卡片中心，无跳变
-        CGFloat tx = fp.x - C0.x;
-        CGFloat ty = fp.y - C0.y;
-        gSettingsCloseTx = tx;
-        gSettingsCloseTy = ty;
-        nav.view.transform = CGAffineTransformTranslate(CGAffineTransformMakeScale(0.12f, 0.12f), tx, ty);
-        nav.view.alpha = 0.0f;
-
-        // 正确的容器 VC 配对，防止 nav.view 被布局拉伸/错位
-        [container addChildViewController:nav];
-        nav.view.autoresizingMask = UIViewAutoresizingNone;
-        [container.view addSubview:nav.view];
-        [nav didMoveToParentViewController:container];
-
-        // 点击卡片外部关闭（手势交由设置 VC 处理，delegate 过滤卡片内点击）
-        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:vc action:@selector(closeSettings)];
-        tap.delegate = vc;
-        [container.view addGestureRecognizer:tap];
-
-        [UIView animateWithDuration:0.52 delay:0.0 usingSpringWithDamping:0.80 initialSpringVelocity:0.55
-                            options:UIViewAnimationOptionCurveEaseOut animations:^{
-            nav.view.transform = CGAffineTransformIdentity;
-            nav.view.alpha = 1.0f;
-        } completion:nil];
-    }];
+    [root presentViewController:nav animated:YES completion:nil];
 }
 
 static void checkHighCPU(double cpu) {
@@ -5672,14 +5611,9 @@ static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
 
 @implementation SBCPUWindow
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    // 设置页只拦截卡片本身；卡片以外的区域透传给下面的 App/系统界面。
+    // 全屏设置页需要接收整页触摸，不能继续使用旧版卡片透传逻辑。
     if (settingsShowing) {
-        UIView *card = [self viewWithTag:8841];
-        if (card && !card.hidden && card.alpha > 0.01) {
-            CGPoint p = [self convertPoint:point toView:card];
-            if ([card pointInside:p withEvent:event]) return [super hitTest:point withEvent:event];
-        }
-        return nil;
+        return [super hitTest:point withEvent:event];
     }
     if (detailShowing || self.rootViewController.presentedViewController) {
         return [super hitTest:point withEvent:event];
@@ -6261,31 +6195,13 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 
 - (void)closeSettings {
     settingsShowing = NO;
-    UIView *card = [self.view.window viewWithTag:8841];
-    if (card && card.window) {
-        // 方案C：反向动画（缩回浮窗处，与展开对称无跳变）
-        [UIView animateWithDuration:0.22 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
-            card.transform = CGAffineTransformTranslate(CGAffineTransformMakeScale(0.12f, 0.12f), gSettingsCloseTx, gSettingsCloseTy);
-            card.alpha = 0.0f;
-        } completion:^(BOOL finished) {
-            if (cpuWindow) [cpuWindow setNeedsLayout];
-            if (floatingView) [floatingView resetInactivityTimer];
-            [self dismissViewControllerAnimated:NO completion:nil];
-        }];
-    } else {
-        if (cpuWindow) [cpuWindow setNeedsLayout];
-        if (floatingView) [floatingView resetInactivityTimer];
-        [self dismissViewControllerAnimated:NO completion:nil];
-    }
+    if (cpuWindow) [cpuWindow setNeedsLayout];
+    if (floatingView) [floatingView resetInactivityTimer];
+    [self dismissViewControllerAnimated:YES completion:nil];
 }
 
-// 方案C：点击卡片外区域才触发关闭，卡片内点击不拦截
+// 全屏设置页不拦截内容点击；保留代理接口兼容旧版调用。
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
-    UIView *card = [self.view.window viewWithTag:8841];
-    if (card) {
-        CGPoint p = [touch locationInView:card.superview];
-        return !CGRectContainsPoint(card.frame, p);
-    }
     return NO;
 }
 
