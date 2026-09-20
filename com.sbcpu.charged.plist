@@ -10,12 +10,9 @@
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
+	<!-- 常驻；卸载前由 prerm 先 bootout，避免正常退出后失联。 -->
 	<key>KeepAlive</key>
-	<dict>
-		<!-- 崩溃/异常退出自动拉起；SIGTERM 正常退出不重复拉起。 -->
-		<key>SuccessfulExit</key>
-		<false/>
-	</dict>
+	<true/>
 	<key>ProcessType</key>
 	<string>Background</string>
 	<key>ThrottleInterval</key>

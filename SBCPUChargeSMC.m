@@ -437,10 +437,9 @@ bool smc_get_power_blocked(void) {
 IOReturn smc_reset_all(void) {
     IOReturn r1 = kIOReturnSuccess, r2 = kIOReturnSuccess;
     uint8_t zero = 0;
-    if (smc_external_connected()) {
-        r1 = smc_write_key('CH0C', &zero, 1);
-        r2 = smc_write_key('CH0I', &zero, 1);
-    }
+    // CH0I=1 时 CHCE 可能报告未连接；恢复不能依赖外部电源检测。
+    r1 = smc_write_key('CH0C', &zero, 1);
+    r2 = smc_write_key('CH0I', &zero, 1);
     gChargeCache = 0;
     gPowerCache = 0;
     return (r1 == kIOReturnSuccess && r2 == kIOReturnSuccess) ? kIOReturnSuccess : kIOReturnError;

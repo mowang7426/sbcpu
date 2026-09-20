@@ -335,9 +335,15 @@ int main(int argc, char *argv[]) {
           (int)getuid(), (int)geteuid(), SB_DAEMON_VERSION, argc > 0 ? argv[0] : "(null)");
 
     @autoreleasepool {
-        if (!acquire_singleton()) return 0; // 已有实例：成功退出，KeepAlive 不重启
+        if (!acquire_singleton()) {
+            // 另一个实例仍持锁时，报告失败；KeepAlive 会继续观察，
+            // 避免异常残留导致 daemon 永久消失。
+            return 1;
+        }
         sb_log([NSString stringWithFormat:@"===== daemon starting uid=%d euid=%d ver=%d argv=%s =====",
                 (int)getuid(), (int)geteuid(), SB_DAEMON_VERSION, argc > 0 ? argv[0] : "?"]);
+        // 已取得单例锁，旧 socket 只能是异常残留；清理后再创建服务。
+        unlink(SB_SOCKET_PATH);
 
         // 引擎初始化：打开 SMC + 读配置 + 启动即决策（SMC 失败也继续，保持 socket 存活）
         sb_engine_init();

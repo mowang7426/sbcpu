@@ -307,8 +307,16 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
         }
     }
 
-    // 优先级 1：安全状态
-    if (!charging || !smc_external_connected()) {
+    // 优先级 1：安全状态。
+    // CH0I/CH0C 生效后，IOPMPowerSource 可能暂时报告 ExternalConnected=false。
+    // 只要存在我们自己的 inhibit 或待处理状态，不能提前 return，否则恢复/重应用会卡死。
+    bool actualChargeBlock = smc_get_charge_blocked();
+    bool actualPowerBlock = smc_get_power_blocked();
+    bool controlActive = actualChargeBlock || actualPowerBlock ||
+        gManualChargeBlock || gManualPowerBlock ||
+        gCfg.manualChargeBlock || gCfg.manualPowerBlock ||
+        gLimitBlocked || gThermalBlocked;
+    if ((!charging || !smc_external_connected()) && !controlActive) {
         if (gState != SBCPUChargeStateNoPower) {
             gState = SBCPUChargeStateNoPower;
             engine_log(@"no external power; idle (pct=%d)", pct);

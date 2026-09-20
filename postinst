@@ -47,7 +47,14 @@ done
 [ -z "$LC" ] && command -v launchctl >/dev/null 2>&1 && LC="launchctl"
 ilog "launchctl=[$LC] plist=[$PLIST] daemon=[$DAEMON]"
 
-# 5) 先彻底卸载旧 job（不写 -w，避免被持久 disable），再加载
+# 5) 将 plist 中的默认路径改为本机实际 JBROOT。
+# 注意：此处仅修改 staging/安装副本，不影响源码仓库。
+# roothide 不一定提供 /var/jb 兼容链接，路径必须与探测结果一致。
+if [ -n "$JB" ] && [ "$JB" != "/var/jb" ] && [ -f "$PLIST" ]; then
+    sed -i "s#/var/jb/usr/libexec/$DAEMON_NAME#$JB/usr/libexec/$DAEMON_NAME#g" "$PLIST"
+fi
+
+# 6) 先彻底卸载旧 job（不写 -w，避免被持久 disable），再加载
 if [ -n "$LC" ] && [ -f "$PLIST" ]; then
     "$LC" bootout system "$PLIST" >>"$INSTLOG" 2>&1
     "$LC" unload      "$PLIST" >>"$INSTLOG" 2>&1

@@ -1229,7 +1229,7 @@ enum {
 
 #define SB_SOCKET_PATH "/var/mobile/Library/Preferences/sbcpu_charge.sock"
 #define SB_MAGIC 0x53424350
-#define SB_DAEMON_VERSION 3
+#define SB_DAEMON_VERSION 4
 
 // daemon 返回的 result 语义（与 SBCPUChargeProtocol.h SB_RESULT_* 对齐）
 enum {
@@ -1378,10 +1378,12 @@ static IOReturn sbSMCInit(void) {
     if (gSMCChecked && gSMCAvailable) return kIOReturnSuccess;
     int fd = sbSMCConnect();
     if (fd < 0) {
-        // daemon 未运行：尝试拉起一次，等待后重试
+        // daemon 未运行：加载后等待 socket，避免固定 600ms 导致启动慢时误报。
         sbSMCLoadDaemon();
-        usleep(600 * 1000);
-        fd = sbSMCConnect();
+        for (int attempt = 0; attempt < 12 && fd < 0; ++attempt) {
+            usleep(200 * 1000);
+            fd = sbSMCConnect();
+        }
     }
     if (fd < 0) {
         gSMCChecked = YES;
