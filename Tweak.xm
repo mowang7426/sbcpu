@@ -307,8 +307,6 @@ static CGFloat floatingCornerRadius = 20.0f; // 液态玻璃圆润大圆角（�
 static BOOL settingsShowing = NO;
 static BOOL detailShowing = NO;
 static BOOL previousChargingState = NO;
-static CGFloat gSettingsCloseTx = 0.0f; // 方案C收起动画偏移（与展开对称）
-static CGFloat gSettingsCloseTy = 0.0f;
 
 static BOOL autoCollapseEnable = YES;
 static NSInteger autoCollapseDelay = 4;
