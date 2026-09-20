@@ -23,7 +23,7 @@ extern "C" {
 #define SB_PREF_FILE            "/var/mobile/Library/Preferences/com.yourname.sbcpufloating.plist"
 
 #define SB_MAGIC                0x53424350 // 'SBCP'
-#define SB_DAEMON_VERSION       3          // V4.23：修复 roothide 部署 + 诊断上报
+#define SB_DAEMON_VERSION       4          // V4.41：daemon 自愈、SMC 恢复与协议校验
 
 // ---------- 命令（V1 扩展） ----------
 enum {
