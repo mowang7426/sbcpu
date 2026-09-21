@@ -2012,15 +2012,120 @@ static double getTotalCPUUsage(void) {
     return cpuUsage;
 }
 
+// Hello CPU 使用的真实频率来源：libIOReport CPU performance-state residency。
+typedef CFTypeRef SBIOReportSubscription;
+typedef CFTypeRef (*SBIOReportCopyChannelsFn)(CFStringRef, CFStringRef, uint64_t, uint64_t);
+typedef SBIOReportSubscription (*SBIOReportCreateSubscriptionFn)(CFAllocatorRef, CFTypeRef, void (^)(CFTypeRef, CFTypeRef), int *, uint64_t);
+typedef CFTypeRef (*SBIOReportCreateSamplesFn)(SBIOReportSubscription, CFErrorRef *);
+typedef CFTypeRef (*SBIOReportCreateSamplesDeltaFn)(CFTypeRef, CFTypeRef, CFErrorRef *);
+typedef void (*SBIOReportIterateFn)(CFTypeRef, void (^)(CFTypeRef));
+typedef CFStringRef (*SBIOReportChannelNameFn)(CFTypeRef);
+typedef CFStringRef (*SBIOReportStateNameFn)(CFTypeRef, int);
+typedef uint64_t (*SBIOReportStateResidencyFn)(CFTypeRef, int);
+
+static struct {
+    void *handle;
+    SBIOReportCopyChannelsFn copyChannels;
+    SBIOReportCreateSubscriptionFn createSubscription;
+    SBIOReportCreateSamplesFn createSamples;
+    SBIOReportCreateSamplesDeltaFn createDelta;
+    SBIOReportIterateFn iterate;
+    SBIOReportChannelNameFn channelName;
+    SBIOReportStateNameFn stateName;
+    SBIOReportStateResidencyFn stateResidency;
+    SBIOReportSubscription subscription;
+    CFTypeRef previousSample;
+    BOOL ready;
+} gIOReport = {0};
+
+static double frequencyMHzFromStateName(CFStringRef name) {
+    if (!name) return 0.0;
+    NSString *s = (__bridge NSString *)name;
+    NSScanner *scanner = [NSScanner scannerWithString:s];
+    double best = 0.0;
+    while (!scanner.isAtEnd) {
+        double value = 0.0;
+        if ([scanner scanDouble:&value]) {
+            if (value >= 300.0 && value <= 6000.0) best = MAX(best, value);
+        } else {
+            scanner.scanLocation = MIN(scanner.scanLocation + 1, s.length);
+        }
+    }
+    return best;
+}
+
+static void initIOReportFrequency(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        gIOReport.handle = dlopen("/usr/lib/libIOReport.dylib", RTLD_LAZY);
+        if (!gIOReport.handle) return;
+        gIOReport.copyChannels = (SBIOReportCopyChannelsFn)dlsym(gIOReport.handle, "IOReportCopyChannelsInGroup");
+        gIOReport.createSubscription = (SBIOReportCreateSubscriptionFn)dlsym(gIOReport.handle, "IOReportCreateSubscription");
+        gIOReport.createSamples = (SBIOReportCreateSamplesFn)dlsym(gIOReport.handle, "IOReportCreateSamples");
+        gIOReport.createDelta = (SBIOReportCreateSamplesDeltaFn)dlsym(gIOReport.handle, "IOReportCreateSamplesDelta");
+        gIOReport.iterate = (SBIOReportIterateFn)dlsym(gIOReport.handle, "IOReportIterate");
+        gIOReport.channelName = (SBIOReportChannelNameFn)dlsym(gIOReport.handle, "IOReportChannelGetChannelName");
+        gIOReport.stateName = (SBIOReportStateNameFn)dlsym(gIOReport.handle, "IOReportStateGetNameForIndex");
+        gIOReport.stateResidency = (SBIOReportStateResidencyFn)dlsym(gIOReport.handle, "IOReportStateGetResidency");
+        gIOReport.ready = gIOReport.copyChannels && gIOReport.createSubscription && gIOReport.createSamples &&
+                          gIOReport.createDelta && gIOReport.iterate && gIOReport.channelName && gIOReport.stateName && gIOReport.stateResidency;
+    });
+}
+
+static double readFrequencyFromIOReport(void) {
+    initIOReportFrequency();
+    if (!gIOReport.ready) return 0.0;
+    if (!gIOReport.subscription) {
+        const CFStringRef groups[] = { CFSTR("CPU Stats"), CFSTR("CPU"), CFSTR("CPU Core"), NULL };
+        for (int i = 0; groups[i] && !gIOReport.subscription; i++) {
+            CFTypeRef channels = gIOReport.copyChannels(groups[i], NULL, 0, 0);
+            if (!channels) continue;
+            int error = 0;
+            gIOReport.subscription = gIOReport.createSubscription(kCFAllocatorDefault, channels, nil, &error, 0);
+            CFRelease(channels);
+        }
+        if (!gIOReport.subscription) return 0.0;
+    }
+
+    CFErrorRef error = NULL;
+    CFTypeRef sample = gIOReport.createSamples(gIOReport.subscription, &error);
+    if (error) CFRelease(error);
+    if (!sample) return 0.0;
+    if (!gIOReport.previousSample) {
+        gIOReport.previousSample = sample;
+        return 0.0;
+    }
+    CFTypeRef delta = gIOReport.createDelta(gIOReport.previousSample, sample, &error);
+    CFRelease(gIOReport.previousSample);
+    gIOReport.previousSample = sample;
+    if (error) CFRelease(error);
+    if (!delta) return 0.0;
+
+    __block double best = 0.0;
+    gIOReport.iterate(delta, ^(CFTypeRef channel) {
+        if (!channel) return;
+        double bestResidency = 0.0;
+        double bestMHz = 0.0;
+        for (int index = 0; index < 64; index++) {
+            CFStringRef state = gIOReport.stateName(channel, index);
+            if (!state) break;
+            uint64_t residency = gIOReport.stateResidency(channel, index);
+            double mhz = frequencyMHzFromStateName(state);
+            if (mhz > 0.0 && (double)residency > bestResidency) {
+                bestResidency = (double)residency;
+                bestMHz = mhz;
+            }
+        }
+        if (bestMHz > best) best = bestMHz;
+    });
+    CFRelease(delta);
+    return best;
+}
+
 static double readFrequencyFromIORegistry(void) {
-    // 当前频率优先从 Apple 的电源/性能服务读取，单位兼容 Hz、kHz、MHz。
+    // 仅作为 IOReport 不可用时的后备路径。
     const char *services[] = {"AppleARMPlatform", "ApplePMGR", "AppleARMIODevice", NULL};
-    const CFStringRef keys[] = {
-        CFSTR("current-frequency"), CFSTR("CurrentFrequency"),
-        CFSTR("cpu-frequency"), CFSTR("CPUFrequency"),
-        CFSTR("actual-frequency"), CFSTR("ActualFrequency"),
-        CFSTR("clock-frequency"), CFSTR("ClockFrequency"), NULL
-    };
+    const CFStringRef keys[] = {CFSTR("current-frequency"), CFSTR("CurrentFrequency"), CFSTR("actual-frequency"), CFSTR("ActualFrequency"), NULL};
     for (int si = 0; services[si]; si++) {
         io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching(services[si]));
         if (!service) continue;
@@ -2029,8 +2134,7 @@ static double readFrequencyFromIORegistry(void) {
             if (!value) continue;
             double raw = 0.0;
             if (CFGetTypeID(value) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)value, kCFNumberDoubleType, &raw);
-            CFRelease(value);
-            IOObjectRelease(service);
+            CFRelease(value); IOObjectRelease(service);
             if (raw > 100000000.0) return raw / 1000000.0;
             if (raw > 100000.0) return raw / 1000.0;
             if (raw > 100.0) return raw;
@@ -2053,6 +2157,8 @@ static double getRealCPUFrequency(double currentCpuUsage) {
         lastFrequencyMHz = (double)currentHz / 1000000.0;
     }
 
+    double reportFrequency = readFrequencyFromIOReport();
+    if (reportFrequency > 100.0) lastFrequencyMHz = reportFrequency;
     if (lastFrequencyMHz <= 0.0) {
         double frequency = readFrequencyFromIORegistry();
         if (frequency > 100.0) lastFrequencyMHz = frequency;
