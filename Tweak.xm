@@ -2043,8 +2043,21 @@ static double readFrequencyFromIORegistry(void) {
 static double getRealCPUFrequency(double currentCpuUsage) {
     (void)currentCpuUsage;
     static double lastFrequencyMHz = 0.0;
-    double frequency = readFrequencyFromIORegistry();
-    if (frequency > 100.0) lastFrequencyMHz = frequency;
+
+    // 部分越狱环境把每次采样的当前 CPU 频率暴露为 hw.cpufrequency。
+    // 注意这里只读取 hw.cpufrequency，不读取 *_max，避免把标称上限当实时值。
+    uint64_t currentHz = 0;
+    size_t currentSize = sizeof(currentHz);
+    if (sysctlbyname("hw.cpufrequency", &currentHz, &currentSize, NULL, 0) == 0 &&
+        currentHz >= 100000000ULL && currentHz <= 10000000000ULL) {
+        lastFrequencyMHz = (double)currentHz / 1000000.0;
+    }
+
+    if (lastFrequencyMHz <= 0.0) {
+        double frequency = readFrequencyFromIORegistry();
+        if (frequency > 100.0) lastFrequencyMHz = frequency;
+    }
+
     // 没有公开当前频率节点时保留上次真实值，不再用占用率伪造或随机抖动。
     return lastFrequencyMHz;
 }
