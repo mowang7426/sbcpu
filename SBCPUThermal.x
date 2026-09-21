@@ -162,8 +162,9 @@ return NO;
 }
 
 typedef enum {
-SBCPUThermalPowerModeFull = 0,
-SBCPUThermalPowerModeLow  = 1
+SBCPUThermalPowerModeFull = 0,       // 稳定高性能
+SBCPUThermalPowerModeLow  = 1,        // 原有低功耗
+SBCPUThermalPowerModeExtreme = 2     // 极限满频
 } SBCPUThermalPowerMode;
 
 static SBCPUThermalPowerMode g_powerMode = SBCPUThermalPowerModeFull;
@@ -173,6 +174,8 @@ static SBCPUThermalPowerMode g_userSelectedPowerMode = SBCPUThermalPowerModeFull
 // setCPULevel:/setCPUPowerCeiling:/setCPUPowerFloor:/setCPUPowerZoneTarget: 使用 0~100 百分比。
 static const int kUnrestrictedPowerLimitMW = 65000;
 static const int kUnrestrictedPerformancePercent = 100;
+// 稳定高性能模式：限制性能下限，避免普通负载时频率大幅回落。
+static const int kStablePerformanceFloorPercent = 80;
 static const int kLowPowerCPULevel = 2;
 // 手动低功耗明确预算：避免 A15 等机型仅写 Level=2 后仍维持最高频率。
 static const int kLowPowerPowerLimitMW = 2500;
@@ -328,7 +331,7 @@ return res;
 
 static BOOL isFullPowerMode(void) {
 os_unfair_lock_lock(&g_modeLock);
-BOOL res = (g_powerMode == SBCPUThermalPowerModeFull);
+BOOL res = (g_powerMode == SBCPUThermalPowerModeFull || g_powerMode == SBCPUThermalPowerModeExtreme);
 os_unfair_lock_unlock(&g_modeLock);
 return res;
 }
@@ -345,6 +348,17 @@ return shouldApplyFullCPUProtection();
 
 static BOOL shouldRestoreNativePerformance(void) {
 return shouldApplyFullCPUProtection();
+}
+
+static BOOL isExtremeFullPowerMode(void) {
+os_unfair_lock_lock(&g_modeLock);
+BOOL result = (g_powerMode == SBCPUThermalPowerModeExtreme);
+os_unfair_lock_unlock(&g_modeLock);
+return result;
+}
+
+static int fullPowerFloorPercent(void) {
+return isExtremeFullPowerMode() ? kUnrestrictedPerformancePercent : kStablePerformanceFloorPercent;
 }
 
 static BOOL shouldApplyLowPowerLimit(void) {
@@ -595,7 +609,11 @@ static void evaluateThermalPressureState(void) {
 
     SBCPUThermalPressureLevel pressure = normalizedThermalPressureLevel(state);
     g_currentPressureLevel = pressure;
-    BOOL severe = pressure >= SBCPUThermalPressureLevelHeavy && pressure <= SBCPUThermalPressureLevelSleeping;
+    // 稳定高性能不因普通 Heavy 压力瞬间切低功耗；极限满频只在
+// Trapping/Sleeping 级别允许安全保护接管，避免系统强保护造成更剧烈的掉频。
+BOOL severe = isExtremeFullPowerMode()
+    ? (pressure >= SBCPUThermalPressureLevelTrapping && pressure <= SBCPUThermalPressureLevelSleeping)
+    : (pressure >= SBCPUThermalPressureLevelHeavy && pressure <= SBCPUThermalPressureLevelSleeping);
     publishThermalDiagnosticState(pressure, g_pressureSafetyOverride);
     if (severe) {
         g_pressureNominalSince = 0;
@@ -894,7 +912,7 @@ sendTwoIntegerArguments(controller, @selector(setCPUPowerCeiling:fromDecisionSou
 }
 if ([controller respondsToSelector:@selector(setCPUPowerFloor:fromDecisionSource:)]) {
 // 不固定满频下限；保留空闲 DVFS，负载出现时 Ceiling 100 仍可立即升频。
-sendTwoIntegerArguments(controller, @selector(setCPUPowerFloor:fromDecisionSource:), 0, (uintptr_t)source);
+sendTwoIntegerArguments(controller, @selector(setCPUPowerFloor:fromDecisionSource:), fullPowerFloorPercent(), (uintptr_t)source);
 }
 }
 for (int contributor = 0; contributor < kCPUDVD1ContributorCount; contributor++) {
@@ -1411,7 +1429,9 @@ g_forceFastChargeEnabled = [d[S("forceFastChargeEnable")] boolValue];
 os_unfair_lock_unlock(&g_stateLock);
 
 NSString *mode = [d[S("powerMode")] isKindOfClass:[NSString class]] ? d[S("powerMode")] : S("fullPower");
-SBCPUThermalPowerMode selected = [mode isEqualToString:S("lowPower")] ? SBCPUThermalPowerModeLow : SBCPUThermalPowerModeFull;
+SBCPUThermalPowerMode selected = [mode isEqualToString:S("lowPower")]
+    ? SBCPUThermalPowerModeLow
+    : ([mode isEqualToString:S("extremeFull")] ? SBCPUThermalPowerModeExtreme : SBCPUThermalPowerModeFull);
 BOOL blanked = SBCPUThermalScreenIsBlanked();
 os_unfair_lock_lock(&g_modeLock);
 g_userSelectedPowerMode = selected;

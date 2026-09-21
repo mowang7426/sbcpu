@@ -2012,20 +2012,41 @@ static double getTotalCPUUsage(void) {
     return cpuUsage;
 }
 
+static double readFrequencyFromIORegistry(void) {
+    // 当前频率优先从 Apple 的电源/性能服务读取，单位兼容 Hz、kHz、MHz。
+    const char *services[] = {"AppleARMPlatform", "ApplePMGR", "AppleARMIODevice", NULL};
+    const CFStringRef keys[] = {
+        CFSTR("current-frequency"), CFSTR("CurrentFrequency"),
+        CFSTR("cpu-frequency"), CFSTR("CPUFrequency"),
+        CFSTR("actual-frequency"), CFSTR("ActualFrequency"),
+        CFSTR("clock-frequency"), CFSTR("ClockFrequency"), NULL
+    };
+    for (int si = 0; services[si]; si++) {
+        io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching(services[si]));
+        if (!service) continue;
+        for (int ki = 0; keys[ki]; ki++) {
+            CFTypeRef value = IORegistryEntrySearchCFProperty(service, kIOServicePlane, keys[ki], kCFAllocatorDefault, 0);
+            if (!value) continue;
+            double raw = 0.0;
+            if (CFGetTypeID(value) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)value, kCFNumberDoubleType, &raw);
+            CFRelease(value);
+            IOObjectRelease(service);
+            if (raw > 100000000.0) return raw / 1000000.0;
+            if (raw > 100000.0) return raw / 1000.0;
+            if (raw > 100.0) return raw;
+        }
+        IOObjectRelease(service);
+    }
+    return 0.0;
+}
+
 static double getRealCPUFrequency(double currentCpuUsage) {
-    DeviceSpec spec = getDeviceSpec();
-    double maxFreq = spec.maxFreqMHz > 0 ? spec.maxFreqMHz : 3468.0;
-
-    double minFreq = 600.0; 
-    double loadFactor = sqrt(currentCpuUsage / 100.0);
-    double dynamicFreq = minFreq + (maxFreq - minFreq) * loadFactor;
-
-    int randomFluctuation = (arc4random() % 24) - 12;
-    dynamicFreq += randomFluctuation;
-
-    if (dynamicFreq > maxFreq) dynamicFreq = maxFreq;
-    if (dynamicFreq < minFreq) dynamicFreq = minFreq;
-    return dynamicFreq;
+    (void)currentCpuUsage;
+    static double lastFrequencyMHz = 0.0;
+    double frequency = readFrequencyFromIORegistry();
+    if (frequency > 100.0) lastFrequencyMHz = frequency;
+    // 没有公开当前频率节点时保留上次真实值，不再用占用率伪造或随机抖动。
+    return lastFrequencyMHz;
 }
 
 static UIWindowScene *getWindowScene(void) {
@@ -7184,7 +7205,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
         } else if (indexPath.row == 1) {
             cell.textLabel.text = @"运行方式";
             NSString *mode = sbcputhermalGetStringPref(@"powerMode", @"fullPower");
-            cell.detailTextLabel.text = [mode isEqualToString:@"lowPower"] ? @"省电保护" : @"正常性能";
+            cell.detailTextLabel.text = [mode isEqualToString:@"lowPower"] ? @"省电保护" : ([mode isEqualToString:@"extremeFull"] ? @"极限满频" : @"稳定高性能");
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else if (indexPath.row == 2) {
             cell.textLabel.text = @"过热自动保护";
@@ -7657,8 +7678,8 @@ static NSString *stripLeadingEmoji(NSString *s) {
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"温控模式"
                                                                              message:@"选择 CPUthermal 1.6.4-53 温控核心的运行模式"
                                                                       preferredStyle:UIAlertControllerStyleActionSheet];
-            NSArray *titles = @[@"低功耗", @"解除温控"];
-            NSArray *values = @[@"lowPower", @"fullPower"];
+            NSArray *titles = @[@"低功耗", @"稳定高性能", @"极限满频"];
+            NSArray *values = @[@"lowPower", @"fullPower", @"extremeFull"];
             for (NSInteger i = 0; i < titles.count; i++) {
                 [alert addAction:[UIAlertAction actionWithTitle:titles[i] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
                     sbcputhermalSetStringPref(@"powerMode", values[i]);
