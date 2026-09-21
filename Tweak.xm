@@ -2076,13 +2076,23 @@ static double readFrequencyFromIOReport(void) {
     initIOReportFrequency();
     if (!gIOReport.ready) return 0.0;
     if (!gIOReport.subscription) {
-        const CFStringRef groups[] = { CFSTR("CPU Stats"), CFSTR("CPU"), CFSTR("CPU Core"), NULL };
-        for (int i = 0; groups[i] && !gIOReport.subscription; i++) {
-            CFTypeRef channels = gIOReport.copyChannels(groups[i], NULL, 0, 0);
-            if (!channels) continue;
-            int error = 0;
-            gIOReport.subscription = gIOReport.createSubscription(kCFAllocatorDefault, channels, nil, &error, 0);
-            CFRelease(channels);
+        // Hello CPU 订阅的是 CPU Stats 下的核心性能状态子频道。
+        // 不传 subgroup 会得到非频率频道，后续状态遍历只能返回 0。
+        const CFStringRef groups[] = { CFSTR("CPU Stats"), CFSTR("CPU"), NULL };
+        const CFStringRef subgroups[] = {
+            CFSTR("CPU Core Performance States"),
+            CFSTR("CPU Performance States"),
+            CFSTR("CPU Core Power States"),
+            NULL
+        };
+        for (int gi = 0; groups[gi] && !gIOReport.subscription; gi++) {
+            for (int si = 0; subgroups[si] && !gIOReport.subscription; si++) {
+                CFTypeRef channels = gIOReport.copyChannels(groups[gi], subgroups[si], 0, 0);
+                if (!channels) continue;
+                int error = 0;
+                gIOReport.subscription = gIOReport.createSubscription(kCFAllocatorDefault, channels, nil, &error, 0);
+                CFRelease(channels);
+            }
         }
         if (!gIOReport.subscription) return 0.0;
     }
