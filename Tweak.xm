@@ -2132,24 +2132,63 @@ static __attribute__((unused)) double readFrequencyFromIOReport(void) {
     return best;
 }
 
-static double readFrequencyFromIORegistry(void) {
-    // 仅作为 IOReport 不可用时的后备路径。
-    const char *services[] = {"AppleARMPlatform", "ApplePMGR", "AppleARMIODevice", NULL};
-    const CFStringRef keys[] = {CFSTR("current-frequency"), CFSTR("CurrentFrequency"), CFSTR("actual-frequency"), CFSTR("ActualFrequency"), NULL};
-    for (int si = 0; services[si]; si++) {
-        io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching(services[si]));
-        if (!service) continue;
-        for (int ki = 0; keys[ki]; ki++) {
-            CFTypeRef value = IORegistryEntrySearchCFProperty(service, kIOServicePlane, keys[ki], kCFAllocatorDefault, 0);
-            if (!value) continue;
-            double raw = 0.0;
-            if (CFGetTypeID(value) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)value, kCFNumberDoubleType, &raw);
-            CFRelease(value); IOObjectRelease(service);
-            if (raw > 100000000.0) return raw / 1000000.0;
-            if (raw > 100000.0) return raw / 1000.0;
-            if (raw > 100.0) return raw;
+static double frequencyMHzFromCFValue(CFTypeRef value) {
+    if (!value) return 0.0;
+    double raw = 0.0;
+    if (CFGetTypeID(value) == CFNumberGetTypeID()) {
+        if (!CFNumberGetValue((CFNumberRef)value, kCFNumberDoubleType, &raw)) return 0.0;
+    } else if (CFGetTypeID(value) == CFDataGetTypeID()) {
+        CFIndex length = CFDataGetLength((CFDataRef)value);
+        if (length == 4) {
+            uint32_t v = 0; CFDataGetBytes((CFDataRef)value, CFRangeMake(0, 4), (UInt8 *)&v); raw = v;
+        } else if (length == 8) {
+            uint64_t v = 0; CFDataGetBytes((CFDataRef)value, CFRangeMake(0, 8), (UInt8 *)&v); raw = (double)v;
         }
-        IOObjectRelease(service);
+    }
+    if (raw >= 100000000.0 && raw <= 10000000000.0) return raw / 1000000.0;
+    if (raw >= 100000.0 && raw <= 10000000.0) return raw / 1000.0;
+    if (raw >= 100.0 && raw <= 6000.0) return raw;
+    return 0.0;
+}
+
+static double readFrequencyFromIORegistry(void) {
+    // 全量枚举 IOService，并沿父链搜索当前频率属性；不读取 *_max 或设备标称值。
+    const char *services[] = {"AppleARMPlatform", "ApplePMGR", "AppleARMIODevice", "AppleCLPC", "IOCPU", NULL};
+    const CFStringRef keys[] = {
+        CFSTR("current-frequency"), CFSTR("CurrentFrequency"),
+        CFSTR("actual-frequency"), CFSTR("ActualFrequency"),
+        CFSTR("cpu-frequency"), CFSTR("CPUFrequency"),
+        CFSTR("frequency"), CFSTR("Frequency"),
+        CFSTR("clock-frequency"), CFSTR("ClockFrequency"), NULL
+    };
+    for (int si = 0; services[si]; si++) {
+        io_iterator_t iterator = IO_OBJECT_NULL;
+        CFMutableDictionaryRef matching = IOServiceMatching(services[si]);
+        if (!matching || IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) != KERN_SUCCESS) continue;
+        io_service_t service = IOIteratorNext(iterator);
+        while (service) {
+            io_registry_entry_t node = service;
+            for (int depth = 0; node && depth < 10; depth++) {
+                for (int ki = 0; keys[ki]; ki++) {
+                    CFTypeRef value = IORegistryEntryCreateCFProperty(node, keys[ki], kCFAllocatorDefault, 0);
+                    double mhz = frequencyMHzFromCFValue(value);
+                    if (value) CFRelease(value);
+                    if (mhz > 100.0) {
+                        if (node != service) IOObjectRelease(node);
+                        IOObjectRelease(service); IOObjectRelease(iterator);
+                        return mhz;
+                    }
+                }
+                io_registry_entry_t parent = IO_OBJECT_NULL;
+                if (IORegistryEntryGetParentEntry(node, kIOServicePlane, &parent) != KERN_SUCCESS) parent = IO_OBJECT_NULL;
+                if (node != service) IOObjectRelease(node);
+                node = parent;
+            }
+            if (node && node != service) IOObjectRelease(node);
+            IOObjectRelease(service);
+            service = IOIteratorNext(iterator);
+        }
+        IOObjectRelease(iterator);
     }
     return 0.0;
 }
@@ -2157,12 +2196,8 @@ static double readFrequencyFromIORegistry(void) {
 static double getRealCPUFrequency(double currentCpuUsage) {
     (void)currentCpuUsage;
     static double lastFrequencyMHz = 0.0;
-
-    // 只接受当前频率节点；hw.cpufrequency 和 *_max 是标称/上限值，不能用于这里。
     double frequency = readFrequencyFromIORegistry();
     if (frequency > 100.0) lastFrequencyMHz = frequency;
-
-    // 没有真实当前频率时返回 0，由 UI 显示为未知，不伪造标称频率。
     return lastFrequencyMHz;
 }
 
