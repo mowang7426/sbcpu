@@ -2072,7 +2072,7 @@ static void initIOReportFrequency(void) {
     });
 }
 
-static double readFrequencyFromIOReport(void) {
+static __attribute__((unused)) double readFrequencyFromIOReport(void) {
     initIOReportFrequency();
     if (!gIOReport.ready) return 0.0;
     if (!gIOReport.subscription) {
