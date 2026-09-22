@@ -2158,42 +2158,11 @@ static double getRealCPUFrequency(double currentCpuUsage) {
     (void)currentCpuUsage;
     static double lastFrequencyMHz = 0.0;
 
-    // 部分越狱环境把每次采样的当前 CPU 频率暴露为 hw.cpufrequency。
-    // 注意这里只读取 hw.cpufrequency，不读取 *_max，避免把标称上限当实时值。
-    uint64_t currentHz = 0;
-    size_t currentSize = sizeof(currentHz);
-    if (sysctlbyname("hw.cpufrequency", &currentHz, &currentSize, NULL, 0) == 0 &&
-        currentHz >= 100000000ULL && currentHz <= 10000000000ULL) {
-        lastFrequencyMHz = (double)currentHz / 1000000.0;
-    }
+    // 只接受当前频率节点；hw.cpufrequency 和 *_max 是标称/上限值，不能用于这里。
+    double frequency = readFrequencyFromIORegistry();
+    if (frequency > 100.0) lastFrequencyMHz = frequency;
 
-    // 暂停未经完整还原 ABI 的 IOReport 调用，避免影响 SpringBoard/CADisplayLink。
-    // 当前仍显示 0，等待单独完成 Hello CPU 的真实逆向后再接回。
-    if (lastFrequencyMHz <= 0.0) {
-        double frequency = readFrequencyFromIORegistry();
-        if (frequency > 100.0) lastFrequencyMHz = frequency;
-    }
-
-    // 设备未暴露实时频率时，使用系统/设备标称频率兜底。
-    // 这比显示 0 有意义，但它代表标称频率，不代表瞬时 DVFS 频率。
-    if (lastFrequencyMHz <= 0.0) {
-        uint64_t nominalHz = 0;
-        size_t nominalSize = sizeof(nominalHz);
-        const char *nominalKeys[] = {"hw.cpufrequency_max", "hw.cpufrequency", NULL};
-        for (int i = 0; nominalKeys[i] && nominalHz == 0; i++) {
-            nominalSize = sizeof(nominalHz);
-            if (sysctlbyname(nominalKeys[i], &nominalHz, &nominalSize, NULL, 0) != 0) nominalHz = 0;
-        }
-        if (nominalHz >= 100000000ULL && nominalHz <= 10000000000ULL) {
-            lastFrequencyMHz = (double)nominalHz / 1000000.0;
-        }
-    }
-    if (lastFrequencyMHz <= 0.0) {
-        DeviceSpec spec = getDeviceSpec();
-        if (spec.maxFreqMHz > 100.0) lastFrequencyMHz = spec.maxFreqMHz;
-    }
-
-    // 没有公开当前频率节点时保留上次真实值；不再显示 0，也不按占用率伪造瞬时频率。
+    // 没有真实当前频率时返回 0，由 UI 显示为未知，不伪造标称频率。
     return lastFrequencyMHz;
 }
 
@@ -4637,7 +4606,9 @@ return self;
     _cpuValueLabel.text = [NSString stringWithFormat:@"%.1f%%", cpu];
     _cpuValueLabel.textColor = (cpu >= 80.0) ? [UIColor systemRedColor] : [UIColor colorWithRed:0.18f green:0.75f blue:0.35f alpha:1.0f];
 
-    _cpuFreqLabel.text = [NSString stringWithFormat:@"%.0f MHz", cpuFreq];
+    _cpuFreqLabel.text = (cpuFreq > 100.0)
+        ? [NSString stringWithFormat:@"%.0f MHz", cpuFreq]
+        : @"-- MHz";
     _fpsValueLabel.text = [NSString stringWithFormat:@"%.0f", fps];
     // V4.41：顶部电量只显示百分比；充电会话增量放到下方智能停充状态行。
     _batteryValueLabel.adjustsFontSizeToFitWidth = NO;
