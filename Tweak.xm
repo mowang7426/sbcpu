@@ -2167,8 +2167,8 @@ static double getRealCPUFrequency(double currentCpuUsage) {
         lastFrequencyMHz = (double)currentHz / 1000000.0;
     }
 
-    double reportFrequency = readFrequencyFromIOReport();
-    if (reportFrequency > 100.0) lastFrequencyMHz = reportFrequency;
+    // 暂停未经完整还原 ABI 的 IOReport 调用，避免影响 SpringBoard/CADisplayLink。
+    // 当前仍显示 0，等待单独完成 Hello CPU 的真实逆向后再接回。
     if (lastFrequencyMHz <= 0.0) {
         double frequency = readFrequencyFromIORegistry();
         if (frequency > 100.0) lastFrequencyMHz = frequency;
