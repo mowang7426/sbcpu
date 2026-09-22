@@ -2171,7 +2171,7 @@ static double frequencyMHzFromCFValue(CFTypeRef value) {
     return 0.0;
 }
 
-static double readFrequencyFromIORegistry(void) {
+static __attribute__((unused)) double readFrequencyFromIORegistry(void) {
     // 全量枚举 IOService，并沿父链搜索当前频率属性；不读取 *_max 或设备标称值。
     const char *services[] = {"AppleARMPlatform", "ApplePMGR", "AppleARMIODevice", "AppleCLPC", "IOCPU", NULL};
     const CFStringRef keys[] = {
