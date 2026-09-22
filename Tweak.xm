@@ -2174,7 +2174,26 @@ static double getRealCPUFrequency(double currentCpuUsage) {
         if (frequency > 100.0) lastFrequencyMHz = frequency;
     }
 
-    // 没有公开当前频率节点时保留上次真实值，不再用占用率伪造或随机抖动。
+    // 设备未暴露实时频率时，使用系统/设备标称频率兜底。
+    // 这比显示 0 有意义，但它代表标称频率，不代表瞬时 DVFS 频率。
+    if (lastFrequencyMHz <= 0.0) {
+        uint64_t nominalHz = 0;
+        size_t nominalSize = sizeof(nominalHz);
+        const char *nominalKeys[] = {"hw.cpufrequency_max", "hw.cpufrequency", NULL};
+        for (int i = 0; nominalKeys[i] && nominalHz == 0; i++) {
+            nominalSize = sizeof(nominalHz);
+            if (sysctlbyname(nominalKeys[i], &nominalHz, &nominalSize, NULL, 0) != 0) nominalHz = 0;
+        }
+        if (nominalHz >= 100000000ULL && nominalHz <= 10000000000ULL) {
+            lastFrequencyMHz = (double)nominalHz / 1000000.0;
+        }
+    }
+    if (lastFrequencyMHz <= 0.0) {
+        DeviceSpec spec = getDeviceSpec();
+        if (spec.maxFreqMHz > 100.0) lastFrequencyMHz = spec.maxFreqMHz;
+    }
+
+    // 没有公开当前频率节点时保留上次真实值；不再显示 0，也不按占用率伪造瞬时频率。
     return lastFrequencyMHz;
 }
 
