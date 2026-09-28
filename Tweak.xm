@@ -4803,11 +4803,13 @@ return self;
                 NSArray *sims = readAllSimSignals();
                 if (statusDockShowSIM1) {
                     NSDictionary *s = sims.count > 0 ? sims[0] : nil;
-                    [dockItems addObject:[NSString stringWithFormat:@"S1 %@格", s ? [s[@"bars"] stringValue] : @"--"]];
+                    NSString *dbm = [s[@"dbm"] description];
+                    [dockItems addObject:[NSString stringWithFormat:@"S1 %@ dBm", dbm.length ? dbm : @"--"]];
                 }
                 if (statusDockShowSIM2) {
                     NSDictionary *s = sims.count > 1 ? sims[1] : nil;
-                    [dockItems addObject:[NSString stringWithFormat:@"S2 %@格", s ? [s[@"bars"] stringValue] : @"--"]];
+                    NSString *dbm = [s[@"dbm"] description];
+                    [dockItems addObject:[NSString stringWithFormat:@"S2 %@ dBm", dbm.length ? dbm : @"--"]];
                 }
             }
             _miniDockInfoLabel.text = dockItems.count ? [dockItems componentsJoinedByString:@"  "] : @"状态栏胶囊";
