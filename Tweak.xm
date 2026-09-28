@@ -3035,6 +3035,17 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         ? [UIColor colorWithWhite:0.32 alpha:1.0f]
         : [UIColor colorWithWhite:0.82 alpha:1.0f];
     UIColor *monoColor = lightBg ? [UIColor blackColor] : [UIColor whiteColor];
+    // 状态栏胶囊独立采用背景采样反色，不受液态玻璃开关影响。
+    if (statusBarDockEnable && _miniDockInfoLabel) {
+        CGFloat dockLum = [self sampleBackgroundLuminance];
+        BOOL dockLightBackground = dockLum > 0.5f;
+        UIColor *dockColor = dockLightBackground ? [UIColor blackColor] : [UIColor whiteColor];
+        _miniDockInfoLabel.textColor = dockColor;
+        _miniDockInfoLabel.layer.shadowColor = (dockLightBackground ? [UIColor whiteColor] : [UIColor blackColor]).CGColor;
+        _miniDockInfoLabel.layer.shadowOpacity = 0.45f;
+        _miniDockInfoLabel.layer.shadowRadius = 1.5f;
+        _miniDockInfoLabel.layer.shadowOffset = CGSizeZero;
+    }
 
     // 静态副标题
     _cpuTitleLabel.textColor = titleColor;
