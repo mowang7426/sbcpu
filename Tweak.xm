@@ -330,6 +330,7 @@ static BOOL keyboardAvoidEnable = YES;
 static BOOL smartDockEnable = YES;
 static NSInteger dockMode = 0;
 static BOOL rememberPositionEnable = YES;
+static BOOL statusBarDockEnable = NO; // 开启后浮窗吸附到顶部状态栏安全区域
 
 static BOOL showCpuFrequency = YES;
 static BOOL showFps = YES;                       
@@ -981,6 +982,7 @@ static void LoadPreferences(void) {
     smartDockEnable = getBoolPref(CFSTR("smartDockEnable"), YES);
     dockMode = getIntPref(CFSTR("dockMode"), 0);
     rememberPositionEnable = getBoolPref(CFSTR("rememberPositionEnable"), YES);
+    statusBarDockEnable = getBoolPref(CFSTR("statusBarDockEnable"), NO);
     
     showCpuFrequency = getBoolPref(CFSTR("showCpuFrequency"), YES);
     showFps = getBoolPref(CFSTR("showFps"), YES);
@@ -1063,6 +1065,7 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("smartDockEnable"), smartDockEnable);
     setIntPref(CFSTR("dockMode"), dockMode);
     setBoolPref(CFSTR("rememberPositionEnable"), rememberPositionEnable);
+    setBoolPref(CFSTR("statusBarDockEnable"), statusBarDockEnable);
     setBoolPref(CFSTR("showCpuFrequency"), showCpuFrequency);
     setBoolPref(CFSTR("showFps"), showFps);
     setBoolPref(CFSTR("force120HzEnable"), force120HzEnable);
@@ -2325,6 +2328,9 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
         BOOL isLeft = (targetCenter.x <= containerBounds.size.width / 2.0f);
         targetCenter.x = isLeft ? colMinX : colMaxX;
         targetCenter.y = MIN(MAX(targetCenter.y, colMinY), colMaxY);
+    } else if (statusBarDockEnable) {
+        // 状态栏吸附：浮窗整体停在顶部安全区域内，横向位置仍可拖动。
+        targetCenter.y = minY;
     } else if (smartDockEnable) {
         if (dockMode == 1) { targetCenter.x = minX; } 
         else if (dockMode == 2) { targetCenter.x = maxX; } 
@@ -2344,6 +2350,13 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
                 else if (minDist == distBottom) targetCenter.y = maxY;
             }
         }
+    }
+
+    if (statusBarDockEnable) {
+        // 无论展开还是折叠，开启后都停在顶部安全区域。
+        targetCenter.y = floatingView.isCollapsed
+            ? (floatingView.bounds.size.height * 0.5f + floatingTopSafeMargin(floatingView.superview))
+            : minY;
     }
 
     if (!floatingView.isCollapsed) {
@@ -2670,11 +2683,6 @@ if (charging && !previousChargingState) {
                 [floatingView expandFromEdgeAnimated:YES];
             }
             [floatingView triggerPlugAnimation];
-            // 超级快充：插入充电器后启动一次 Powerd 注入启动动画。
-            // 动画函数内部会检查开关、充电状态并防止重复启动。
-            if (forceFastChargeEnable) {
-                startFastChargeStartupAnimation();
-            }
         }
         previousChargingState = charging;
 
@@ -6432,7 +6440,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     // 智能温控停充嵌入双击设置页，避免用户必须跳转独立偏好页
     if (section == 9) return 8;
     if (section == 7) return 6; // 充电增强：充电增强/满血快充/屏蔽维修/充电历史/阻止充电/阻止外部供电
-    if (section == 8) return 9; // 位置与显示（含 📶 显示信号强度）
+    if (section == 8) return 10; // 位置与显示（含状态栏吸附和 SIM 信号）
     if (section == 9) return 5; // 🔋 智能停充
     if (section == 10) return 0; // 📖 功能说明已移除
     if (section == 11) return 0; // 🌡️ 温控功能说明已移除
@@ -7567,12 +7575,18 @@ static NSString *stripLeadingEmoji(NSString *s) {
             [cell.contentView addSubview:slider];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else if (indexPath.row == 8) {
-            // 📶 显示 SIM 卡信号
             cell.textLabel.text = @"显示 SIM 卡信号";
             cell.detailTextLabel.text = @"浮窗底部显示运营商、网络制式和信号强度";
             UISwitch *sw = [UISwitch new];
             sw.on = showSignalStrength;
             [sw addTarget:self action:@selector(changeShowSignalStrength:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
+        } else if (indexPath.row == 9) {
+            cell.textLabel.text = @"浮窗吸附到状态栏";
+            cell.detailTextLabel.text = @"开启后浮窗自动停在手机顶部状态栏区域";
+            UISwitch *sw = [UISwitch new];
+            sw.on = statusBarDockEnable;
+            [sw addTarget:self action:@selector(changeStatusBarDock:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         }
     }
@@ -7960,6 +7974,14 @@ static NSString *stripLeadingEmoji(NSString *s) {
 - (void)changeKeyboardAvoid:(UISwitch *)sw { keyboardAvoidEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeSmartDock:(UISwitch *)sw { smartDockEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeRememberPosition:(UISwitch *)sw { rememberPositionEnable = sw.isOn; SavePreferencesAndNotify(); }
+- (void)changeStatusBarDock:(UISwitch *)sw {
+    statusBarDockEnable = sw.isOn;
+    SavePreferencesAndNotify();
+    if (floatingView) {
+        // 开关切换后立即重新计算位置；关闭时恢复当前拖动/智能吸附规则。
+        clampAndPositionFloatingView(floatingView.center, YES);
+    }
+}
 - (void)changeForce120Hz:(UISwitch *)sw { force120HzEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeShowCpuFreq:(UISwitch *)sw { showCpuFrequency = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowFps:(UISwitch *)sw { showFps = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
@@ -9082,10 +9104,6 @@ static void detectPluginConflicts(void) {
             forceFastChargeEnable = YES;
             sw.on = YES;
             SavePreferencesAndNotify();
-            // 用户在已经插着充电器时开启超级快充，立即启动一次流程。
-            if (isChargingInternal()) {
-                startFastChargeStartupAnimation();
-            }
         }]];
         [self presentViewController:alert animated:YES completion:nil];
     } else {
