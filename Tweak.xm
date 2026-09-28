@@ -2293,6 +2293,10 @@ static CGFloat floatingTopSafeMargin(UIView *container) {
     return MAX(20.0f, safeTop + (safeTop > 0.0f ? 8.0f : 0.0f));
 }
 
+// 状态栏胶囊尺寸：接近灵动岛，独立于普通竖屏/横屏折叠尺寸。
+static inline CGFloat statusBarDockCapsuleWidth(void) { return 126.0f; }
+static inline CGFloat statusBarDockCapsuleHeight(void) { return 36.0f; }
+
 static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
     if (!floatingView || !floatingView.superview) return;
 
@@ -2312,8 +2316,8 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
     if (maxY < minY) minY = maxY = containerBounds.size.height / 2.0f;
 
     if (floatingView.isCollapsed) {
-        CGFloat targetW = 68.0f;
-        CGFloat targetH = 28.0f;
+        CGFloat targetW = statusBarDockEnable ? statusBarDockCapsuleWidth() : 68.0f;
+        CGFloat targetH = statusBarDockEnable ? statusBarDockCapsuleHeight() : 28.0f;
         CGFloat targetHalfW = targetW / 2.0f;
         CGFloat targetHalfH = targetH / 2.0f;
         
@@ -2322,9 +2326,14 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
         CGFloat colMinY = targetHalfH + floatingTopSafeMargin(floatingView.superview);
         CGFloat colMaxY = containerBounds.size.height - targetHalfH - 10.0f;
 
-        BOOL isLeft = (targetCenter.x <= containerBounds.size.width / 2.0f);
-        targetCenter.x = isLeft ? colMinX : colMaxX;
-        targetCenter.y = MIN(MAX(targetCenter.y, colMinY), colMaxY);
+        if (statusBarDockEnable) {
+            targetCenter.x = containerBounds.size.width * 0.5f;
+            targetCenter.y = colMinY;
+        } else {
+            BOOL isLeft = (targetCenter.x <= containerBounds.size.width / 2.0f);
+            targetCenter.x = isLeft ? colMinX : colMaxX;
+            targetCenter.y = MIN(MAX(targetCenter.y, colMinY), colMaxY);
+        }
     } else if (statusBarDockEnable) {
         // 状态栏吸附：浮窗整体停在顶部安全区域内，横向位置仍可拖动。
         targetCenter.y = minY;
@@ -2452,6 +2461,9 @@ static void createCPUWindow(void) {
 
     applyFloatingAlpha();
     updateFloatingSize();
+    if (statusBarDockEnable && floatingView && !floatingView.isCollapsed) {
+        [floatingView collapseToEdgeAnimated:NO];
+    }
 }
 
 static void openDetailView(void) {
@@ -4116,17 +4128,16 @@ return self;
 
     // 横屏（游戏）折叠：默认迷你胶囊四段 CPU/FPS/电量/温度；开启单段开关后收成竖屏式单段（仅 CPU，不碍眼）
     BOOL isLandscapeNow = ([UIScreen mainScreen].bounds.size.width > [UIScreen mainScreen].bounds.size.height);
-    CGFloat targetW = isLandscapeNow ? (compactLandscapeCapsule ? 68.0f : 230.0f) : 68.0f;
-    CGFloat targetH = isLandscapeNow ? (compactLandscapeCapsule ? 28.0f : 30.0f) : 28.0f;
+    CGFloat targetW = statusBarDockEnable ? statusBarDockCapsuleWidth() : (isLandscapeNow ? (compactLandscapeCapsule ? 68.0f : 230.0f) : 68.0f);
+    CGFloat targetH = statusBarDockEnable ? statusBarDockCapsuleHeight() : (isLandscapeNow ? (compactLandscapeCapsule ? 28.0f : 30.0f) : 28.0f);
     CGFloat targetHalfW = targetW / 2.0f;
     CGFloat targetHalfH = targetH / 2.0f;
 
     BOOL isLeft = (self.center.x <= containerBounds.size.width / 2.0f);
-    CGFloat targetX = isLeft ? (targetHalfW + 4.0f) : (containerBounds.size.width - targetHalfW - 4.0f);
-    
+    CGFloat targetX = statusBarDockEnable ? (containerBounds.size.width * 0.5f) : (isLeft ? (targetHalfW + 4.0f) : (containerBounds.size.width - targetHalfW - 4.0f));
     CGFloat minY = targetHalfH + floatingTopSafeMargin(parent);
     CGFloat maxY = containerBounds.size.height - targetHalfH - 10.0f;
-    CGFloat targetY = MIN(MAX(self.center.y, minY), maxY);
+    CGFloat targetY = statusBarDockEnable ? minY : MIN(MAX(self.center.y, minY), maxY);
 
     CGPoint targetCenter = CGPointMake(targetX, targetY);
 
@@ -4157,8 +4168,20 @@ return self;
         }
         self.glassContentView.frame = self.glassSurfaceView.bounds;
 
+        // 状态栏胶囊：接近灵动岛的横向紧凑信息条。
+        if (statusBarDockEnable) {
+            _miniCpuLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+            _miniCpuLabel.frame = CGRectMake(10, 9, 28, 18);
+            _miniFpsLabel.hidden = NO;
+            _miniFpsLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+            _miniFpsLabel.frame = CGRectMake(40, 9, 28, 18);
+            _miniBattLabel.hidden = NO;
+            _miniBattLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+            _miniBattLabel.frame = CGRectMake(70, 9, 34, 18);
+            _miniTempLabel.hidden = YES;
+            _statusDot.hidden = NO;
         // 横屏迷你胶囊：默认 CPU / FPS / 电量 / 温度 四段；开启单段开关则仅 CPU 单段
-        if (isLandscapeNow) {
+        } else if (isLandscapeNow) {
             _miniCpuLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
             _miniCpuLabel.frame = CGRectMake(24, 5, 56, 18);
             if (!compactLandscapeCapsule) {
@@ -4271,17 +4294,17 @@ return self;
 - (void)syncCollapsedLayoutForOrientation {
     if (!self.isCollapsed || self.isShowingNotification) return;
     BOOL isLandscapeNow = ([UIScreen mainScreen].bounds.size.width > [UIScreen mainScreen].bounds.size.height);
-    CGFloat targetW = isLandscapeNow ? (compactLandscapeCapsule ? 68.0f : 230.0f) : 68.0f;
-    CGFloat targetH = isLandscapeNow ? (compactLandscapeCapsule ? 28.0f : 30.0f) : 28.0f;
+    CGFloat targetW = statusBarDockEnable ? statusBarDockCapsuleWidth() : (isLandscapeNow ? (compactLandscapeCapsule ? 68.0f : 230.0f) : 68.0f);
+    CGFloat targetH = statusBarDockEnable ? statusBarDockCapsuleHeight() : (isLandscapeNow ? (compactLandscapeCapsule ? 28.0f : 30.0f) : 28.0f);
     UIView *parent = self.superview;
     CGRect containerBounds = parent ? parent.bounds : [UIScreen mainScreen].bounds;
     CGFloat halfW = targetW / 2.0f;
     CGFloat halfH = targetH / 2.0f;
     BOOL isLeft = (self.center.x <= containerBounds.size.width / 2.0f);
-    CGFloat targetX = isLeft ? (halfW + 4.0f) : (containerBounds.size.width - halfW - 4.0f);
+    CGFloat targetX = statusBarDockEnable ? (containerBounds.size.width * 0.5f) : (isLeft ? (halfW + 4.0f) : (containerBounds.size.width - halfW - 4.0f));
     CGFloat minY = halfH + floatingTopSafeMargin(parent);
     CGFloat maxY = containerBounds.size.height - halfH - 10.0f;
-    CGFloat targetY = MIN(MAX(self.center.y, minY), maxY);
+    CGFloat targetY = statusBarDockEnable ? minY : MIN(MAX(self.center.y, minY), maxY);
 
     self.collapsedContainerView.frame = CGRectMake(0, 0, targetW, targetH);
     self.glassSurfaceView.frame = CGRectMake(0, 0, targetW, targetH);
@@ -4293,9 +4316,18 @@ return self;
     self.bounds = CGRectMake(0, 0, targetW, targetH);
     self.center = CGPointMake(targetX, targetY);
 
-    if (isLandscapeNow) {
-        if (!compactLandscapeCapsule) {
-            _miniCpuLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    if (statusBarDockEnable) {
+        _miniCpuLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+        _miniCpuLabel.frame = CGRectMake(10, 9, 28, 18);
+        _miniFpsLabel.hidden = NO;
+        _miniFpsLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+        _miniFpsLabel.frame = CGRectMake(40, 9, 28, 18);
+        _miniBattLabel.hidden = NO;
+        _miniBattLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+        _miniBattLabel.frame = CGRectMake(70, 9, 34, 18);
+        _miniTempLabel.hidden = YES;
+        _statusDot.hidden = NO;
+    } else if (isLandscapeNow) {
             _miniCpuLabel.frame = CGRectMake(24, 5, 56, 18);
             _miniFpsLabel.hidden = NO;
             _miniFpsLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
@@ -4709,7 +4741,11 @@ return self;
     BOOL isLandscapeNow = ([UIScreen mainScreen].bounds.size.width > [UIScreen mainScreen].bounds.size.height);
     if (self.isCollapsed) {
         [self syncCollapsedLayoutForOrientation];
-        if (isLandscapeNow && !compactLandscapeCapsule) {
+        if (statusBarDockEnable) {
+            _miniCpuLabel.text = [NSString stringWithFormat:@"%.0f%%", cpu];
+            _miniFpsLabel.text = [NSString stringWithFormat:@"%.0fF", fps];
+            _miniBattLabel.text = [NSString stringWithFormat:@"%ld%%", (long)MAX(0, MIN(100, battery))];
+        } else if (isLandscapeNow && !compactLandscapeCapsule) {
             _miniCpuLabel.text = [NSString stringWithFormat:@"%.0f%%", cpu];
             _miniFpsLabel.text = [NSString stringWithFormat:@"%.0fF", fps];
             _miniBattLabel.text = [NSString stringWithFormat:@"%ld%%", (long)MAX(0, MIN(100, battery))];
@@ -7863,8 +7899,15 @@ static NSString *stripLeadingEmoji(NSString *s) {
     statusBarDockEnable = sw.isOn;
     SavePreferencesAndNotify();
     if (floatingView) {
-        // 开关切换后立即重新计算位置；关闭时恢复当前拖动/智能吸附规则。
-        clampAndPositionFloatingView(floatingView.center, YES);
+        // 状态栏模式本身就是胶囊：开启时立即收起，关闭时恢复完整浮窗。
+        if (statusBarDockEnable && !floatingView.isCollapsed) {
+            [floatingView collapseToEdgeAnimated:YES];
+        } else if (!statusBarDockEnable && floatingView.isCollapsed) {
+            [floatingView expandFromEdgeAnimated:YES];
+        } else {
+            [floatingView syncCollapsedLayoutForOrientation];
+            clampAndPositionFloatingView(floatingView.center, YES);
+        }
     }
 }
 - (void)changeForce120Hz:(UISwitch *)sw { force120HzEnable = sw.isOn; SavePreferencesAndNotify(); }
