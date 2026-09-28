@@ -342,7 +342,6 @@ static BOOL chargeBoostEnable = NO;
 static BOOL suppressPartRepairEnabled = NO; // 🛡️ 屏蔽部件与维修记录（移植自 CPUthermal）
 static BOOL forceFastChargeEnable = NO; // 保留原有强制满血快充开关
 static BOOL fastChargeStartupAnimating = NO;
-static NSInteger fastChargeStartupGeneration = 0;
 
 static double lastChargeWatts = 0.0;
 static double previousChargeWatts = 0.0;
@@ -437,7 +436,6 @@ static UIInterfaceOrientation getActiveInterfaceOrientation(void);
 static UIInterfaceOrientation getEffectiveFloatingOrientation(void);
 static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate);
 static void updateFloatingSize(void);
-static BOOL isPowerdHookReady(void);
 static void createCPUWindow(void);
 static void openDetailView(void);
 static void openSettings(void);
@@ -2531,17 +2529,6 @@ static void checkHighCPU(double cpu) {
             });
         });
     }
-}
-
-static BOOL isPowerdHookReady(void) {
-    CFPreferencesAppSynchronize(CFSTR("com.yourname.sbcpufloating"));
-    CFPropertyListRef value = CFPreferencesCopyValue(CFSTR("powerdHookReady"),
-                                                       CFSTR("com.yourname.sbcpufloating"),
-                                                       kCFPreferencesCurrentUser,
-                                                       kCFPreferencesAnyHost);
-    BOOL ready = (value && CFGetTypeID(value) == CFBooleanGetTypeID() && CFBooleanGetValue((CFBooleanRef)value));
-    if (value) CFRelease(value);
-    return ready;
 }
 
 static void updateCPU(void) {
