@@ -4328,6 +4328,8 @@ return self;
         _miniTempLabel.hidden = YES;
         _statusDot.hidden = NO;
     } else if (isLandscapeNow) {
+        if (!compactLandscapeCapsule) {
+            _miniCpuLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
             _miniCpuLabel.frame = CGRectMake(24, 5, 56, 18);
             _miniFpsLabel.hidden = NO;
             _miniFpsLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
