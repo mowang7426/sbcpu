@@ -211,6 +211,7 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) UILabel *miniFpsLabel;   // 横屏迷你胶囊：FPS
 @property (nonatomic, strong) UILabel *miniBattLabel;  // 横屏迷你胶囊：电量
 @property (nonatomic, strong) UILabel *miniTempLabel;  // 横屏迷你胶囊：温度
+@property (nonatomic, strong) UILabel *miniDockInfoLabel; // 状态栏胶囊：可选信息条
 @property (nonatomic, strong) UIView *startupContainer;
 @property (nonatomic, strong) UIView *startupIconCircle;
 @property (nonatomic, strong) UILabel *startupIconLabel;
@@ -331,6 +332,14 @@ static BOOL smartDockEnable = YES;
 static NSInteger dockMode = 0;
 static BOOL rememberPositionEnable = YES;
 static BOOL statusBarDockEnable = NO; // 开启后浮窗吸附到顶部状态栏安全区域
+static BOOL statusDockShowCPU = YES;
+static BOOL statusDockShowFPS = YES;
+static BOOL statusDockShowFrequency = NO;
+static BOOL statusDockShowCurrent = NO;
+static BOOL statusDockShowTemperature = NO;
+static BOOL statusDockShowBattery = YES;
+static BOOL statusDockShowSIM1 = NO;
+static BOOL statusDockShowSIM2 = NO;
 
 static BOOL showCpuFrequency = YES;
 static BOOL showFps = YES;                       
@@ -980,6 +989,14 @@ static void LoadPreferences(void) {
     dockMode = getIntPref(CFSTR("dockMode"), 0);
     rememberPositionEnable = getBoolPref(CFSTR("rememberPositionEnable"), YES);
     statusBarDockEnable = getBoolPref(CFSTR("statusBarDockEnable"), NO);
+    statusDockShowCPU = getBoolPref(CFSTR("statusDockShowCPU"), YES);
+    statusDockShowFPS = getBoolPref(CFSTR("statusDockShowFPS"), YES);
+    statusDockShowFrequency = getBoolPref(CFSTR("statusDockShowFrequency"), NO);
+    statusDockShowCurrent = getBoolPref(CFSTR("statusDockShowCurrent"), NO);
+    statusDockShowTemperature = getBoolPref(CFSTR("statusDockShowTemperature"), NO);
+    statusDockShowBattery = getBoolPref(CFSTR("statusDockShowBattery"), YES);
+    statusDockShowSIM1 = getBoolPref(CFSTR("statusDockShowSIM1"), NO);
+    statusDockShowSIM2 = getBoolPref(CFSTR("statusDockShowSIM2"), NO);
     
     showCpuFrequency = getBoolPref(CFSTR("showCpuFrequency"), YES);
     showFps = getBoolPref(CFSTR("showFps"), YES);
@@ -1063,6 +1080,14 @@ static void SavePreferencesAndNotify(void) {
     setIntPref(CFSTR("dockMode"), dockMode);
     setBoolPref(CFSTR("rememberPositionEnable"), rememberPositionEnable);
     setBoolPref(CFSTR("statusBarDockEnable"), statusBarDockEnable);
+    setBoolPref(CFSTR("statusDockShowCPU"), statusDockShowCPU);
+    setBoolPref(CFSTR("statusDockShowFPS"), statusDockShowFPS);
+    setBoolPref(CFSTR("statusDockShowFrequency"), statusDockShowFrequency);
+    setBoolPref(CFSTR("statusDockShowCurrent"), statusDockShowCurrent);
+    setBoolPref(CFSTR("statusDockShowTemperature"), statusDockShowTemperature);
+    setBoolPref(CFSTR("statusDockShowBattery"), statusDockShowBattery);
+    setBoolPref(CFSTR("statusDockShowSIM1"), statusDockShowSIM1);
+    setBoolPref(CFSTR("statusDockShowSIM2"), statusDockShowSIM2);
     setBoolPref(CFSTR("showCpuFrequency"), showCpuFrequency);
     setBoolPref(CFSTR("showFps"), showFps);
     setBoolPref(CFSTR("force120HzEnable"), force120HzEnable);
@@ -2290,12 +2315,21 @@ static UIInterfaceOrientation getEffectiveFloatingOrientation(void) {
 static CGFloat floatingTopSafeMargin(UIView *container) {
     CGFloat safeTop = 0.0f;
     if (@available(iOS 11.0, *)) safeTop = container.safeAreaInsets.top;
+    if (statusBarDockEnable) return MAX(0.0f, safeTop + 2.0f);
     return MAX(20.0f, safeTop + (safeTop > 0.0f ? 8.0f : 0.0f));
 }
 
 // 状态栏胶囊尺寸：接近灵动岛，独立于普通竖屏/横屏折叠尺寸。
-static inline CGFloat statusBarDockCapsuleWidth(void) { return 126.0f; }
-static inline CGFloat statusBarDockCapsuleHeight(void) { return 36.0f; }
+static inline CGFloat statusBarDockCapsuleWidth(void) {
+    NSInteger count = (statusDockShowCPU ? 1 : 0) + (statusDockShowFPS ? 1 : 0) +
+                      (statusDockShowFrequency ? 1 : 0) + (statusDockShowCurrent ? 1 : 0) +
+                      (statusDockShowTemperature ? 1 : 0) + (statusDockShowBattery ? 1 : 0) +
+                      (statusDockShowSIM1 ? 1 : 0) + (statusDockShowSIM2 ? 1 : 0);
+    CGFloat width = 34.0f + (CGFloat)count * 48.0f;
+    CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
+    return MIN(MAX(width, 126.0f), MAX(126.0f, screenWidth - 24.0f));
+}
+static inline CGFloat statusBarDockCapsuleHeight(void) { return 38.0f; }
 
 static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
     if (!floatingView || !floatingView.superview) return;
@@ -3469,6 +3503,15 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _miniTempLabel.textAlignment = NSTextAlignmentLeft;
         _miniTempLabel.hidden = YES;
         [_collapsedContainerView addSubview:_miniTempLabel];
+
+        _miniDockInfoLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+        _miniDockInfoLabel.textColor = [UIColor blackColor];
+        _miniDockInfoLabel.font = [UIFont systemFontOfSize:11.0f weight:UIFontWeightBold];
+        _miniDockInfoLabel.textAlignment = NSTextAlignmentCenter;
+        _miniDockInfoLabel.adjustsFontSizeToFitWidth = YES;
+        _miniDockInfoLabel.minimumScaleFactor = 0.55f;
+        _miniDockInfoLabel.hidden = YES;
+        [_collapsedContainerView addSubview:_miniDockInfoLabel];
         
         _notificationContainer = [[UIView alloc] initWithFrame:content.bounds];
         _notificationContainer.userInteractionEnabled = NO;
@@ -4168,18 +4211,15 @@ return self;
         }
         self.glassContentView.frame = self.glassSurfaceView.bounds;
 
-        // 状态栏胶囊：接近灵动岛的横向紧凑信息条。
+        // 状态栏胶囊：使用可选信息条，宽度随选中项目自动扩展。
         if (statusBarDockEnable) {
-            _miniCpuLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-            _miniCpuLabel.frame = CGRectMake(10, 9, 28, 18);
-            _miniFpsLabel.hidden = NO;
-            _miniFpsLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-            _miniFpsLabel.frame = CGRectMake(40, 9, 28, 18);
-            _miniBattLabel.hidden = NO;
-            _miniBattLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-            _miniBattLabel.frame = CGRectMake(70, 9, 34, 18);
+            _miniDockInfoLabel.hidden = NO;
+            _miniDockInfoLabel.frame = CGRectMake(8, 4, targetW - 16, targetH - 8);
+            _miniCpuLabel.hidden = YES;
+            _miniFpsLabel.hidden = YES;
+            _miniBattLabel.hidden = YES;
             _miniTempLabel.hidden = YES;
-            _statusDot.hidden = NO;
+            _statusDot.hidden = YES;
         // 横屏迷你胶囊：默认 CPU / FPS / 电量 / 温度 四段；开启单段开关则仅 CPU 单段
         } else if (isLandscapeNow) {
             _miniCpuLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
@@ -4317,16 +4357,13 @@ return self;
     self.center = CGPointMake(targetX, targetY);
 
     if (statusBarDockEnable) {
-        _miniCpuLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-        _miniCpuLabel.frame = CGRectMake(10, 9, 28, 18);
-        _miniFpsLabel.hidden = NO;
-        _miniFpsLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-        _miniFpsLabel.frame = CGRectMake(40, 9, 28, 18);
-        _miniBattLabel.hidden = NO;
-        _miniBattLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-        _miniBattLabel.frame = CGRectMake(70, 9, 34, 18);
+        _miniDockInfoLabel.hidden = NO;
+        _miniDockInfoLabel.frame = CGRectMake(8, 4, targetW - 16, targetH - 8);
+        _miniCpuLabel.hidden = YES;
+        _miniFpsLabel.hidden = YES;
+        _miniBattLabel.hidden = YES;
         _miniTempLabel.hidden = YES;
-        _statusDot.hidden = NO;
+        _statusDot.hidden = YES;
     } else if (isLandscapeNow) {
         if (!compactLandscapeCapsule) {
             _miniCpuLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
@@ -4744,9 +4781,26 @@ return self;
     if (self.isCollapsed) {
         [self syncCollapsedLayoutForOrientation];
         if (statusBarDockEnable) {
-            _miniCpuLabel.text = [NSString stringWithFormat:@"%.0f%%", cpu];
-            _miniFpsLabel.text = [NSString stringWithFormat:@"%.0fF", fps];
-            _miniBattLabel.text = [NSString stringWithFormat:@"%ld%%", (long)MAX(0, MIN(100, battery))];
+            NSMutableArray *dockItems = [NSMutableArray array];
+            if (statusDockShowCPU) [dockItems addObject:[NSString stringWithFormat:@"CPU %.0f%%", cpu]];
+            if (statusDockShowFPS) [dockItems addObject:[NSString stringWithFormat:@"FPS %.0f", fps]];
+            if (statusDockShowFrequency) [dockItems addObject:[NSString stringWithFormat:@"频 %.1fG", cpuFreq / 1000.0]];
+            if (statusDockShowCurrent) [dockItems addObject:[NSString stringWithFormat:@"%.0fmA", displayCurrent]];
+            if (statusDockShowTemperature) [dockItems addObject:(temp > 0 ? [NSString stringWithFormat:@"%.1f°", temp] : @"温 --")];
+            if (statusDockShowBattery) [dockItems addObject:[NSString stringWithFormat:@"电 %ld%%", (long)MAX(0, MIN(100, battery))]];
+            if (statusDockShowSIM1 || statusDockShowSIM2) {
+                NSArray *sims = readAllSimSignals();
+                if (statusDockShowSIM1) {
+                    NSDictionary *s = sims.count > 0 ? sims[0] : nil;
+                    [dockItems addObject:[NSString stringWithFormat:@"S1 %@格", s ? [s[@"bars"] stringValue] : @"--"]];
+                }
+                if (statusDockShowSIM2) {
+                    NSDictionary *s = sims.count > 1 ? sims[1] : nil;
+                    [dockItems addObject:[NSString stringWithFormat:@"S2 %@格", s ? [s[@"bars"] stringValue] : @"--"]];
+                }
+            }
+            _miniDockInfoLabel.text = dockItems.count ? [dockItems componentsJoinedByString:@"  "] : @"状态栏胶囊";
+            _miniDockInfoLabel.hidden = NO;
         } else if (isLandscapeNow && !compactLandscapeCapsule) {
             _miniCpuLabel.text = [NSString stringWithFormat:@"%.0f%%", cpu];
             _miniFpsLabel.text = [NSString stringWithFormat:@"%.0fF", fps];
@@ -6363,7 +6417,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     // 智能温控停充嵌入双击设置页，避免用户必须跳转独立偏好页
     if (section == 9) return 8;
     if (section == 7) return 6; // 充电增强：充电增强/满血快充/屏蔽维修/充电历史/阻止充电/阻止外部供电
-    if (section == 8) return 10; // 位置与显示（含状态栏吸附和 SIM 信号）
+    if (section == 8) return 18; // 位置与显示 + 状态栏胶囊内容
     if (section == 9) return 5; // 🔋 智能停充
     if (section == 10) return 0; // 📖 功能说明已移除
     if (section == 11) return 0; // 🌡️ 温控功能说明已移除
@@ -7506,11 +7560,43 @@ static NSString *stripLeadingEmoji(NSString *s) {
             cell.accessoryView = sw;
         } else if (indexPath.row == 9) {
             cell.textLabel.text = @"浮窗吸附到状态栏";
-            cell.detailTextLabel.text = @"开启后浮窗自动停在手机顶部状态栏区域";
+            cell.detailTextLabel.text = @"开启后在灵动岛下方显示可选信息胶囊";
             UISwitch *sw = [UISwitch new];
             sw.on = statusBarDockEnable;
             [sw addTarget:self action:@selector(changeStatusBarDock:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
+        } else if (indexPath.row == 10) {
+            cell.textLabel.text = @"顶部显示 CPU";
+            UISwitch *sw = [UISwitch new]; sw.on = statusDockShowCPU;
+            [sw addTarget:self action:@selector(changeStatusDockCPU:) forControlEvents:UIControlEventValueChanged]; cell.accessoryView = sw;
+        } else if (indexPath.row == 11) {
+            cell.textLabel.text = @"顶部显示 FPS";
+            UISwitch *sw = [UISwitch new]; sw.on = statusDockShowFPS;
+            [sw addTarget:self action:@selector(changeStatusDockFPS:) forControlEvents:UIControlEventValueChanged]; cell.accessoryView = sw;
+        } else if (indexPath.row == 12) {
+            cell.textLabel.text = @"顶部显示 CPU 频率";
+            UISwitch *sw = [UISwitch new]; sw.on = statusDockShowFrequency;
+            [sw addTarget:self action:@selector(changeStatusDockFrequency:) forControlEvents:UIControlEventValueChanged]; cell.accessoryView = sw;
+        } else if (indexPath.row == 13) {
+            cell.textLabel.text = @"顶部显示电流";
+            UISwitch *sw = [UISwitch new]; sw.on = statusDockShowCurrent;
+            [sw addTarget:self action:@selector(changeStatusDockCurrent:) forControlEvents:UIControlEventValueChanged]; cell.accessoryView = sw;
+        } else if (indexPath.row == 14) {
+            cell.textLabel.text = @"顶部显示温度";
+            UISwitch *sw = [UISwitch new]; sw.on = statusDockShowTemperature;
+            [sw addTarget:self action:@selector(changeStatusDockTemperature:) forControlEvents:UIControlEventValueChanged]; cell.accessoryView = sw;
+        } else if (indexPath.row == 15) {
+            cell.textLabel.text = @"顶部显示电量";
+            UISwitch *sw = [UISwitch new]; sw.on = statusDockShowBattery;
+            [sw addTarget:self action:@selector(changeStatusDockBattery:) forControlEvents:UIControlEventValueChanged]; cell.accessoryView = sw;
+        } else if (indexPath.row == 16) {
+            cell.textLabel.text = @"顶部显示 SIM1 信号";
+            UISwitch *sw = [UISwitch new]; sw.on = statusDockShowSIM1;
+            [sw addTarget:self action:@selector(changeStatusDockSIM1:) forControlEvents:UIControlEventValueChanged]; cell.accessoryView = sw;
+        } else if (indexPath.row == 17) {
+            cell.textLabel.text = @"顶部显示 SIM2 信号";
+            UISwitch *sw = [UISwitch new]; sw.on = statusDockShowSIM2;
+            [sw addTarget:self action:@selector(changeStatusDockSIM2:) forControlEvents:UIControlEventValueChanged]; cell.accessoryView = sw;
         }
     }
     applySettingsTheme(cell, indexPath);
@@ -7912,6 +7998,14 @@ static NSString *stripLeadingEmoji(NSString *s) {
         }
     }
 }
+- (void)changeStatusDockCPU:(UISwitch *)sw { statusDockShowCPU = sw.isOn; SavePreferencesAndNotify(); if (floatingView) [floatingView syncCollapsedLayoutForOrientation]; }
+- (void)changeStatusDockFPS:(UISwitch *)sw { statusDockShowFPS = sw.isOn; SavePreferencesAndNotify(); if (floatingView) [floatingView syncCollapsedLayoutForOrientation]; }
+- (void)changeStatusDockFrequency:(UISwitch *)sw { statusDockShowFrequency = sw.isOn; SavePreferencesAndNotify(); if (floatingView) [floatingView syncCollapsedLayoutForOrientation]; }
+- (void)changeStatusDockCurrent:(UISwitch *)sw { statusDockShowCurrent = sw.isOn; SavePreferencesAndNotify(); if (floatingView) [floatingView syncCollapsedLayoutForOrientation]; }
+- (void)changeStatusDockTemperature:(UISwitch *)sw { statusDockShowTemperature = sw.isOn; SavePreferencesAndNotify(); if (floatingView) [floatingView syncCollapsedLayoutForOrientation]; }
+- (void)changeStatusDockBattery:(UISwitch *)sw { statusDockShowBattery = sw.isOn; SavePreferencesAndNotify(); if (floatingView) [floatingView syncCollapsedLayoutForOrientation]; }
+- (void)changeStatusDockSIM1:(UISwitch *)sw { statusDockShowSIM1 = sw.isOn; SavePreferencesAndNotify(); if (floatingView) [floatingView syncCollapsedLayoutForOrientation]; }
+- (void)changeStatusDockSIM2:(UISwitch *)sw { statusDockShowSIM2 = sw.isOn; SavePreferencesAndNotify(); if (floatingView) [floatingView syncCollapsedLayoutForOrientation]; }
 - (void)changeForce120Hz:(UISwitch *)sw { force120HzEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeShowCpuFreq:(UISwitch *)sw { showCpuFrequency = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowFps:(UISwitch *)sw { showFps = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
