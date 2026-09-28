@@ -437,7 +437,6 @@ static UIInterfaceOrientation getActiveInterfaceOrientation(void);
 static UIInterfaceOrientation getEffectiveFloatingOrientation(void);
 static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate);
 static void updateFloatingSize(void);
-static void startFastChargeStartupAnimation(void);
 static BOOL isPowerdHookReady(void);
 static void createCPUWindow(void);
 static void openDetailView(void);
@@ -2543,107 +2542,6 @@ static BOOL isPowerdHookReady(void) {
     BOOL ready = (value && CFGetTypeID(value) == CFBooleanGetTypeID() && CFBooleanGetValue((CFBooleanRef)value));
     if (value) CFRelease(value);
     return ready;
-}
-
-static void startFastChargeStartupAnimation(void) {
-    if (!floatingView || !forceFastChargeEnable || !isChargingInternal()) return;
-    if (fastChargeStartupAnimating) return;
-
-    fastChargeStartupAnimating = YES;
-    NSInteger generation = ++fastChargeStartupGeneration;
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (!floatingView || generation != fastChargeStartupGeneration || !isChargingInternal()) {
-            fastChargeStartupAnimating = NO;
-            return;
-        }
-
-        [floatingView resetInactivityTimer];
-        [floatingView prepareStartupAnimationView];
-        floatingView.performanceContainer.hidden = YES;
-        floatingView.notificationContainer.hidden = YES;
-
-        [UIView animateWithDuration:0.32
-                              delay:0
-                            options:UIViewAnimationOptionCurveEaseOut
-                         animations:^{
-            floatingView.startupContainer.alpha = 1.0;
-            floatingView.startupContainer.transform = CGAffineTransformIdentity;
-            floatingView.startupIconCircle.transform = CGAffineTransformMakeScale(1.0, 1.0);
-        } completion:nil];
-
-        NSArray<NSString *> *titles = @[
-            @"满血充电核心启动",
-            @"检测充电环境中…",
-            @"检测 powerd 进程…",
-            @"确认 powerd 注入状态…",
-            @"Hook 核心功能加载中…",
-            @"充电限制处理完成",
-            @"满血充电已激活",
-            @"启动完成"
-        ];
-        NSArray<NSString *> *details = @[
-            @"正在初始化核心组件…",
-            @"正在检测充电器 / 电池信息…",
-            @"正在查找 powerd 进程…",
-            @"正在确认插件注入状态…",
-            @"正在加载充电核心模块…",
-            @"正在解除充电限制策略…",
-            @"满血充电核心已成功激活",
-            @"正在恢复原浮窗…"
-        ];
-        NSArray<NSString *> *icons = @[@"⚡", @"⌕", @"PWRD", @"◉", @"🧩", @"✓", @"🔥", @"✓"];
-        NSArray<NSNumber *> *durations = @[@1.05, @1.10, @1.10, @1.20, @1.15, @1.10, @0.95, @1.10];
-
-        __block NSTimeInterval elapsed = 0.0;
-        for (NSUInteger i = 0; i < titles.count; i++) {
-            NSTimeInterval delay = elapsed;
-            elapsed += durations[i].doubleValue;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                if (!floatingView || generation != fastChargeStartupGeneration || !fastChargeStartupAnimating) return;
-                if (!isChargingInternal()) {
-                    fastChargeStartupAnimating = NO;
-                    [floatingView finishStartupAnimation];
-                    return;
-                }
-
-                NSString *detail = details[i];
-                if (i == 3) {
-                    detail = isPowerdHookReady() ? @"SBCPUPowerd 已成功注入 powerd" : @"正在等待 SBCPUPowerd 注入…";
-                } else if (i == 5 && !isPowerdHookReady()) {
-                    detail = @"powerd Hook 尚未就绪，继续检测…";
-                }
-
-                CGFloat progress = ((CGFloat)i + 1.0f) / (CGFloat)titles.count;
-                [floatingView showStartupStage:i title:titles[i] detail:detail icon:icons[i] progress:progress];
-            });
-        }
-
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(elapsed * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (!floatingView || generation != fastChargeStartupGeneration || !fastChargeStartupAnimating) return;
-            if (!isChargingInternal()) {
-                fastChargeStartupAnimating = NO;
-                [floatingView finishStartupAnimation];
-                return;
-            }
-
-            fastChargeStartupAnimating = NO;
-            [floatingView finishStartupAnimation];
-
-            NSDictionary *chargeInfo = getRealBatteryDetails();
-            double watts = MAX(0.0, [chargeInfo[@"CalculatedWatts"] doubleValue]);
-            floatingView.statusLabel.text = [NSString stringWithFormat:@"🔥 强制满血快充 · %.1fW", watts];
-            floatingView.statusLabel.textColor = [UIColor systemRedColor];
-            floatingView.statusDot.backgroundColor = floatingView.statusLabel.textColor;
-
-            NSString *thermalText = nil;
-            UIColor *thermalColor = nil;
-            sbcputhermalFloatingStatus(&thermalText, &thermalColor);
-            floatingView.thermalStatusLabel.text = thermalText ?: @"温控：核心已运行";
-            floatingView.thermalStatusLabel.textColor = thermalColor ?: [UIColor systemGreenColor];
-            [floatingView resetInactivityTimer];
-        });
-    });
 }
 
 static void updateCPU(void) {
