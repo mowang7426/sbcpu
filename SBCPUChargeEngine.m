@@ -111,8 +111,11 @@ bool sb_engine_load_config(SBCPUChargeConfig *cfg) {
     c.manualPowerBlock = pref_bool(d, @"blockPowerEnable", false);
     c.scheduleEnabled = pref_bool(d, @"chargeScheduleEnabled", false);
     c.scheduleStartHour = (uint8_t)pref_int(d, @"chargeScheduleStartHour", 22);
+    c.scheduleStartMinute = (uint8_t)pref_int(d, @"chargeScheduleStartMinute", 0);
     c.scheduleStage2Hour = (uint8_t)pref_int(d, @"chargeScheduleStage2Hour", 5);
+    c.scheduleStage2Minute = (uint8_t)pref_int(d, @"chargeScheduleStage2Minute", 30);
     c.scheduleStage3Hour = (uint8_t)pref_int(d, @"chargeScheduleStage3Hour", 6);
+    c.scheduleStage3Minute = (uint8_t)pref_int(d, @"chargeScheduleStage3Minute", 30);
     c.smartThermalEnabled = pref_bool(d, @"smartThermalChargeEnable", false);
     c.thermalUpperC = (uint8_t)pref_int(d, @"smartThermalUpperC", 42);
     c.thermalLowerC = (uint8_t)pref_int(d, @"smartThermalLowerC", 38);
@@ -122,8 +125,11 @@ bool sb_engine_load_config(SBCPUChargeConfig *cfg) {
     if (c.lowerLimit > 99) c.lowerLimit = 99;
     if (c.upperLimit <= c.lowerLimit) { c.upperLimit = 80; c.lowerLimit = 70; }
     if (c.scheduleStartHour > 23) c.scheduleStartHour = 22;
+    if (c.scheduleStartMinute > 59) c.scheduleStartMinute = 0;
     if (c.scheduleStage2Hour > 23) c.scheduleStage2Hour = 5;
+    if (c.scheduleStage2Minute > 59) c.scheduleStage2Minute = 30;
     if (c.scheduleStage3Hour > 23) c.scheduleStage3Hour = 6;
+    if (c.scheduleStage3Minute > 59) c.scheduleStage3Minute = 30;
     if (c.thermalUpperC > 60) c.thermalUpperC = 60;
     if (c.thermalLowerC < 25) c.thermalLowerC = 25;
     if (c.thermalUpperC <= c.thermalLowerC) { c.thermalUpperC = 42; c.thermalLowerC = 38; }
@@ -399,9 +405,9 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
     if (gCfg.scheduleEnabled) {
         NSDateComponents *now = [[NSCalendar currentCalendar] components:(NSCalendarUnitHour | NSCalendarUnitMinute) fromDate:[NSDate date]];
         NSInteger minute = now.hour * 60 + now.minute;
-        NSInteger start = gCfg.scheduleStartHour * 60;
-        NSInteger stage2 = gCfg.scheduleStage2Hour * 60;
-        NSInteger stage3 = gCfg.scheduleStage3Hour * 60;
+        NSInteger start = gCfg.scheduleStartHour * 60 + gCfg.scheduleStartMinute;
+        NSInteger stage2 = gCfg.scheduleStage2Hour * 60 + gCfg.scheduleStage2Minute;
+        NSInteger stage3 = gCfg.scheduleStage3Hour * 60 + gCfg.scheduleStage3Minute;
         BOOL overnight = start > stage2;
         if ((overnight && (minute >= start || minute < stage2)) || (!overnight && minute >= start && minute < stage2)) {
             decisionUpper = 70;

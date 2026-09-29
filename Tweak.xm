@@ -1428,8 +1428,11 @@ typedef struct {
     uint8_t  manualPowerBlock;
     uint8_t  scheduleEnabled;
     uint8_t  scheduleStartHour;
+    uint8_t  scheduleStartMinute;
     uint8_t  scheduleStage2Hour;
+    uint8_t  scheduleStage2Minute;
     uint8_t  scheduleStage3Hour;
+    uint8_t  scheduleStage3Minute;
     uint8_t  smartThermalEnabled;
     uint8_t  thermalUpperC;
     uint8_t  thermalLowerC;
@@ -1471,8 +1474,11 @@ static IOReturn sbSMCSendLimits(void) {
     lim.manualPowerBlock = blockPowerEnable ? 1 : 0;
     lim.scheduleEnabled = getBoolPref(CFSTR("chargeScheduleEnabled"), NO) ? 1 : 0;
     lim.scheduleStartHour = (uint8_t)getFloatPref(CFSTR("chargeScheduleStartHour"), 22.0f);
+    lim.scheduleStartMinute = (uint8_t)getFloatPref(CFSTR("chargeScheduleStartMinute"), 0.0f);
     lim.scheduleStage2Hour = (uint8_t)getFloatPref(CFSTR("chargeScheduleStage2Hour"), 5.0f);
+    lim.scheduleStage2Minute = (uint8_t)getFloatPref(CFSTR("chargeScheduleStage2Minute"), 30.0f);
     lim.scheduleStage3Hour = (uint8_t)getFloatPref(CFSTR("chargeScheduleStage3Hour"), 6.0f);
+    lim.scheduleStage3Minute = (uint8_t)getFloatPref(CFSTR("chargeScheduleStage3Minute"), 30.0f);
     lim.smartThermalEnabled = smartThermalChargeEnable ? 1 : 0;
     lim.thermalUpperC = (uint8_t)smartThermalUpperC;
     lim.thermalLowerC = (uint8_t)smartThermalLowerC;

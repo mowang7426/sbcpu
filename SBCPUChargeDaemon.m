@@ -168,8 +168,11 @@ static void handle_client(int fd) {
             d[@"blockPowerEnable"] = @(lim.manualPowerBlock ? YES : NO);
             d[@"chargeScheduleEnabled"] = @(lim.scheduleEnabled ? YES : NO);
             d[@"chargeScheduleStartHour"] = @(lim.scheduleStartHour);
+            d[@"chargeScheduleStartMinute"] = @(lim.scheduleStartMinute);
             d[@"chargeScheduleStage2Hour"] = @(lim.scheduleStage2Hour);
+            d[@"chargeScheduleStage2Minute"] = @(lim.scheduleStage2Minute);
             d[@"chargeScheduleStage3Hour"] = @(lim.scheduleStage3Hour);
+            d[@"chargeScheduleStage3Minute"] = @(lim.scheduleStage3Minute);
             d[@"smartThermalChargeEnable"] = @(lim.smartThermalEnabled ? YES : NO);
             d[@"smartThermalUpperC"] = @(lim.thermalUpperC);
             d[@"smartThermalLowerC"] = @(lim.thermalLowerC);
@@ -199,8 +202,11 @@ static void handle_client(int fd) {
                 lim.manualPowerBlock = cfg.manualPowerBlock;
                 lim.scheduleEnabled = cfg.scheduleEnabled;
                 lim.scheduleStartHour = cfg.scheduleStartHour;
+                lim.scheduleStartMinute = cfg.scheduleStartMinute;
                 lim.scheduleStage2Hour = cfg.scheduleStage2Hour;
+                lim.scheduleStage2Minute = cfg.scheduleStage2Minute;
                 lim.scheduleStage3Hour = cfg.scheduleStage3Hour;
+                lim.scheduleStage3Minute = cfg.scheduleStage3Minute;
                 lim.smartThermalEnabled = cfg.smartThermalEnabled;
                 lim.thermalUpperC = cfg.thermalUpperC;
                 lim.thermalLowerC = cfg.thermalLowerC;

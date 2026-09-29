@@ -76,8 +76,11 @@ typedef struct {
     uint8_t  manualPowerBlock;    // 手动阻止外部供电
     uint8_t  scheduleEnabled;     // 分时段充电计划开关
     uint8_t  scheduleStartHour;   // 第一阶段开始小时，默认22
+    uint8_t  scheduleStartMinute; // 第一阶段开始分钟，默认0
     uint8_t  scheduleStage2Hour;  // 第二阶段小时，默认5
+    uint8_t  scheduleStage2Minute;// 第二阶段分钟，默认30
     uint8_t  scheduleStage3Hour;  // 最终充满阶段小时，默认6
+    uint8_t  scheduleStage3Minute;// 最终充满阶段分钟，默认30
     uint8_t  smartThermalEnabled; // 智能温度停充
     uint8_t  thermalUpperC;        // 温度上限 °C
     uint8_t  thermalLowerC;        // 温度下限 °C
