@@ -221,6 +221,15 @@ int sb_engine_manual_power_block(bool block) {
             [d writeToFile:@SB_PREF_FILE atomically:YES];
         }
         gState = block ? SBCPUChargeStateBlocked : SBCPUChargeStateCharging;
+        if (!block) {
+            // 手动恢复供电必须压过当前自动停充的瞬时状态：清掉易失的自动停充标记，
+            // 并在回充下限前暂缓自动 CH0I 重施，避免刚恢复又立刻断供。
+            gLimitBlocked = false;
+            gLimitUsesPowerBlock = false;
+            gPowerBlockUserReleased = true;
+            (void)smc_set_charge_block(false, gCfg.overrideOBC);
+            engine_log(@"manual power release: cleared CH0I/CH0C and suspended automatic power block until recharge threshold");
+        }
         engine_log(@"manual power block -> %d (0x%x)", block, r);
     }
     engine_unlock();
