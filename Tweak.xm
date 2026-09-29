@@ -6439,11 +6439,9 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 4) return 3;
     if (section == 5) return 1;
     if (section == 6) return 10;
-    // 智能温控停充嵌入双击设置页，避免用户必须跳转独立偏好页
-    if (section == 9) return 8;
     if (section == 7) return 6; // 充电增强：充电增强/满血快充/屏蔽维修/充电历史/阻止充电/阻止外部供电
     if (section == 8) return 18; // 位置与显示 + 状态栏胶囊内容
-    if (section == 9) return 5; // 🔋 智能停充
+    if (section == 9) return 0; // 智能停充已统一到系统插件“充电限制”
     if (section == 10) return 0; // 📖 功能说明已移除
     if (section == 11) return 0; // 🌡️ 温控功能说明已移除
     if (section == 12) {
@@ -6466,7 +6464,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 6) return @"🌡️ 温度保护"; 
     if (section == 7) return @"🔌 充电增强";
     if (section == 8) return @"📍 位置与显示";
-    if (section == 9) return @"🔋 智能停充";
+    if (section == 9) return @""; // 充电智能设置已移至系统插件“充电限制”
     if (section == 10) return @"";
     if (section == 11) return @""; 
     if (section == 12) return @"🔍 插件冲突检测";
@@ -6476,7 +6474,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     (void)tableView;
     // 隐藏真正没有内容的说明区，其他分组标题保持呼吸感。
-    if (section == 10 || section == 11) return 2.0;
+    if (section == 9 || section == 10 || section == 11) return 2.0;
     // V4.18.2 — 分组入口行样式：卡片高度 48
     if (section == 0) return 54.0;
     return 48.0;

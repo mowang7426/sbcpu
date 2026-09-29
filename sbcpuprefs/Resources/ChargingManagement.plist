@@ -5,8 +5,6 @@
 <dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>通用</string><key>footerText</key><string>底层控制由 SBCPUChargeDaemon 执行。修改设置后会立即保存并通知后台重新判断；请勿同时运行多个值守进程。</string></dict>
 <dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>阻止充电</string><key>key</key><string>blockChargingEnable</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 <dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>阻止外部供电</string><key>key</key><string>blockPowerEnable</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
-<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>智能充电</string></dict>
-<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>智能充电</string><key>key</key><string>smartChargeEnable</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
-<dict><key>cell</key><string>PSGroupCell</string><key>footerText</key><string>建议先连接有线充电器再启用手动阻止。无线充电不执行智能停充。</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>footerText</key><string>阻止充电和阻止外部供电用于临时手动控制；智能停充、夜间分时充电和智能温度停充请统一在系统插件的“充电限制”中设置。修改后会立即通知后台充电引擎。</string></dict>
 </array><key>title</key><string>充电管理</string>
 </dict></plist>
