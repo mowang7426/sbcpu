@@ -263,7 +263,7 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
         // decision forever. Release the previous key and let this invocation
         // evaluate the new configuration from scratch.
         if (gLimitBlocked &&
-            (!gCfg.smartChargeEnabled && !gCfg.scheduleEnabled ||
+            ((!gCfg.smartChargeEnabled && !gCfg.scheduleEnabled) ||
              pct < gCfg.upperLimit ||
              oldCfg.scheduleEnabled != gCfg.scheduleEnabled ||
              oldCfg.scheduleStartHour != gCfg.scheduleStartHour ||
