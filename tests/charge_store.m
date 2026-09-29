@@ -9,7 +9,8 @@ int main(void) {
   assert([SBChargeRead()[@"smartChargeLowerLimit"] intValue] == 54);
   assert(SBChargePatch(@{@"smartChargeLowerLimit": @50}));
   // Simulate cfprefsd / stale SpringBoard rewriting the old domain.
-  assert([@{@"smartChargeEnable": @NO, @"smartChargeUpperLimit": @80} writeToFile:@SBCPU_CHARGE_LEGACY atomically:YES]);
+  NSDictionary *stale = @{@"smartChargeEnable": @NO, @"smartChargeUpperLimit": @80};
+  assert([stale writeToFile:@SBCPU_CHARGE_LEGACY atomically:YES]);
   assert([SBChargeRead()[@"smartChargeEnable"] boolValue]);
   assert([SBChargeRead()[@"smartChargeUpperLimit"] intValue] == 55);
   assert([SBChargeRead()[@"smartChargeLowerLimit"] intValue] == 50);
