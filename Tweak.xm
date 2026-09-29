@@ -1427,6 +1427,9 @@ typedef struct {
     uint8_t  manualChargeBlock;
     uint8_t  manualPowerBlock;
     uint8_t  scheduleEnabled;
+    uint8_t  scheduleStartHour;
+    uint8_t  scheduleStage2Hour;
+    uint8_t  scheduleStage3Hour;
     uint8_t  smartThermalEnabled;
     uint8_t  thermalUpperC;
     uint8_t  thermalLowerC;
