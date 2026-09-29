@@ -110,6 +110,9 @@ bool sb_engine_load_config(SBCPUChargeConfig *cfg) {
     c.manualChargeBlock = pref_bool(d, @"blockChargingEnable", false);
     c.manualPowerBlock = pref_bool(d, @"blockPowerEnable", false);
     c.scheduleEnabled = pref_bool(d, @"chargeScheduleEnabled", false);
+    c.scheduleStartHour = (uint8_t)pref_int(d, @"chargeScheduleStartHour", 22);
+    c.scheduleStage2Hour = (uint8_t)pref_int(d, @"chargeScheduleStage2Hour", 5);
+    c.scheduleStage3Hour = (uint8_t)pref_int(d, @"chargeScheduleStage3Hour", 6);
     c.smartThermalEnabled = pref_bool(d, @"smartThermalChargeEnable", false);
     c.thermalUpperC = (uint8_t)pref_int(d, @"smartThermalUpperC", 42);
     c.thermalLowerC = (uint8_t)pref_int(d, @"smartThermalLowerC", 38);
@@ -118,6 +121,9 @@ bool sb_engine_load_config(SBCPUChargeConfig *cfg) {
     if (c.upperLimit > 100) c.upperLimit = 100;
     if (c.lowerLimit > 99) c.lowerLimit = 99;
     if (c.upperLimit <= c.lowerLimit) { c.upperLimit = 80; c.lowerLimit = 70; }
+    if (c.scheduleStartHour > 23) c.scheduleStartHour = 22;
+    if (c.scheduleStage2Hour > 23) c.scheduleStage2Hour = 5;
+    if (c.scheduleStage3Hour > 23) c.scheduleStage3Hour = 6;
     if (c.thermalUpperC > 60) c.thermalUpperC = 60;
     if (c.thermalLowerC < 25) c.thermalLowerC = 25;
     if (c.thermalUpperC <= c.thermalLowerC) { c.thermalUpperC = 42; c.thermalLowerC = 38; }
@@ -386,18 +392,38 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
     }
 
     // 优先级 4：智能充电限制（迟滞，独立状态变量，不从 CH0C 反推）
-    if (gCfg.smartChargeEnabled || gCfg.chargeLimitEnabled) {
+    // 分时段计划：22:00→70%，05:00→85%，06:00→100%。
+    // 计划只改变本次决策的目标，不改动普通充电限制的用户设置。
+    NSInteger decisionUpper = gCfg.upperLimit;
+    NSInteger decisionLower = gCfg.lowerLimit;
+    if (gCfg.scheduleEnabled) {
+        NSDateComponents *now = [[NSCalendar currentCalendar] components:(NSCalendarUnitHour | NSCalendarUnitMinute) fromDate:[NSDate date]];
+        NSInteger minute = now.hour * 60 + now.minute;
+        NSInteger start = gCfg.scheduleStartHour * 60;
+        NSInteger stage2 = gCfg.scheduleStage2Hour * 60;
+        NSInteger stage3 = gCfg.scheduleStage3Hour * 60;
+        BOOL overnight = start > stage2;
+        if ((overnight && (minute >= start || minute < stage2)) || (!overnight && minute >= start && minute < stage2)) {
+            decisionUpper = 70;
+        } else if ((overnight && minute >= stage2 && minute < stage3) || (!overnight && minute >= stage2 && minute < stage3)) {
+            decisionUpper = 85;
+        } else if (gCfg.scheduleEnabled) {
+            decisionUpper = 100;
+        }
+        decisionLower = MAX(0, decisionUpper - 2);
+    }
+    if (gCfg.smartChargeEnabled || gCfg.chargeLimitEnabled || gCfg.scheduleEnabled) {
         // 用户刚刚手动关闭“阻止外部供电”时，优先确保 CH0I 已释放；
         // 在回充下限之前保持这次人工释放，避免 UI 关闭后下一次轮询又立刻断供。
         if (gPowerBlockUserReleased) {
-            if (pct <= gCfg.lowerLimit) {
+            if (pct <= decisionLower) {
                 gPowerBlockUserReleased = false;
             } else if (smc_get_power_blocked()) {
                 (void)smc_set_power_block(false, gCfg.overrideOBC);
             }
         }
         gOBC = smc_obc_taken_charge();
-        if (!gLimitBlocked && !gPowerBlockUserReleased && pct >= gCfg.upperLimit) {
+        if (!gLimitBlocked && !gPowerBlockUserReleased && pct >= decisionUpper) {
             // 智能停充固定使用阻止外部供电（CH0I），不受 chargeKeepAC 开关影响。
             // chargeKeepAC 仅保留给手动/兼容配置，不改变智能停充策略。
             gLimitUsesPowerBlock = true;
@@ -407,13 +433,13 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
                 if (gState != SBCPUChargeStateBlocked) {
                     gState = SBCPUChargeStateBlocked;
                     engine_log(@"limit reached: pct=%d >= %d -> BLOCKED (%s)",
-                        pct, gCfg.upperLimit, gLimitUsesPowerBlock ? "CH0I" : "CH0C");
+                        pct, decisionUpper, gLimitUsesPowerBlock ? "CH0I" : "CH0C");
                 }
             } else if (r == SB_RESULT_OBC_TAKEN) {
                 gState = SBCPUChargeStateOBCControlled;
                 engine_log(@"OBC took over at limit (pct=%d)", pct);
             }
-        } else if (gLimitBlocked && pct <= gCfg.lowerLimit) {
+        } else if (gLimitBlocked && pct <= decisionLower) {
             // 降到下限 → 恢复充电（按之前停充用的 key 复位）
             int r;
             if (gLimitUsesPowerBlock) {
@@ -426,7 +452,7 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
                 gLimitUsesPowerBlock = false;
                 if (gState != SBCPUChargeStateCharging) {
                     gState = SBCPUChargeStateCharging;
-                    engine_log(@"resume: pct=%d <= %d -> CHARGING", pct, gCfg.lowerLimit);
+                    engine_log(@"resume: pct=%d <= %d -> CHARGING", pct, decisionLower);
                 }
             } else if (r == SB_RESULT_OBC_TAKEN) {
                 gState = SBCPUChargeStateOBCControlled;
@@ -454,7 +480,7 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
             // threshold we explicitly converge to normal charging.
             bool staleChargeBlock = smc_get_charge_blocked();
             bool stalePowerBlock = smc_get_power_blocked();
-            if (pct < gCfg.upperLimit && (staleChargeBlock || stalePowerBlock)) {
+            if (pct < decisionUpper && (staleChargeBlock || stalePowerBlock)) {
                 if (staleChargeBlock) (void)smc_set_charge_block(false, gCfg.overrideOBC);
                 if (stalePowerBlock) (void)smc_set_power_block(false, gCfg.overrideOBC);
             }

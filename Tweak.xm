@@ -1466,7 +1466,10 @@ static IOReturn sbSMCSendLimits(void) {
     lim.drainMode = (chargeKeepAC ? 1 : 0) | (chargeOverrideOBC ? 2 : 0); // bit0=keepAC bit1=overrideOBC
     lim.manualChargeBlock = blockChargingEnable ? 1 : 0;
     lim.manualPowerBlock = blockPowerEnable ? 1 : 0;
-    lim.scheduleEnabled = 0;
+    lim.scheduleEnabled = getBoolPref(CFSTR("chargeScheduleEnabled"), NO) ? 1 : 0;
+    lim.scheduleStartHour = (uint8_t)getFloatPref(CFSTR("chargeScheduleStartHour"), 22.0f);
+    lim.scheduleStage2Hour = (uint8_t)getFloatPref(CFSTR("chargeScheduleStage2Hour"), 5.0f);
+    lim.scheduleStage3Hour = (uint8_t)getFloatPref(CFSTR("chargeScheduleStage3Hour"), 6.0f);
     lim.smartThermalEnabled = smartThermalChargeEnable ? 1 : 0;
     lim.thermalUpperC = (uint8_t)smartThermalUpperC;
     lim.thermalLowerC = (uint8_t)smartThermalLowerC;

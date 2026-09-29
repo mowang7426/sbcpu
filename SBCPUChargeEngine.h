@@ -33,7 +33,10 @@ typedef struct {
     bool overrideOBC;          // drain_config bit1：强制覆盖 OBC
     bool manualChargeBlock;    // 手动阻止充电（优先级最高）
     bool manualPowerBlock;     // 手动阻止外部供电
-    bool scheduleEnabled;      // 充电计划（V1 预留）
+    bool scheduleEnabled;      // 分时段智能充电计划
+    uint8_t scheduleStartHour; // 第一阶段开始小时，默认22
+    uint8_t scheduleStage2Hour; // 第二阶段小时，默认5
+    uint8_t scheduleStage3Hour; // 最终充满阶段小时，默认6
     bool smartThermalEnabled;  // 智能温度停充
     uint8_t thermalUpperC;     // 温度上限 °C
     uint8_t thermalLowerC;     // 温度下限 °C

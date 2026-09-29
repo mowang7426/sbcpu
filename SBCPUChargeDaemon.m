@@ -167,6 +167,9 @@ static void handle_client(int fd) {
             d[@"blockChargingEnable"] = @(lim.manualChargeBlock ? YES : NO);
             d[@"blockPowerEnable"] = @(lim.manualPowerBlock ? YES : NO);
             d[@"chargeScheduleEnabled"] = @(lim.scheduleEnabled ? YES : NO);
+            d[@"chargeScheduleStartHour"] = @(lim.scheduleStartHour);
+            d[@"chargeScheduleStage2Hour"] = @(lim.scheduleStage2Hour);
+            d[@"chargeScheduleStage3Hour"] = @(lim.scheduleStage3Hour);
             d[@"smartThermalChargeEnable"] = @(lim.smartThermalEnabled ? YES : NO);
             d[@"smartThermalUpperC"] = @(lim.thermalUpperC);
             d[@"smartThermalLowerC"] = @(lim.thermalLowerC);
@@ -195,6 +198,9 @@ static void handle_client(int fd) {
                 lim.manualChargeBlock = cfg.manualChargeBlock;
                 lim.manualPowerBlock = cfg.manualPowerBlock;
                 lim.scheduleEnabled = cfg.scheduleEnabled;
+                lim.scheduleStartHour = cfg.scheduleStartHour;
+                lim.scheduleStage2Hour = cfg.scheduleStage2Hour;
+                lim.scheduleStage3Hour = cfg.scheduleStage3Hour;
                 lim.smartThermalEnabled = cfg.smartThermalEnabled;
                 lim.thermalUpperC = cfg.thermalUpperC;
                 lim.thermalLowerC = cfg.thermalLowerC;
