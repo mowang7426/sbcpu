@@ -30,6 +30,7 @@
     if (prefLock >= 0) flock(prefLock, LOCK_EX);
     NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:@SB_PREF_FILE];
     if (!d) d = [NSMutableDictionary dictionary];
+    NSDictionary *before = [d copy];
     if (value) d[key] = value;
     else [d removeObjectForKey:key];
 
@@ -43,19 +44,19 @@
     // Keep the hysteresis interval valid when sliders are edited independently.
     if ([key isEqualToString:@"smartChargeUpperLimit"]) {
         NSInteger upper = [value integerValue];
-        NSInteger lower = [d[@"smartChargeLowerLimit"] integerValue];
+        NSInteger lower = [(d[@"smartChargeLowerLimit"] ?: @70) integerValue];
         if (upper <= lower) d[@"smartChargeLowerLimit"] = @(MAX(0, upper - 1));
     } else if ([key isEqualToString:@"smartChargeLowerLimit"]) {
         NSInteger lower = [value integerValue];
-        NSInteger upper = [d[@"smartChargeUpperLimit"] integerValue];
+        NSInteger upper = [(d[@"smartChargeUpperLimit"] ?: @80) integerValue];
         if (lower >= upper) d[@"smartChargeUpperLimit"] = @(MIN(100, lower + 1));
     } else if ([key isEqualToString:@"smartThermalUpperC"]) {
         NSInteger upper = [value integerValue];
-        NSInteger lower = [d[@"smartThermalLowerC"] integerValue];
+        NSInteger lower = [(d[@"smartThermalLowerC"] ?: @38) integerValue];
         if (upper <= lower) d[@"smartThermalLowerC"] = @(MAX(25, upper - 1));
     } else if ([key isEqualToString:@"smartThermalLowerC"]) {
         NSInteger lower = [value integerValue];
-        NSInteger upper = [d[@"smartThermalUpperC"] integerValue];
+        NSInteger upper = [(d[@"smartThermalUpperC"] ?: @42) integerValue];
         if (lower >= upper) d[@"smartThermalUpperC"] = @(MIN(60, lower + 1));
     }
 
@@ -64,11 +65,19 @@
 
     // Persist to both stores and synchronize immediately so PreferenceLoader
     // does not fall back to the plist defaults after navigation.
-    CFPreferencesSetValue((__bridge CFStringRef)key,
-                          (__bridge CFPropertyListRef)value,
-                          CFSTR(SB_PREF_DOMAIN),
-                          kCFPreferencesCurrentUser,
-                          kCFPreferencesAnyHost);
+    // Publish paired threshold adjustments too; otherwise cfprefsd can restore
+    // the old lower limit after the plist was updated with the new upper limit.
+    NSMutableSet *changedKeys = [NSMutableSet setWithObject:key];
+    for (NSString *candidate in d) {
+        if (![d[candidate] isEqual:before[candidate]]) [changedKeys addObject:candidate];
+    }
+    for (NSString *changed in changedKeys) {
+        CFPreferencesSetValue((__bridge CFStringRef)changed,
+                              (__bridge CFPropertyListRef)d[changed],
+                              CFSTR(SB_PREF_DOMAIN),
+                              kCFPreferencesCurrentUser,
+                              kCFPreferencesAnyHost);
+    }
     CFPreferencesSynchronize(CFSTR(SB_PREF_DOMAIN),
                              kCFPreferencesCurrentUser,
                              kCFPreferencesAnyHost);

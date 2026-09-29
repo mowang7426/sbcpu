@@ -1205,18 +1205,21 @@ static void applyExperimentalChargeLimit100(BOOL enable) {
 
 // 智能停充：用 IOKit 读取真实电量百分比（兼容 SpringBoard 环境）
 static NSInteger getBatteryPercentForSmartCharge(void) {
-    @try {
-        NSDictionary *info = getRealBatteryDetails();
-        NSInteger cur = [info[@"CurrentCapacity"] integerValue];
-        NSInteger max = [info[@"MaxCapacity"] integerValue];
-        if (max > 0 && cur > 0) {
-            return (NSInteger)(cur * 100.0 / max);
-        }
-    } @catch (id e) {}
-    // fallback: UIDevice
+    // Match daemon IOPMPowerSource CurrentCapacity; raw mAh / nominal mAh
+    // can differ from the percentage actually used for 60/55 decisions.
+    io_service_t service = IOServiceGetMatchingService(0, IOServiceMatching("IOPMPowerSource"));
+    int percent = -1;
+    if (service != IO_OBJECT_NULL) {
+        CFTypeRef value = IORegistryEntryCreateCFProperty(service, CFSTR("CurrentCapacity"), kCFAllocatorDefault, 0);
+        if (value && CFGetTypeID(value) == CFNumberGetTypeID())
+            CFNumberGetValue((CFNumberRef)value, kCFNumberIntType, &percent);
+        if (value) CFRelease(value);
+        IOObjectRelease(service);
+    }
+    if (percent >= 0 && percent <= 100) return percent;
     [UIDevice currentDevice].batteryMonitoringEnabled = YES;
     float level = [UIDevice currentDevice].batteryLevel;
-    if (level > 0) return (NSInteger)(level * 100);
+    if (level >= 0) return (NSInteger)lrintf(level * 100);
     return -1;
 }
 
@@ -8061,8 +8064,9 @@ static NSString *stripLeadingEmoji(NSString *s) {
 - (void)changeBlockCharging:(UISwitch *)sw {
     if (!sw.isOn) {
         // 关闭：经 daemon 恢复充电
-        if (sbSMCInit() == kIOReturnSuccess) {
-            IOReturn r = sbSMCSetChargeBlock(NO, NO);
+        IOReturn initResult = sbSMCInit();
+        {
+            IOReturn r = initResult == kIOReturnSuccess ? sbSMCSetChargeBlock(NO, NO) : initResult;
             if (r != kIOReturnSuccess) {
                 UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复充电失败"
                     message:sbChargeErrorMessage(r)
@@ -8089,11 +8093,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
         sw.on = NO;
         return;
     }
-    // 与智能停充互斥：手动阻止充电时关闭智能停充
-    if (smartChargeEnable) {
-        smartChargeEnable = NO;
-        SavePreferencesAndNotify();
-    }
+    // 手动请求独立，不能在 SMC 操作前偷偷关闭智能停充。
     IOReturn r = sbSMCSetChargeBlock(YES, NO);
     if (r != kIOReturnSuccess) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"阻止充电失败"
