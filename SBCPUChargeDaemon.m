@@ -21,6 +21,7 @@
 #include "SBCPUChargeSMC.h"
 #include "SBCPUChargePowerSource.h"
 #include "SBCPUChargeEngine.h"
+#import "SBCPUChargeStore.h"
 
 // ================= 日志（写文件便于用户诊断） =================
 static void sb_log(NSString *msg) {
@@ -154,36 +155,8 @@ static void handle_client(int fd) {
                 resp.result = SB_RESULT_IO_ERROR;
                 break;
             }
-            int prefLock = open(SB_PREF_WRITE_LOCK_PATH, O_CREAT | O_RDWR, 0644);
-            if (prefLock >= 0) flock(prefLock, LOCK_EX);
-            NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:@SB_PREF_FILE];
-            if (!d) d = [NSMutableDictionary dictionary];
-            d[@"smartChargeEnable"] = @(lim.smartChargeEnabled ? YES : NO);
-            d[@"chargeLimitEnabled"] = @(lim.chargeLimitEnabled ? YES : NO);
-            d[@"smartChargeUpperLimit"] = @(lim.upperLimit);
-            d[@"smartChargeLowerLimit"] = @(lim.lowerLimit);
-            d[@"chargeKeepAC"] = @((lim.drainMode & 1) ? YES : NO);
-            d[@"chargeOverrideOBC"] = @((lim.drainMode & 2) ? YES : NO);
-            d[@"blockChargingEnable"] = @(lim.manualChargeBlock ? YES : NO);
-            d[@"blockPowerEnable"] = @(lim.manualPowerBlock ? YES : NO);
-            d[@"chargeScheduleEnabled"] = @(lim.scheduleEnabled ? YES : NO);
-            d[@"chargeScheduleStartHour"] = @(lim.scheduleStartHour);
-            d[@"chargeScheduleStartMinute"] = @(lim.scheduleStartMinute);
-            d[@"chargeScheduleStage2Hour"] = @(lim.scheduleStage2Hour);
-            d[@"chargeScheduleStage2Minute"] = @(lim.scheduleStage2Minute);
-            d[@"chargeScheduleStage3Hour"] = @(lim.scheduleStage3Hour);
-            d[@"chargeScheduleStage3Minute"] = @(lim.scheduleStage3Minute);
-            d[@"smartThermalChargeEnable"] = @(lim.smartThermalEnabled ? YES : NO);
-            d[@"smartThermalUpperC"] = @(lim.thermalUpperC);
-            d[@"smartThermalLowerC"] = @(lim.thermalLowerC);
-            [d writeToFile:@SB_PREF_FILE atomically:YES];
-            if (prefLock >= 0) { flock(prefLock, LOCK_UN); close(prefLock); }
-            sb_log([NSString stringWithFormat:@"limits set: smart=%d upper=%d lower=%d keepAC=%d obc=%d",
-                lim.smartChargeEnabled, lim.upperLimit, lim.lowerLimit,
-                (lim.drainMode & 1) != 0, (lim.drainMode & 2) != 0]);
-            // 立即重新决策
-            sb_engine_redecide();
-            resp.result = SB_RESULT_OK;
+            sb_log(@"rejected legacy SET_LIMITS snapshot; charge store is authoritative");
+            resp.result = SB_RESULT_IO_ERROR;
             break;
         }
         case SB_CMD_GET_LIMITS: {
@@ -216,7 +189,12 @@ static void handle_client(int fd) {
         }
         case SB_CMD_REDECIDE: {
             sb_engine_redecide();
-            resp.result = SB_RESULT_OK;
+            SBCPUChargeConfig applied = {0};
+            bool loaded = sb_engine_load_config(&applied);
+            sb_log([NSString stringWithFormat:@"charge store readback: smart=%d upper=%d lower=%d schedule=%d thermal=%d state=%d",
+                applied.smartChargeEnabled, applied.upperLimit, applied.lowerLimit,
+                applied.scheduleEnabled, applied.smartThermalEnabled, sb_engine_state()]);
+            resp.result = loaded ? SB_RESULT_OK : SB_RESULT_IO_ERROR;
             break;
         }
         case SB_CMD_GET_STATUS: {

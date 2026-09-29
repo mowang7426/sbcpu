@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>items</key><array>
-<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>充电模式说明</string><key>footerText</key><string>普通充电上限：达到上限后暂停，降到回充下限后恢复。夜间分时充电：第一阶段先到70%，第二阶段到85%，最后阶段才到100%。两种模式可分别开关；夜间计划开启后优先执行。修改后立即生效。</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>充电模式说明</string><key>footerText</key><string>普通充电上限：达到上限后暂停，降到回充下限后恢复。夜间分时充电：第一阶段先到70%，第二阶段到85%，最后阶段才到100%。两种模式独立执行；智能停充阻止外部供电，夜间计划阻止充电。修改后立即生效。</string></dict>
 <dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>启用智能停充</string><key>key</key><string>smartChargeEnable</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string><key>footerText</key><string>不使用夜间计划时，按下面的充电上限和回充下限运行。</string></dict>
 <dict><key>cell</key><string>PSTitleValueCell</string><key>action</key><string>selectScheduleValue:</string><key>label</key><string>普通模式：停止充电上限</string><key>key</key><string>smartChargeUpperLimit</string><key>default</key><integer>80</integer><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 <dict><key>cell</key><string>PSTitleValueCell</string><key>action</key><string>selectScheduleValue:</string><key>label</key><string>普通模式：恢复充电下限</string><key>key</key><string>smartChargeLowerLimit</string><key>default</key><integer>70</integer><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>

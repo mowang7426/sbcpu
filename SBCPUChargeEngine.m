@@ -18,6 +18,7 @@
 #include "SBCPUChargeSMC.h"
 #include "SBCPUChargePowerSource.h"
 #include "SBCPUChargeProtocol.h"
+#import "SBCPUChargeStore.h"
 
 static SBCPUChargeConfig gCfg = {0};
 static SBCPUChargeState gState = SBCPUChargeStateUnknown;
@@ -97,7 +98,7 @@ static long pref_int(NSDictionary *d, NSString *key, long def) {
 }
 
 bool sb_engine_load_config(SBCPUChargeConfig *cfg) {
-    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@SB_PREF_FILE];
+    NSDictionary *d = SBChargeRead();
     if (!d) return false;
 
     SBCPUChargeConfig c = {0};
@@ -200,10 +201,9 @@ int sb_engine_manual_charge_block(bool block) {
         gManualChargeBlock = block;
         gCfg.manualChargeBlock = block;
         // 同步回偏好，UI 重启后仍生效
-        NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:@SB_PREF_FILE];
-        if (d) {
-            d[@"blockChargingEnable"] = @(block);
-            [d writeToFile:@SB_PREF_FILE atomically:YES];
+        if (!SBChargePatch(@{@"blockChargingEnable": @(block)})) {
+            engine_log(@"manual state persistence failed");
+            engine_unlock(); return SB_RESULT_IO_ERROR;
         }
         gState = block ? SBCPUChargeStateBlocked : SBCPUChargeStateCharging;
         engine_log(@"manual charge block -> %d (0x%x)", block, r);
@@ -219,10 +219,9 @@ int sb_engine_manual_power_block(bool block) {
     if (r == SB_RESULT_OK) {
         gManualPowerBlock = block;
         gCfg.manualPowerBlock = block;
-        NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:@SB_PREF_FILE];
-        if (d) {
-            d[@"blockPowerEnable"] = @(block);
-            [d writeToFile:@SB_PREF_FILE atomically:YES];
+        if (!SBChargePatch(@{@"blockPowerEnable": @(block)})) {
+            engine_log(@"manual state persistence failed");
+            engine_unlock(); return SB_RESULT_IO_ERROR;
         }
         gState = block ? SBCPUChargeStateBlocked : SBCPUChargeStateCharging;
         if (!block) {

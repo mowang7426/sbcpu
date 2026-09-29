@@ -29,6 +29,7 @@
 #include <string.h>
 #include <ctype.h>
 #import "SBCPUThermalPaths.h"
+#import "SBCPUChargeStore.h"
 #import "SBCPUThermalPressure.h"
 #import "Shared/LGLiveBackdropView.h"
 
@@ -47,7 +48,6 @@ static IOReturn sbSMCSetPowerBlock(BOOL inhibit, BOOL overrideOBC);
 static BOOL sbSMCGetChargeBlocked(void);
 static BOOL sbSMCGetPowerBlocked(void);
 static NSString *sbSMCAvailableString(void);
-static IOReturn sbSMCSendLimits(void);
 static IOReturn sbSMCRedecide(void);
 static void updateSmartCharge(void);
 
@@ -888,6 +888,10 @@ static DeviceSpec getDeviceSpec(void) {
 }
 
 static BOOL getBoolPref(CFStringRef key, BOOL defaultVal) {
+    if (SBChargeKey((__bridge NSString *)key)) {
+        id v = SBChargeRead()[(__bridge NSString *)key];
+        return v ? [v boolValue] : defaultVal;
+    }
     CFPropertyListRef val = CFPreferencesCopyValue(key, kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
     if (val) {
         BOOL res = defaultVal;
@@ -899,6 +903,10 @@ static BOOL getBoolPref(CFStringRef key, BOOL defaultVal) {
 }
 
 static float getFloatPref(CFStringRef key, float defaultVal) {
+    if (SBChargeKey((__bridge NSString *)key)) {
+        id v = SBChargeRead()[(__bridge NSString *)key];
+        return v ? [v floatValue] : defaultVal;
+    }
     CFPropertyListRef val = CFPreferencesCopyValue(key, kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
     if (val) {
         float res = defaultVal;
@@ -909,6 +917,10 @@ static float getFloatPref(CFStringRef key, float defaultVal) {
 }
 
 static NSInteger getIntPref(CFStringRef key, NSInteger defaultVal) {
+    if (SBChargeKey((__bridge NSString *)key)) {
+        id v = SBChargeRead()[(__bridge NSString *)key];
+        return v ? [v integerValue] : defaultVal;
+    }
     CFPropertyListRef val = CFPreferencesCopyValue(key, kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
     if (val) {
         NSInteger res = defaultVal;
@@ -1104,17 +1116,6 @@ static void SavePreferencesAndNotify(void) {
     setFloatPref(CFSTR("SBCPU.LiquidGlass.Bezel"), liquidGlassBezel);
     setFloatPref(CFSTR("SBCPU.LiquidGlass.RefractiveIndex"), liquidGlassRefractiveIndex);
     setFloatPref(CFSTR("SBCPU.LiquidGlass.Quality"), liquidGlassQuality);
-    setBoolPref(CFSTR("smartChargeEnable"), smartChargeEnable);
-    setFloatPref(CFSTR("smartChargeUpperLimit"), (float)smartChargeUpperLimit);
-    setFloatPref(CFSTR("smartChargeLowerLimit"), (float)smartChargeLowerLimit);
-    setFloatPref(CFSTR("smartChargeMode"), (float)smartChargeMode);
-    setBoolPref(CFSTR("blockChargingEnable"), blockChargingEnable);
-    setBoolPref(CFSTR("blockPowerEnable"), blockPowerEnable);
-    setBoolPref(CFSTR("chargeKeepAC"), chargeKeepAC);
-    setBoolPref(CFSTR("chargeOverrideOBC"), chargeOverrideOBC);
-    setBoolPref(CFSTR("smartThermalChargeEnable"), smartThermalChargeEnable);
-    setFloatPref(CFSTR("smartThermalUpperC"), (float)smartThermalUpperC);
-    setFloatPref(CFSTR("smartThermalLowerC"), (float)smartThermalLowerC);
     setFloatPref(CFSTR("glassDimOpacity"), glassDimOpacity);
     setFloatPref(CFSTR("glassBlurRadius"), glassBlurRadius);
     setFloatPref(CFSTR("glassCardOpacity"), glassCardOpacity);
@@ -1141,12 +1142,7 @@ static void SavePreferencesAndNotify(void) {
     applySystemRefreshRate(); 
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), kPrefChangedNotification, NULL, NULL, YES);
     
-    if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
-        // V4.22 — 开机/注销后：把配置下发给 daemon 并重判（Charge Engine 自己执行 SMC）
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            updateSmartCharge();
-        });
-    }
+
 }
 
 /*
@@ -1228,7 +1224,6 @@ static NSInteger getBatteryPercentForSmartCharge(void) {
 // 这里只在设置变化/启动时把配置下发给 daemon，并读取 daemon 状态用于回显。
 static void updateSmartCharge(void) {
     // 配置有变化 → 下发 daemon 并立即重新决策
-    sbSMCSendLimits();
     sbSMCRedecide();
 }
 
@@ -1255,7 +1250,7 @@ enum {
 
 #define SB_SOCKET_PATH "/var/mobile/Library/Preferences/sbcpu_charge.sock"
 #define SB_MAGIC 0x53424350
-#define SB_DAEMON_VERSION 3
+#define SB_DAEMON_VERSION 5
 
 // daemon 返回的 result 语义（与 SBCPUChargeProtocol.h SB_RESULT_* 对齐）
 enum {
@@ -1458,43 +1453,6 @@ typedef struct {
 } sb_status_t;
 
 // 下发智能充电配置给 daemon（保存到偏好 + 立即 REDECIDE）
-static IOReturn sbSMCSendLimits(void) {
-    int fd = sbSMCConnect();
-    if (fd < 0) return kIOReturnNotOpen;
-    sb_cmd_t c = {0};
-    c.magic = SB_MAGIC;
-    c.cmd = kSBCmdSetLimits;
-    if (!sbSMCWriteFull(fd, &c, sizeof(c))) { close(fd); return kIOReturnIOError; }
-
-    sb_limits_t lim = {0};
-    lim.smartChargeEnabled = smartChargeEnable ? 1 : 0;
-    lim.chargeLimitEnabled = smartChargeEnable ? 1 : 0; // V1：与智能充电共用总开关
-    lim.upperLimit = (uint8_t)smartChargeUpperLimit;
-    lim.lowerLimit = (uint8_t)smartChargeLowerLimit;
-    // 智能停充固定使用 CH0I；keepAC 仍仅用于兼容旧配置/手动策略。
-    lim.drainMode = (chargeKeepAC ? 1 : 0) | (chargeOverrideOBC ? 2 : 0); // bit0=keepAC bit1=overrideOBC
-    lim.manualChargeBlock = blockChargingEnable ? 1 : 0;
-    lim.manualPowerBlock = blockPowerEnable ? 1 : 0;
-    lim.scheduleEnabled = getBoolPref(CFSTR("chargeScheduleEnabled"), NO) ? 1 : 0;
-    lim.scheduleStartHour = (uint8_t)getFloatPref(CFSTR("chargeScheduleStartHour"), 22.0f);
-    lim.scheduleStartMinute = (uint8_t)getFloatPref(CFSTR("chargeScheduleStartMinute"), 0.0f);
-    lim.scheduleStage2Hour = (uint8_t)getFloatPref(CFSTR("chargeScheduleStage2Hour"), 5.0f);
-    lim.scheduleStage2Minute = (uint8_t)getFloatPref(CFSTR("chargeScheduleStage2Minute"), 30.0f);
-    lim.scheduleStage3Hour = (uint8_t)getFloatPref(CFSTR("chargeScheduleStage3Hour"), 6.0f);
-    lim.scheduleStage3Minute = (uint8_t)getFloatPref(CFSTR("chargeScheduleStage3Minute"), 30.0f);
-    lim.smartThermalEnabled = smartThermalChargeEnable ? 1 : 0;
-    lim.thermalUpperC = (uint8_t)smartThermalUpperC;
-    lim.thermalLowerC = (uint8_t)smartThermalLowerC;
-    if (!sbSMCWriteFull(fd, &lim, sizeof(lim))) { close(fd); return kIOReturnIOError; }
-
-    sb_resp_t r = {0};
-    bool ok = sbSMCReadFull(fd, &r, sizeof(r));
-    close(fd);
-    if (!ok || r.magic != SB_MAGIC)
-        return kIOReturnIOError;
-    return (IOReturn)r.result;
-}
-
 // 立即重新决策（配置变化后调用）
 static IOReturn sbSMCRedecide(void) {
     uint8_t v = 0;
@@ -8051,6 +8009,11 @@ static NSString *stripLeadingEmoji(NSString *s) {
 // 智能停充：开关（V4.22：只改偏好 + 下发 daemon，SMC 决策由 daemon 完成）
 - (void)changeSmartChargeEnable:(UISwitch *)sw {
     smartChargeEnable = sw.isOn;
+    if (!SBChargePatch(@{@"smartChargeEnable": @(smartChargeEnable)})) {
+        LoadPreferences();
+        [self.tableView reloadData];
+        return;
+    }
     SavePreferencesAndNotify();
     if (!smartChargeEnable) {
         smartChargeStopped = NO;
@@ -8171,6 +8134,11 @@ static NSString *stripLeadingEmoji(NSString *s) {
 
 - (void)changeSmartThermalEnable:(UISwitch *)sw {
     smartThermalChargeEnable = sw.isOn;
+    if (!SBChargePatch(@{@"smartThermalChargeEnable": @(smartThermalChargeEnable)})) {
+        LoadPreferences();
+        [self.tableView reloadData];
+        return;
+    }
     SavePreferencesAndNotify();
     updateSmartCharge();
     [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:9] withRowAnimation:UITableViewRowAnimationNone];
@@ -8202,6 +8170,11 @@ static NSString *stripLeadingEmoji(NSString *s) {
 
 - (void)commitSmartThermal:(UISlider *)slider {
     (void)slider;
+    if (!SBChargePatch(@{@"smartThermalUpperC": @(smartThermalUpperC), @"smartThermalLowerC": @(smartThermalLowerC)})) {
+        LoadPreferences();
+        [self.tableView reloadData];
+        return;
+    }
     SavePreferencesAndNotify();
     updateSmartCharge();
     [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:9] withRowAnimation:UITableViewRowAnimationNone];
@@ -8213,6 +8186,11 @@ static NSString *stripLeadingEmoji(NSString *s) {
     if (smartChargeMode == 0) { smartChargeUpperLimit = 80; smartChargeLowerLimit = 70; }
     else if (smartChargeMode == 1) { smartChargeUpperLimit = 100; smartChargeLowerLimit = 90; }
     else if (smartChargeMode == 2) { smartChargeUpperLimit = 60; smartChargeLowerLimit = 50; }
+    if (!SBChargePatch(@{@"smartChargeMode": @(smartChargeMode), @"smartChargeUpperLimit": @(smartChargeUpperLimit), @"smartChargeLowerLimit": @(smartChargeLowerLimit)})) {
+        LoadPreferences();
+        [self.tableView reloadData];
+        return;
+    }
     SavePreferencesAndNotify();
     smartChargeStopped = NO;
     updateSmartCharge();
@@ -8305,6 +8283,11 @@ static NSString *stripLeadingEmoji(NSString *s) {
 
 - (void)commitSmartChargeUpper:(UISlider *)slider {
     (void)slider;
+    if (!SBChargePatch(@{@"smartChargeUpperLimit": @(smartChargeUpperLimit), @"smartChargeLowerLimit": @(smartChargeLowerLimit)})) {
+        LoadPreferences();
+        [self.tableView reloadData];
+        return;
+    }
     SavePreferencesAndNotify();
     [self updateSmartChargeRangeVisualization];
     updateSmartCharge(); // V4.22：下发配置 + daemon 重判
@@ -8322,6 +8305,11 @@ static NSString *stripLeadingEmoji(NSString *s) {
 
 - (void)commitSmartChargeLower:(UISlider *)slider {
     (void)slider;
+    if (!SBChargePatch(@{@"smartChargeUpperLimit": @(smartChargeUpperLimit), @"smartChargeLowerLimit": @(smartChargeLowerLimit)})) {
+        LoadPreferences();
+        [self.tableView reloadData];
+        return;
+    }
     SavePreferencesAndNotify();
     [self updateSmartChargeRangeVisualization];
     updateSmartCharge(); // V4.22：下发配置 + daemon 重判

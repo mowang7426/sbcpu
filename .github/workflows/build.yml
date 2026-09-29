@@ -12,6 +12,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Charge configuration regression
+        run: |
+          set -e
+          TMP_STORE=$(mktemp -d)
+          clang -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
+            -DSBCPU_CHARGE_STORE=\"$TMP_STORE/config.plist\" \
+            -DSBCPU_CHARGE_STORE_LOCK=\"$TMP_STORE/config.lock\" \
+            -DSBCPU_CHARGE_LEGACY=\"$TMP_STORE/legacy.plist\" \
+            tests/charge_store.m -o "$TMP_STORE/test"
+          "$TMP_STORE/test"
+          python3 tests/charge_regression.py
+
       - name: Install dependencies
         run: |
           brew install make dpkg ldid xz

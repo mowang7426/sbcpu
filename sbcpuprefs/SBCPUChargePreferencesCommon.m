@@ -1,5 +1,6 @@
 #import "SBCPUChargePreferencesCommon.h"
 #import <CoreFoundation/CoreFoundation.h>
+#import "../SBCPUChargeStore.h"
 #include <string.h>
 #include <notify.h>
 #include <sys/socket.h>
@@ -13,6 +14,7 @@
 @implementation SBCPUChargePreferencesCommon
 
 + (id)valueForKey:(NSString *)key defaultValue:(id)defaultValue {
+    if (SBChargeKey(key)) return SBChargeRead()[key] ?: defaultValue;
     NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@SB_PREF_FILE];
     id v = d[key];
     if (v) return v;
@@ -26,6 +28,16 @@
 }
 
 + (void)setValue:(id)value forKey:(NSString *)key {
+    if (SBChargeKey(key)) {
+        if (!value || !SBChargePatch(@{key: value})) {
+            NSLog(@"[SBCPUChargePrefs] failed to persist %@", key);
+            return;
+        }
+        [self redecideDaemon];
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+            CFSTR("com.yourname.sbcpufloating.prefschanged"), NULL, NULL, YES);
+        return;
+    }
     int prefLock = open(SB_PREF_WRITE_LOCK_PATH, O_CREAT | O_RDWR, 0644);
     if (prefLock >= 0) flock(prefLock, LOCK_EX);
     NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:@SB_PREF_FILE];
