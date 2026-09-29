@@ -32,6 +32,8 @@ static bool gLimitBlocked = false;        // 当前是否处于"达到上限停�
 static bool gLimitUsesPowerBlock = false;
 static bool gPowerBlockUserReleased = false;
 static bool gThermalBlocked = false;
+static bool gScheduleBlocked = false;
+static NSInteger gScheduleStage = 0;
 static double gBatteryTemperatureC = -1.0;
 
 // IOKit callbacks run on the daemon run-loop while socket commands arrive on a
@@ -227,8 +229,7 @@ int sb_engine_manual_power_block(bool block) {
             gLimitBlocked = false;
             gLimitUsesPowerBlock = false;
             gPowerBlockUserReleased = true;
-            (void)smc_set_charge_block(false, gCfg.overrideOBC);
-            engine_log(@"manual power release: cleared CH0I/CH0C and suspended automatic power block until recharge threshold");
+            engine_log(@"manual power release: cleared CH0I and suspended automatic power block until recharge threshold");
         }
         engine_log(@"manual power block -> %d (0x%x)", block, r);
     }
@@ -271,28 +272,24 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
         // drain mode while already blocked, do not carry the old hysteresis
         // decision forever. Release the previous key and let this invocation
         // evaluate the new configuration from scratch.
-        if (gLimitBlocked &&
-            ((!gCfg.smartChargeEnabled && !gCfg.scheduleEnabled) ||
-             pct < gCfg.upperLimit ||
-             oldCfg.scheduleEnabled != gCfg.scheduleEnabled ||
-             oldCfg.scheduleStartHour != gCfg.scheduleStartHour ||
-             oldCfg.scheduleStartMinute != gCfg.scheduleStartMinute ||
-             oldCfg.scheduleStage2Hour != gCfg.scheduleStage2Hour ||
-             oldCfg.scheduleStage2Minute != gCfg.scheduleStage2Minute ||
-             oldCfg.scheduleStage3Hour != gCfg.scheduleStage3Hour ||
-             oldCfg.scheduleStage3Minute != gCfg.scheduleStage3Minute ||
-             oldCfg.keepAC != gCfg.keepAC)) {
+        if (!gCfg.smartChargeEnabled || pct < gCfg.upperLimit ||
+            oldCfg.keepAC != gCfg.keepAC) {
             if (gLimitUsesPowerBlock) {
                 (void)smc_set_power_block(false, oldCfg.overrideOBC);
-            } else {
-                (void)smc_set_charge_block(false, oldCfg.overrideOBC);
             }
             gLimitBlocked = false;
             gLimitUsesPowerBlock = false;
         }
 
+        bool scheduleConfigChanged = oldCfg.scheduleEnabled != gCfg.scheduleEnabled ||
+            oldCfg.scheduleStartHour != gCfg.scheduleStartHour || oldCfg.scheduleStartMinute != gCfg.scheduleStartMinute ||
+            oldCfg.scheduleStage2Hour != gCfg.scheduleStage2Hour || oldCfg.scheduleStage2Minute != gCfg.scheduleStage2Minute ||
+            oldCfg.scheduleStage3Hour != gCfg.scheduleStage3Hour || oldCfg.scheduleStage3Minute != gCfg.scheduleStage3Minute;
+        if (scheduleConfigChanged) {
+            gScheduleBlocked = false;
+            gScheduleStage = 0;
+        }
         if (gThermalBlocked && (!gCfg.smartThermalEnabled || oldCfg.smartThermalEnabled != gCfg.smartThermalEnabled || oldCfg.thermalUpperC != gCfg.thermalUpperC || oldCfg.thermalLowerC != gCfg.thermalLowerC)) {
-            (void)smc_set_charge_block(false, oldCfg.overrideOBC);
             gThermalBlocked = false;
         }
 
@@ -300,42 +297,40 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
             gCfg.smartChargeEnabled, gCfg.upperLimit, gCfg.lowerLimit, gCfg.keepAC, gCfg.overrideOBC);
     }
 
-    // 智能停充期间电量下降到下限时，必须在安全状态判断前释放我们使用的 key。
-    // CH0I 阻断时系统可能把 ExternalConnected 报成 false，不能让状态机卡在 NoPower。
-    if (gCfg.smartChargeEnabled && !gCfg.manualChargeBlock && !gCfg.manualPowerBlock &&
+    // 夜间计划独立使用 CH0C。阶段切换时重置上一阶段的迟滞状态，避免70%阶段的阻止状态锁住85%/100%阶段。
+    NSInteger scheduleStage = 0, scheduleTarget = 0;
+    if (gCfg.scheduleEnabled) {
+        NSDateComponents *now = [[NSCalendar currentCalendar] components:(NSCalendarUnitHour | NSCalendarUnitMinute) fromDate:[NSDate date]];
+        NSInteger minuteOfDay = now.hour * 60 + now.minute;
+        NSInteger start = gCfg.scheduleStartHour * 60 + gCfg.scheduleStartMinute;
+        NSInteger stage2 = gCfg.scheduleStage2Hour * 60 + gCfg.scheduleStage2Minute;
+        NSInteger stage3 = gCfg.scheduleStage3Hour * 60 + gCfg.scheduleStage3Minute;
+        BOOL overnight = start > stage2;
+        if ((overnight && (minuteOfDay >= start || minuteOfDay < stage2)) || (!overnight && minuteOfDay >= start && minuteOfDay < stage2)) { scheduleStage = 1; scheduleTarget = 70; }
+        else if (minuteOfDay >= stage2 && minuteOfDay < stage3) { scheduleStage = 2; scheduleTarget = 85; }
+        else { scheduleStage = 3; scheduleTarget = 100; }
+    }
+    if (!gCfg.scheduleEnabled || scheduleStage != gScheduleStage) {
+        if (gScheduleStage != scheduleStage) gScheduleBlocked = false;
+        gScheduleStage = scheduleStage;
+    }
+    if (scheduleStage && pct >= scheduleTarget) gScheduleBlocked = true;
+    else if (scheduleStage && pct <= MAX(0, scheduleTarget - 2)) gScheduleBlocked = false;
+
+    if (gCfg.smartChargeEnabled && gLimitBlocked && !gCfg.manualChargeBlock && !gCfg.manualPowerBlock &&
         pct >= 0 && pct <= gCfg.lowerLimit) {
-        bool releasePower = gLimitBlocked && gLimitUsesPowerBlock;
-        bool releaseCharge = gLimitBlocked && !gLimitUsesPowerBlock;
-        if (releasePower || releaseCharge) {
-            int rr = releasePower
-                ? smc_set_power_block(false, gCfg.overrideOBC)
-                : smc_set_charge_block(false, gCfg.overrideOBC);
-            if (rr == SB_RESULT_OK) {
-                gLimitBlocked = false;
-                gLimitUsesPowerBlock = false;
-                gState = SBCPUChargeStateCharging;
-                engine_log(@"smart recovery: pct=%d <= %d -> release %s", pct, gCfg.lowerLimit,
-                    releasePower ? @"CH0I" : @"CH0C");
-                sb_power_poll_once();
-                engine_unlock();
-                return;
-            }
-            engine_log(@"smart recovery: pct=%d <= %d release failed result=%d", pct, gCfg.lowerLimit, rr);
-        }
-    }
-
-    // CH0I 生效后 ExternalConnected 可能暂时变为 false；先处理温度迟滞恢复，
-    // 再进入无外部电源分支，避免温度降下来后无法解除阻止充电。
-    if (gThermalBlocked && gBatteryTemperatureC > 0.0 && gBatteryTemperatureC <= gCfg.thermalLowerC &&
-        !gCfg.manualChargeBlock && !gCfg.manualPowerBlock) {
-        int rr = smc_set_charge_block(false, gCfg.overrideOBC);
+        int rr = smc_set_power_block(false, gCfg.overrideOBC);
         if (rr == SB_RESULT_OK) {
-            gThermalBlocked = false;
-            gState = SBCPUChargeStateCharging;
-            engine_log(@"thermal recovery before power check: %.1fC <= %dC -> release CH0C", gBatteryTemperatureC, gCfg.thermalLowerC);
+            gLimitBlocked = false; gLimitUsesPowerBlock = false;
+            gPowerBlockUserReleased = false;
+            engine_log(@"smart recovery before power check: pct=%d <= %d -> release CH0I", pct, gCfg.lowerLimit);
         }
     }
 
+    // 夜间计划 CH0C 导致电源状态暂时报告断开时，也必须进入下方恢复决策。
+    // 温控 CH0C 阻止同理，控制请求在安全检查后会重算/解除。
+
+    // 温度迟滞由下方统一计算并合并 CH0C 请求；在安全状态分支前不直接清位。
     // 优先级 1：安全状态。
     // CH0I/CH0C 生效后，IOPMPowerSource 可能暂时报告 ExternalConnected=false。
     // 只要存在我们自己的 inhibit 或待处理状态，不能提前 return，否则恢复/重应用会卡死。
@@ -344,7 +339,7 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
     bool controlActive = actualChargeBlock || actualPowerBlock ||
         gManualChargeBlock || gManualPowerBlock ||
         gCfg.manualChargeBlock || gCfg.manualPowerBlock ||
-        gLimitBlocked || gThermalBlocked;
+        gLimitBlocked || gThermalBlocked || gScheduleBlocked;
     if ((!charging || !smc_external_connected()) && !controlActive) {
         if (gState != SBCPUChargeStateNoPower) {
             gState = SBCPUChargeStateNoPower;
@@ -383,148 +378,67 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
         return;
     }
 
-    // 优先级 3：智能温度停充。固定使用 CH0C（阻止充电），不阻断外部供电。
+    // 智能温控保持原有 CH0C 温度迟滞；只更新自己的请求，不直接清除其他功能的 CH0C。
     if (gCfg.smartThermalEnabled && gBatteryTemperatureC > 0.0) {
         if (!gThermalBlocked && gBatteryTemperatureC >= gCfg.thermalUpperC) {
-            int r = smc_set_charge_block(true, gCfg.overrideOBC);
-            if (r == SB_RESULT_OK) {
-                gThermalBlocked = true;
-                gState = SBCPUChargeStateBlocked;
-                engine_log(@"thermal limit: %.1fC >= %dC -> block charging (CH0C)", gBatteryTemperatureC, gCfg.thermalUpperC);
-            } else if (r == SB_RESULT_OBC_TAKEN) {
-                gState = SBCPUChargeStateOBCControlled;
-            }
+            gThermalBlocked = true;
+            engine_log(@"thermal limit: %.1fC >= %dC -> request CH0C", gBatteryTemperatureC, gCfg.thermalUpperC);
         } else if (gThermalBlocked && gBatteryTemperatureC <= gCfg.thermalLowerC) {
-            int r = smc_set_charge_block(false, gCfg.overrideOBC);
-            if (r == SB_RESULT_OK) {
-                gThermalBlocked = false;
-                gState = SBCPUChargeStateCharging;
-                engine_log(@"thermal recovery: %.1fC <= %dC -> release charge block (CH0C)", gBatteryTemperatureC, gCfg.thermalLowerC);
-            }
-        } else if (gThermalBlocked && !smc_get_charge_blocked()) {
-            (void)smc_set_charge_block(true, gCfg.overrideOBC);
+            gThermalBlocked = false;
+            engine_log(@"thermal recovery: %.1fC <= %dC -> release thermal request", gBatteryTemperatureC, gCfg.thermalLowerC);
         }
     } else if (gThermalBlocked) {
-        (void)smc_set_charge_block(false, gCfg.overrideOBC);
         gThermalBlocked = false;
-        engine_log(@"thermal limit disabled or temperature unavailable -> release CH0C");
+        engine_log(@"thermal feature disabled/unavailable -> release thermal request");
     }
 
-    // 温度停充独立执行，不截断普通智能停充或夜间计划。
-    // 分时段计划：22:00→70%，05:00→85%，06:00→100%。
-    // 计划只改变本次决策的目标，不改动普通充电限制的用户设置。
-    NSInteger decisionUpper = 101;
-    NSInteger decisionLower = 100;
+    // 夜间计划与温控共同使用 CH0C，但分别维护请求；任一开启且触发就保持阻止充电。
+    // 夜间计划与温控共享 CH0C 位，但各自只持有独立请求；活动任一项就保持停充。
+    bool chargeBlockRequested = gThermalBlocked || gScheduleBlocked ||
+        ((gManualChargeBlock || gCfg.manualChargeBlock) && smc_get_charge_blocked());
+    bool chargeBlockedNow = smc_get_charge_blocked();
+    if (chargeBlockRequested && !chargeBlockedNow) {
+        int r = smc_set_charge_block(true, gCfg.overrideOBC);
+        if (r == SB_RESULT_OK) {
+            gState = SBCPUChargeStateBlocked;
+            engine_log(@"CH0C applied: thermal=%d schedule=%d stage=%ld pct=%d", gThermalBlocked, gScheduleBlocked, (long)gScheduleStage, pct);
+        } else if (r == SB_RESULT_OBC_TAKEN) { gState = SBCPUChargeStateOBCControlled; }
+    } else if (!chargeBlockRequested && chargeBlockedNow) {
+        int r = smc_set_charge_block(false, gCfg.overrideOBC);
+        if (r == SB_RESULT_OK) engine_log(@"CH0C released: no enabled feature requests charge block");
+    }
+
+    // 智能停充保留原有独立逻辑：只由 smartChargeEnable 控制，沿用 CH0I 与用户上下限迟滞。
     if (gCfg.smartChargeEnabled) {
-        decisionUpper = gCfg.upperLimit;
-        decisionLower = gCfg.lowerLimit;
-    }
-    if (gCfg.scheduleEnabled) {
-        NSDateComponents *now = [[NSCalendar currentCalendar] components:(NSCalendarUnitHour | NSCalendarUnitMinute) fromDate:[NSDate date]];
-        NSInteger minute = now.hour * 60 + now.minute;
-        NSInteger start = gCfg.scheduleStartHour * 60 + gCfg.scheduleStartMinute;
-        NSInteger stage2 = gCfg.scheduleStage2Hour * 60 + gCfg.scheduleStage2Minute;
-        NSInteger stage3 = gCfg.scheduleStage3Hour * 60 + gCfg.scheduleStage3Minute;
-        BOOL overnight = start > stage2;
-        if ((overnight && (minute >= start || minute < stage2)) || (!overnight && minute >= start && minute < stage2)) {
-            if (70 < decisionUpper) { decisionUpper = 70; decisionLower = 68; }
-        } else if ((overnight && minute >= stage2 && minute < stage3) || (!overnight && minute >= stage2 && minute < stage3)) {
-            if (85 < decisionUpper) { decisionUpper = 85; decisionLower = 83; }
-        } else if (gCfg.scheduleEnabled) {
-            decisionUpper = MIN(decisionUpper, 100);
-        }
-    }
-    if (gCfg.smartChargeEnabled || gCfg.chargeLimitEnabled || gCfg.scheduleEnabled) {
-        // 用户刚刚手动关闭“阻止外部供电”时，优先确保 CH0I 已释放；
-        // 在回充下限之前保持这次人工释放，避免 UI 关闭后下一次轮询又立刻断供。
         if (gPowerBlockUserReleased) {
-            if (pct <= decisionLower) {
-                gPowerBlockUserReleased = false;
-            } else if (smc_get_power_blocked()) {
-                (void)smc_set_power_block(false, gCfg.overrideOBC);
-            }
+            if (pct <= gCfg.lowerLimit) gPowerBlockUserReleased = false;
+            else if (smc_get_power_blocked()) (void)smc_set_power_block(false, gCfg.overrideOBC);
         }
-        gOBC = smc_obc_taken_charge();
-        if (!gLimitBlocked && !gPowerBlockUserReleased && pct >= decisionUpper) {
-            // 智能停充固定使用阻止外部供电（CH0I），不受 chargeKeepAC 开关影响。
-            // chargeKeepAC 仅保留给手动/兼容配置，不改变智能停充策略。
+        if (pct >= 0 && pct <= gCfg.lowerLimit && gLimitBlocked) {
+            int rr = smc_set_power_block(false, gCfg.overrideOBC);
+            if (rr == SB_RESULT_OK) {
+                gLimitBlocked = false; gLimitUsesPowerBlock = false;
+                engine_log(@"smart recovery: pct=%d <= %d -> release CH0I", pct, gCfg.lowerLimit);
+            }
+        } else if (!gLimitBlocked && !gPowerBlockUserReleased && pct >= gCfg.upperLimit) {
             gLimitUsesPowerBlock = true;
             int r = smc_set_power_block(true, gCfg.overrideOBC);
-            if (r == SB_RESULT_OK) {
-                gLimitBlocked = true;
-                if (gState != SBCPUChargeStateBlocked) {
-                    gState = SBCPUChargeStateBlocked;
-                    engine_log(@"limit reached: pct=%d >= %d -> BLOCKED (%s)",
-                        pct, decisionUpper, gLimitUsesPowerBlock ? "CH0I" : "CH0C");
-                }
-            } else if (r == SB_RESULT_OBC_TAKEN) {
-                gState = SBCPUChargeStateOBCControlled;
-                engine_log(@"OBC took over at limit (pct=%d)", pct);
-            }
-        } else if (gLimitBlocked && pct <= decisionLower) {
-            // 降到下限 → 恢复充电（按之前停充用的 key 复位）
-            int r;
-            if (gLimitUsesPowerBlock) {
-                r = smc_set_power_block(false, gCfg.overrideOBC);
-            } else {
-                r = smc_set_charge_block(false, gCfg.overrideOBC);
-            }
-            if (r == SB_RESULT_OK) {
-                gLimitBlocked = false;
-                gLimitUsesPowerBlock = false;
-                if (gState != SBCPUChargeStateCharging) {
-                    gState = SBCPUChargeStateCharging;
-                    engine_log(@"resume: pct=%d <= %d -> CHARGING", pct, decisionLower);
-                }
-            } else if (r == SB_RESULT_OBC_TAKEN) {
-                gState = SBCPUChargeStateOBCControlled;
-            }
-        } else if (gLimitBlocked) {
-            // Hysteresis middle band: keep the logical state, but reconcile the
-            // actual SMC bit. iOS/OBC can reset CH0C/CH0I while unplugged or
-            // during a daemon restart; the software flag alone is not enough.
-            bool actualBlocked = gLimitUsesPowerBlock
-                ? smc_get_power_blocked()
-                : smc_get_charge_blocked();
-            if (!actualBlocked) {
-                int r = gLimitUsesPowerBlock
-                    ? smc_set_power_block(true, gCfg.overrideOBC)
-                    : smc_set_charge_block(true, gCfg.overrideOBC);
-                if (r == SB_RESULT_OK) {
-                    engine_log(@"re-applied active limit at pct=%d after SMC state drift", pct);
-                } else if (r == SB_RESULT_OBC_TAKEN) {
-                    gState = SBCPUChargeStateOBCControlled;
-                }
-            }
-        } else {
-            // Daemon restart/reload: gLimitBlocked is volatile, while CH0C/CH0I
-            // can still contain the previous inhibit bit. At or below the upper
-            // threshold we explicitly converge to normal charging.
-            bool staleChargeBlock = smc_get_charge_blocked();
-            bool stalePowerBlock = smc_get_power_blocked();
-            if (pct < decisionUpper && (staleChargeBlock || stalePowerBlock)) {
-                if (staleChargeBlock) (void)smc_set_charge_block(false, gCfg.overrideOBC);
-                if (stalePowerBlock) (void)smc_set_power_block(false, gCfg.overrideOBC);
-            }
+            if (r == SB_RESULT_OK) { gLimitBlocked = true; gState = SBCPUChargeStateBlocked; engine_log(@"smart limit: pct=%d >= %d -> CH0I", pct, gCfg.upperLimit); }
+            else if (r == SB_RESULT_OBC_TAKEN) gState = SBCPUChargeStateOBCControlled;
+        } else if (gLimitBlocked && pct > gCfg.lowerLimit) {
+            if (!smc_get_power_blocked()) (void)smc_set_power_block(true, gCfg.overrideOBC);
+        } else if (!gPowerBlockUserReleased && pct < gCfg.upperLimit && smc_get_power_blocked()) {
+            // daemon 重启后软件迟滞状态会丢失；仅在普通智能停充启用且低于上限时清旧 CH0I。
+            (void)smc_set_power_block(false, gCfg.overrideOBC);
         }
-        // 中间区间（lower < pct < upper）：保持迟滞；智能停充使用 CH0I，持续校验外部供电阻断状态。
-        engine_unlock();
-        return;
+    } else {
+        if (gLimitBlocked || smc_get_power_blocked()) (void)smc_set_power_block(false, gCfg.overrideOBC);
+        gLimitBlocked = false; gLimitUsesPowerBlock = false;
     }
 
-    // 优先级 4：无限制 → 正常充电
-    if (gLimitBlocked) {
-        gLimitBlocked = false;
-        gLimitUsesPowerBlock = false;
-        engine_log(@"limit disabled; reset limit state");
-    }
-    if (gState != SBCPUChargeStateCharging) {
-        gState = SBCPUChargeStateCharging;
-        engine_log(@"no limit active; ensure charging (pct=%d)", pct);
-    }
-    if (smc_get_charge_blocked() || smc_get_power_blocked()) {
-        (void)smc_set_charge_block(false, gCfg.overrideOBC);
-        (void)smc_set_power_block(false, gCfg.overrideOBC);
+    // 仅夜间计划/温控/普通智能停充均未触发时才报告正常充电；不清除其他仍有效的控制请求。
+    if (!chargeBlockRequested && !gLimitBlocked && !gManualChargeBlock && !gManualPowerBlock) {
+        if (gState != SBCPUChargeStateCharging) gState = SBCPUChargeStateCharging;
     }
     engine_unlock();
 }

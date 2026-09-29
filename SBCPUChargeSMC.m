@@ -291,18 +291,24 @@ int smc_set_charge_block(bool inhibit, bool overrideOBC) {
         return SB_RESULT_OK;
     }
 
-    // 安全：只有在真正准备“阻止充电”时，才要求外部电源/VBUS存在。
-    uint8_t chce = 0;
-    if (smc_read_key('CHCE', &chce, &sz) != kIOReturnSuccess) {
-        NSLog(@"[SBCPUChargeSMC] read CHCE failed 0x%08x", smc_last_error());
-        return SB_RESULT_IO_ERROR;
-    }
-    if (!chce) return SB_RESULT_NO_EXTERNAL_POWER;
+    // 当 CH0I 已由智能停充/手动功能置位时，系统可能把 CHCE/CH0R 报成无外部电源。
+    // 允许此时叠加夜间/温控 CH0C 请求；否则正常情况下仍严格要求检测到 VBUS。
+    uint8_t powerBlockState = 0;
+    int32_t powerBlockSize = 1;
+    bool existingPowerBlock = smc_read_key('CH0I', &powerBlockState, &powerBlockSize) == kIOReturnSuccess && (powerBlockState & 1);
+    if (!existingPowerBlock) {
+        uint8_t chce = 0;
+        if (smc_read_key('CHCE', &chce, &sz) != kIOReturnSuccess) {
+            NSLog(@"[SBCPUChargeSMC] read CHCE failed 0x%08x", smc_last_error());
+            return SB_RESULT_IO_ERROR;
+        }
+        if (!chce) return SB_RESULT_NO_EXTERNAL_POWER;
 
-    uint32_t ch0r = 0;
-    int32_t sz4 = 4;
-    if (smc_read_key('CH0R', &ch0r, &sz4) == kIOReturnSuccess && (ch0r & (1 << 1)))
-        return SB_RESULT_NO_EXTERNAL_POWER;
+        uint32_t ch0r = 0;
+        int32_t sz4 = 4;
+        if (smc_read_key('CH0R', &ch0r, &sz4) == kIOReturnSuccess && (ch0r & (1 << 1)))
+            return SB_RESULT_NO_EXTERNAL_POWER;
+    }
 
     if (smc_read_key('CH0C', &cur, &sz) != kIOReturnSuccess) {
         NSLog(@"[SBCPUChargeSMC] read CH0C failed 0x%08x", smc_last_error());
