@@ -263,7 +263,15 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
         // decision forever. Release the previous key and let this invocation
         // evaluate the new configuration from scratch.
         if (gLimitBlocked &&
-            (!gCfg.smartChargeEnabled || pct < gCfg.upperLimit ||
+            (!gCfg.smartChargeEnabled && !gCfg.scheduleEnabled ||
+             pct < gCfg.upperLimit ||
+             oldCfg.scheduleEnabled != gCfg.scheduleEnabled ||
+             oldCfg.scheduleStartHour != gCfg.scheduleStartHour ||
+             oldCfg.scheduleStartMinute != gCfg.scheduleStartMinute ||
+             oldCfg.scheduleStage2Hour != gCfg.scheduleStage2Hour ||
+             oldCfg.scheduleStage2Minute != gCfg.scheduleStage2Minute ||
+             oldCfg.scheduleStage3Hour != gCfg.scheduleStage3Hour ||
+             oldCfg.scheduleStage3Minute != gCfg.scheduleStage3Minute ||
              oldCfg.keepAC != gCfg.keepAC)) {
             if (gLimitUsesPowerBlock) {
                 (void)smc_set_power_block(false, oldCfg.overrideOBC);
@@ -387,21 +395,21 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
         } else if (gThermalBlocked && !smc_get_charge_blocked()) {
             (void)smc_set_charge_block(true, gCfg.overrideOBC);
         }
-        if (gThermalBlocked) {
-            engine_unlock();
-            return;
-        }
     } else if (gThermalBlocked) {
         (void)smc_set_charge_block(false, gCfg.overrideOBC);
         gThermalBlocked = false;
         engine_log(@"thermal limit disabled or temperature unavailable -> release CH0C");
     }
 
-    // 优先级 4：智能充电限制（迟滞，独立状态变量，不从 CH0C 反推）
+    // 温度停充独立执行，不截断普通智能停充或夜间计划。
     // 分时段计划：22:00→70%，05:00→85%，06:00→100%。
     // 计划只改变本次决策的目标，不改动普通充电限制的用户设置。
-    NSInteger decisionUpper = gCfg.upperLimit;
-    NSInteger decisionLower = gCfg.lowerLimit;
+    NSInteger decisionUpper = 101;
+    NSInteger decisionLower = 100;
+    if (gCfg.smartChargeEnabled) {
+        decisionUpper = gCfg.upperLimit;
+        decisionLower = gCfg.lowerLimit;
+    }
     if (gCfg.scheduleEnabled) {
         NSDateComponents *now = [[NSCalendar currentCalendar] components:(NSCalendarUnitHour | NSCalendarUnitMinute) fromDate:[NSDate date]];
         NSInteger minute = now.hour * 60 + now.minute;
@@ -410,13 +418,12 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
         NSInteger stage3 = gCfg.scheduleStage3Hour * 60 + gCfg.scheduleStage3Minute;
         BOOL overnight = start > stage2;
         if ((overnight && (minute >= start || minute < stage2)) || (!overnight && minute >= start && minute < stage2)) {
-            decisionUpper = 70;
+            if (70 < decisionUpper) { decisionUpper = 70; decisionLower = 68; }
         } else if ((overnight && minute >= stage2 && minute < stage3) || (!overnight && minute >= stage2 && minute < stage3)) {
-            decisionUpper = 85;
+            if (85 < decisionUpper) { decisionUpper = 85; decisionLower = 83; }
         } else if (gCfg.scheduleEnabled) {
-            decisionUpper = 100;
+            decisionUpper = MIN(decisionUpper, 100);
         }
-        decisionLower = MAX(0, decisionUpper - 2);
     }
     if (gCfg.smartChargeEnabled || gCfg.chargeLimitEnabled || gCfg.scheduleEnabled) {
         // 用户刚刚手动关闭“阻止外部供电”时，优先确保 CH0I 已释放；
