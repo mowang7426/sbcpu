@@ -8,6 +8,7 @@ root = Path(__file__).resolve().parents[1]
 engine = (root/'SBCPUChargeEngine.m').read_text()
 smc = (root/'SBCPUChargeSMC.m').read_text()
 policy = engine[engine.index('    // Compute both independent requests'):engine.index('\nvoid sb_engine_redecide')]
+schedule_fn = engine[engine.index('static NSInteger sb_schedule_stage_for_minute'):engine.index('\nbool sb_engine_load_config')]
 policy = policy[:policy.rindex('    engine_unlock();')]
 config_code = engine[engine.index('        bool oldManualPowerBlock'):engine.index('        bool scheduleConfigChanged')]
 config_fn = '''static bool gManualPowerBlock, gManualChargeBlock;
@@ -21,6 +22,8 @@ preamble = r'''
 #include <assert.h>
 #include <stdio.h>
 #include "SBCPUChargeEngine.h"
+typedef long NSInteger;
+typedef bool BOOL;
 typedef int IOReturn;
 enum {kIOReturnSuccess=0,kIOReturnError=-1,kIOReturnIOError=-2,
 SB_RESULT_OK=0,SB_RESULT_IO_ERROR=1,SB_RESULT_NO_EXTERNAL_POWER=2,SB_RESULT_OBC_TAKEN=3};
@@ -62,6 +65,14 @@ static void reset(void){
  gChargeCache=gPowerCache=-1;
 }
 int main(void){
+ NSInteger target=0;
+ assert(sb_schedule_stage_for_minute(true,22*60+30,1*60+30,22*60+29,&target)==2 && target==100);
+ assert(sb_schedule_stage_for_minute(true,22*60+30,1*60+30,22*60+30,&target)==1 && target==70);
+ assert(sb_schedule_stage_for_minute(true,22*60+30,1*60+30,23*60,&target)==1 && target==70);
+ assert(sb_schedule_stage_for_minute(true,22*60+30,1*60+30,1*60+29,&target)==1 && target==70);
+ assert(sb_schedule_stage_for_minute(true,22*60+30,1*60+30,1*60+30,&target)==2 && target==100);
+ assert(sb_schedule_stage_for_minute(true,22*60+30,1*60+30,14*60,&target)==2 && target==100);
+ assert(sb_schedule_stage_for_minute(false,22*60+30,1*60+30,1*60+30,&target)==0);
  reset();decide(60,false);SBCPUChargeConfig edited=gCfg;edited.upperLimit=80;
  change_config(edited,58);decide(58,false);assert(!hwI); // raised limit applies now
  reset();gPowerBlockUserReleased=true;edited=gCfg;edited.upperLimit=59;
@@ -102,6 +113,6 @@ int main(void){
 '''
 with tempfile.TemporaryDirectory() as tmp:
     source=Path(tmp)/'regression.c'; binary=Path(tmp)/'regression'
-    source.write_text(preamble+smc_code+state+policy+'}\n'+config_fn+tests[2:])
+    source.write_text(preamble+smc_code+schedule_fn+state+policy+'}\n'+config_fn+tests[2:])
     subprocess.run(['clang','-std=c11','-Wall','-Wextra','-Werror','-Wno-multichar','-I',str(root),str(source),'-o',str(binary)],check=True)
     subprocess.run([str(binary)],check=True)

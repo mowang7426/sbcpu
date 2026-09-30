@@ -4149,7 +4149,7 @@ return self;
 
 - (void)scheduleStatusDockReturn {
     [self.statusDockReturnTimer invalidate];
-    self.statusDockReturnTimer = [NSTimer scheduledTimerWithTimeInterval:2.0
+    self.statusDockReturnTimer = [NSTimer scheduledTimerWithTimeInterval:5.0
         target:self selector:@selector(returnToStatusDock) userInfo:nil repeats:NO];
 }
 

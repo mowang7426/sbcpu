@@ -97,6 +97,33 @@ static long pref_int(NSDictionary *d, NSString *key, long def) {
     return def;
 }
 
+static NSInteger sb_schedule_stage_for_minute(BOOL enabled, NSInteger start, NSInteger final,
+                                               NSInteger now, NSInteger *target) {
+    if (target) *target = 0;
+    if (!enabled) return 0;
+    start = (start % 1440 + 1440) % 1440;
+    final = (final % 1440 + 1440) % 1440;
+    now = (now % 1440 + 1440) % 1440;
+    if (start == final) return 0; // invalid equal boundaries: fail safe to hold
+    if (start > final) {
+        // Cross midnight: start..midnight and midnight..final are the 70% window.
+        if (now >= start || now < final) {
+            if (target) *target = 70;
+            return 1;
+        }
+        if (target) *target = 100;
+        return 2;
+    }
+    // Same-day plan: hold before start, then 70% until final, then 100% phase.
+    if (now < start) return 0;
+    if (now < final) {
+        if (target) *target = 70;
+        return 1;
+    }
+    if (target) *target = 100;
+    return 2;
+}
+
 bool sb_engine_load_config(SBCPUChargeConfig *cfg) {
     NSDictionary *d = SBChargeRead();
     if (!d) return false;
@@ -296,49 +323,34 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
             gCfg.smartChargeEnabled, gCfg.upperLimit, gCfg.lowerLimit, gCfg.keepAC, gCfg.overrideOBC);
     }
 
-    // 夜间计划按“允许充电窗口”运行：窗口开始时先释放 CH0C，
-    // 达到本阶段目标后再次阻止充电。stage 0=下一阶段开始前等待，
-    // 1=目标70，2=目标85，3=目标100，4=最终阶段结束后的等待。
-    NSInteger scheduleStage = 0, scheduleTarget = 0;
+    // 夜间计划只有两个充电窗口：开始时充至70%，最终时间后解除夜间阻止并充至100%。
+    NSInteger scheduleTarget = 0;
+    NSInteger minuteOfDay = 0;
     if (gCfg.scheduleEnabled) {
         NSDateComponents *now = [[NSCalendar currentCalendar] components:(NSCalendarUnitHour | NSCalendarUnitMinute) fromDate:[NSDate date]];
-        NSInteger minuteOfDay = now.hour * 60 + now.minute;
-        NSInteger start = gCfg.scheduleStartHour * 60 + gCfg.scheduleStartMinute;
-        NSInteger stage2 = gCfg.scheduleStage2Hour * 60 + gCfg.scheduleStage2Minute;
-        NSInteger stage3 = gCfg.scheduleStage3Hour * 60 + gCfg.scheduleStage3Minute;
-        if (start > stage2) {
-            // 跨午夜：22:00→05:00→06:30。
-            if (minuteOfDay >= start) { scheduleStage = 1; scheduleTarget = 70; }
-            else if (minuteOfDay < stage2) { scheduleStage = 1; scheduleTarget = 70; }
-            else if (minuteOfDay < stage3) { scheduleStage = 2; scheduleTarget = 85; }
-            else { scheduleStage = 3; scheduleTarget = 100; }
-        } else {
-            // 非跨午夜配置：开始时间以前等待，最终阶段开始后持续到下一周期。
-            if (minuteOfDay < start) { scheduleStage = 0; }
-            else if (minuteOfDay < stage2) { scheduleStage = 1; scheduleTarget = 70; }
-            else if (minuteOfDay < stage3) { scheduleStage = 2; scheduleTarget = 85; }
-            else { scheduleStage = 3; scheduleTarget = 100; }
-        }
+        minuteOfDay = now.hour * 60 + now.minute;
     }
+    NSInteger scheduleStage = sb_schedule_stage_for_minute(
+        gCfg.scheduleEnabled,
+        gCfg.scheduleStartHour * 60 + gCfg.scheduleStartMinute,
+        gCfg.scheduleStage3Hour * 60 + gCfg.scheduleStage3Minute,
+        minuteOfDay, &scheduleTarget);
     NSInteger previousScheduleStage = gScheduleStage;
-    if (!gCfg.scheduleEnabled || scheduleStage != gScheduleStage) {
+    if (scheduleStage != gScheduleStage) {
         gScheduleStage = scheduleStage;
-        // 阶段切换时下面将重新决定窗口动作。
         gScheduleBlocked = false;
     }
-    if (gCfg.scheduleEnabled) {
-        if (scheduleStage == 0 || scheduleStage == 4) {
-            // 第一阶段开始前保持停充。
-            gScheduleBlocked = true;
-        } else if (scheduleStage != previousScheduleStage) {
-            // 阶段时间到：解除阻止；若新一阶段目标已达到，则立即保持阻止。
-            gScheduleBlocked = (scheduleStage == 1 && pct >= scheduleTarget);
-        } else {
-            // 当前窗口达到阶段目标即阻止；窗口内电量未达目标则允许充电。
-            gScheduleBlocked = pct >= scheduleTarget;
-        }
-    } else {
+    if (!gCfg.scheduleEnabled) {
         gScheduleBlocked = false;
+    } else if (scheduleStage == 0) {
+        // 首个充电时段开始之前维持计划停充。
+        gScheduleBlocked = true;
+    } else {
+        // 每个计划阶段均按目标电量计算请求；到最终时间进入100%窗口，
+        // pct<100 必须释放夜间CH0C，避免沿用85%阶段或旧周期的阻止状态。
+        gScheduleBlocked = (pct >= scheduleTarget);
+        if (scheduleStage == 2 && scheduleStage != previousScheduleStage && pct < 100)
+            gScheduleBlocked = false;
     }
 
     // No early return for a manual request, wireless, or ExternalConnected=false:
