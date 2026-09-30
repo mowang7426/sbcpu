@@ -28,8 +28,12 @@ IOReturn smc_write_key(uint32_t key, const void *bytes, uint32_t size);
 // 充电控制（写前安全检查：CHCE 外部连接 + CH0R No-VBUS）
 // inhibit: 1=停充/断供；overrideOBC: 1=强制覆盖 OBC（写 CH0B + 关闭 topoff）
 // 返回 0 成功；负值 IOReturn；正值见 SB_RESULT_* 语义（SB_RESULT_OBC_TAKEN 等）
-int  smc_set_charge_block(bool inhibit, bool overrideOBC);
-int  smc_set_power_block(bool inhibit, bool overrideOBC);
+int smc_set_charge_block(bool inhibit, bool overrideOBC);
+int smc_set_power_block(bool inhibit, bool overrideOBC);
+// Explicit manual controls may be requested while CHCE/CH0R temporarily
+// reports no VBUS (the very state produced by a previous inhibit).
+int smc_manual_charge_block(bool inhibit, bool overrideOBC);
+int smc_manual_power_block(bool inhibit, bool overrideOBC);
 
 // 读实际状态（bit0）
 bool smc_get_charge_blocked(void);

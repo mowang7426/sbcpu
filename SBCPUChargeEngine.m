@@ -196,7 +196,7 @@ static bool engine_ensure_smc(void) {
 int sb_engine_manual_charge_block(bool block) {
     engine_lock();
     if (!engine_ensure_smc()) { engine_unlock(); return SB_RESULT_SMC_UNAVAILABLE; }
-    int r = smc_set_charge_block(block, gCfg.overrideOBC);
+    int r = smc_manual_charge_block(block, gCfg.overrideOBC);
     if (r == SB_RESULT_OK) {
         gManualChargeBlock = block;
         gCfg.manualChargeBlock = block;
@@ -215,7 +215,7 @@ int sb_engine_manual_charge_block(bool block) {
 int sb_engine_manual_power_block(bool block) {
     engine_lock();
     if (!engine_ensure_smc()) { engine_unlock(); return SB_RESULT_SMC_UNAVAILABLE; }
-    int r = smc_set_power_block(block, gCfg.overrideOBC);
+    int r = smc_manual_power_block(block, gCfg.overrideOBC);
     if (r == SB_RESULT_OK) {
         gManualPowerBlock = block;
         gCfg.manualPowerBlock = block;

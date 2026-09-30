@@ -289,7 +289,7 @@ static int smc_apply_control(uint32_t key, bool inhibit, int *cache) {
 }
 
 static int smc_set_control(uint32_t key, uint32_t peerKey, bool inhibit,
-                           bool overrideOBC, int *cache) {
+                           bool overrideOBC, bool forceNoExternal, int *cache) {
     // Recovery does not require CHCE, CH0R, or even a successful initial read.
     if (!inhibit) return smc_apply_control(key, false, cache);
     uint8_t cur = 0;
@@ -307,7 +307,7 @@ static int smc_set_control(uint32_t key, uint32_t peerKey, bool inhibit,
     IOReturn peerRead = smc_read_key(peerKey, &peer, &peerSize);
     // Existing inhibition can itself hide VBUS. Permit stacking either way.
     bool inhibited = peerRead == kIOReturnSuccess && (peer & 1);
-    if (!inhibited) {
+    if (!inhibited && !forceNoExternal) {
         if (smc_read_key('CHCE', &connected, &connectedSize) != kIOReturnSuccess)
             return SB_RESULT_IO_ERROR;
         uint32_t reason = 0;
@@ -323,11 +323,19 @@ static int smc_set_control(uint32_t key, uint32_t peerKey, bool inhibit,
 }
 
 int smc_set_charge_block(bool inhibit, bool overrideOBC) {
-    return smc_set_control('CH0C', 'CH0I', inhibit, overrideOBC, &gChargeCache);
+    return smc_set_control('CH0C', 'CH0I', inhibit, overrideOBC, false, &gChargeCache);
 }
 
 int smc_set_power_block(bool inhibit, bool overrideOBC) {
-    return smc_set_control('CH0I', 'CH0C', inhibit, overrideOBC, &gPowerCache);
+    return smc_set_control('CH0I', 'CH0C', inhibit, overrideOBC, false, &gPowerCache);
+}
+
+int smc_manual_charge_block(bool inhibit, bool overrideOBC) {
+    return smc_set_control('CH0C', 'CH0I', inhibit, overrideOBC, true, &gChargeCache);
+}
+
+int smc_manual_power_block(bool inhibit, bool overrideOBC) {
+    return smc_set_control('CH0I', 'CH0C', inhibit, overrideOBC, true, &gPowerCache);
 }
 
 bool smc_get_charge_blocked(void) {

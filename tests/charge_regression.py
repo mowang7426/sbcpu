@@ -89,6 +89,8 @@ int main(void){
  reset();hwC=1;ext=0;assert(smc_set_charge_block(true,false)==0);
  reset();hwI=1;ext=0;reason=2;assert(smc_set_charge_block(true,false)==0 && hwC);
  reset();hwC=1;ext=0;reason=2;assert(smc_set_power_block(true,false)==0 && hwI);
+ reset();ext=0;assert(smc_manual_charge_block(true,false)==SB_RESULT_OK && hwC);
+ reset();ext=0;assert(smc_manual_power_block(true,false)==SB_RESULT_OK && hwI);
  reset();ext=0;assert(smc_set_charge_block(true,false)==SB_RESULT_NO_EXTERNAL_POWER);
  assert(smc_set_power_block(true,false)==SB_RESULT_NO_EXTERNAL_POWER);
  reset();hwI=1;ext=0;readsAfterWrite=1;
