@@ -164,6 +164,8 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) UIView *nativeLiquidGlassView; // CCLiquidGlassView
 @property (nonatomic, assign) BOOL usingNativeLiquidGlass;
 @property (nonatomic, strong) CAShapeLayer *marqueeLayer;
+@property (nonatomic, strong) CAShapeLayer *marqueeFlowLayerA;
+@property (nonatomic, strong) CAShapeLayer *marqueeFlowLayerB;
 // iOS 26 液态玻璃：specular 边缘高光（SBLiquidGlass Dock 配方移植）
 @property (nonatomic, strong) CAGradientLayer *glassSheenLayer;
 @property (nonatomic, strong) CALayer *glassSheenMask;
@@ -347,6 +349,7 @@ static BOOL force120HzEnable = NO;
 static BOOL showSignalStrength = YES; // 📶 浮窗底部显示 SIM 卡信号（V4.18.0）
 
 
+static NSInteger chargeMarqueeStyle = 0; // 0=呼吸渐变，1=双向对流光
 static BOOL chargeBoostEnable = NO;
 static BOOL suppressPartRepairEnabled = NO; // 🛡️ 屏蔽部件与维修记录（移植自 CPUthermal）
 static BOOL forceFastChargeEnable = NO; // 保留原有强制满血快充开关
@@ -1031,6 +1034,7 @@ static void LoadPreferences(void) {
     smartChargeEnable = getBoolPref(CFSTR("smartChargeEnable"), NO);
     smartChargeUpperLimit = (NSInteger)getFloatPref(CFSTR("smartChargeUpperLimit"), 80.0f);
     smartChargeLowerLimit = (NSInteger)getFloatPref(CFSTR("smartChargeLowerLimit"), 70.0f);
+    chargeMarqueeStyle = MAX(0, MIN(1, getIntPref(CFSTR("chargeMarqueeStyle"), 0)));
     smartChargeMode = (NSInteger)getFloatPref(CFSTR("smartChargeMode"), 0.0f);
     blockChargingEnable = getBoolPref(CFSTR("blockChargingEnable"), NO);
     blockPowerEnable = getBoolPref(CFSTR("blockPowerEnable"), NO);
@@ -3210,10 +3214,25 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _marqueeLayer.fillColor = [UIColor clearColor].CGColor;
         _marqueeLayer.strokeColor = [UIColor colorWithRed:0.2f green:0.85f blue:0.4f alpha:0.6f].CGColor;
         _marqueeLayer.lineWidth = 2.0f;
-        _marqueeLayer.lineDashPattern = @[@14, @8];
+        _marqueeLayer.lineDashPattern = nil;
         _marqueeLayer.hidden = YES;
-        _marqueeLayer.zPosition = 1001.0f; // 跑马灯在玻璃高光之上，保持清晰
+        _marqueeLayer.zPosition = 1001.0f;
         [_glassSurfaceView.layer addSublayer:_marqueeLayer];
+        _marqueeFlowLayerA = [CAShapeLayer layer];
+        _marqueeFlowLayerB = [CAShapeLayer layer];
+        for (CAShapeLayer *flow in @[_marqueeFlowLayerA, _marqueeFlowLayerB]) {
+            flow.fillColor = UIColor.clearColor.CGColor;
+            flow.lineWidth = 2.5f;
+            flow.lineDashPattern = @[@42, @260];
+            flow.hidden = YES;
+            flow.zPosition = 1002.0f;
+            flow.shadowColor = UIColor.whiteColor.CGColor;
+            flow.shadowOpacity = 0.75f;
+            flow.shadowRadius = 5.0f;
+            [_glassSurfaceView.layer addSublayer:flow];
+        }
+        _marqueeFlowLayerA.strokeColor = [UIColor colorWithRed:0.25f green:0.9f blue:1.0f alpha:0.95f].CGColor;
+        _marqueeFlowLayerB.strokeColor = [UIColor colorWithRed:0.72f green:0.4f blue:1.0f alpha:0.95f].CGColor;
 
         // V4.35：原生 CCLiquidGlassView 已经是唯一玻璃表面。
         // 不再创建额外的 sheen / boost / edge 玻璃层，避免普通磨砂叠加。
@@ -4062,8 +4081,13 @@ return self;
     }
     self.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, finalW, currentY) cornerRadius:cornerRad].CGPath;
 
+    CGPathRef marqueePath = [UIBezierPath bezierPathWithRoundedRect:_glassSurfaceView.bounds cornerRadius:cornerRad].CGPath;
     _marqueeLayer.frame = _glassSurfaceView.bounds;
-    _marqueeLayer.path = [UIBezierPath bezierPathWithRoundedRect:_glassSurfaceView.bounds cornerRadius:cornerRad].CGPath;
+    _marqueeLayer.path = marqueePath;
+    _marqueeFlowLayerA.frame = _glassSurfaceView.bounds;
+    _marqueeFlowLayerA.path = marqueePath;
+    _marqueeFlowLayerB.frame = _glassSurfaceView.bounds;
+    _marqueeFlowLayerB.path = marqueePath;
 
     // 液态玻璃 specular 高光层与边缘光跟随布局
     if (_glassBackdropLayer) {
@@ -4083,19 +4107,30 @@ return self;
     _glassEdgeLayer.frame = _glassSurfaceView.bounds;
     _glassEdgeLayer.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(_glassSurfaceView.bounds, 0.5f, 0.5f) cornerRadius:cornerRad].CGPath;
 
+    [_marqueeLayer removeAllAnimations];
+    [_marqueeFlowLayerA removeAllAnimations];
+    [_marqueeFlowLayerB removeAllAnimations];
+    _marqueeLayer.hidden = YES;
+    _marqueeFlowLayerA.hidden = YES;
+    _marqueeFlowLayerB.hidden = YES;
     if (isCharging) {
-        _marqueeLayer.hidden = NO;
-        if (![_marqueeLayer animationForKey:@"marqueeDashAnim"]) {
-            CABasicAnimation *dashAnim = [CABasicAnimation animationWithKeyPath:@"lineDashPhase"];
-            dashAnim.fromValue = @(0);
-            dashAnim.toValue = @(-40);
-            dashAnim.duration = 0.8;
-            dashAnim.repeatCount = HUGE_VALF;
-            [_marqueeLayer addAnimation:dashAnim forKey:@"marqueeDashAnim"];
+        if (chargeMarqueeStyle == 0) {
+            // B：整条边框柔和呼吸，不再使用旧虚线跑马灯。
+            _marqueeLayer.hidden = NO;
+            _marqueeLayer.strokeColor = [UIColor colorWithRed:0.35f green:0.95f blue:0.55f alpha:0.85f].CGColor;
+            CABasicAnimation *breath = [CABasicAnimation animationWithKeyPath:@"opacity"];
+            breath.fromValue = @0.28; breath.toValue = @1.0; breath.duration = 1.8;
+            breath.autoreverses = YES; breath.repeatCount = HUGE_VALF;
+            [_marqueeLayer addAnimation:breath forKey:@"chargingBreath"];
+        } else {
+            // C：两条彩色光段反向沿边框移动。
+            _marqueeFlowLayerA.hidden = NO; _marqueeFlowLayerB.hidden = NO;
+            CABasicAnimation *forward = [CABasicAnimation animationWithKeyPath:@"lineDashPhase"];
+            forward.fromValue = @0; forward.toValue = @(-300); forward.duration = 2.2; forward.repeatCount = HUGE_VALF;
+            CABasicAnimation *reverse = [forward copy]; reverse.fromValue = @(-300); reverse.toValue = @0;
+            [_marqueeFlowLayerA addAnimation:forward forKey:@"chargingFlowForward"];
+            [_marqueeFlowLayerB addAnimation:reverse forKey:@"chargingFlowReverse"];
         }
-    } else {
-        _marqueeLayer.hidden = YES;
-        [_marqueeLayer removeAnimationForKey:@"marqueeDashAnim"];
     }
 
     self.bounds = CGRectMake(0, 0, finalW, currentY);
@@ -4255,8 +4290,13 @@ return self;
         }
 
         self.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, targetW, targetH) cornerRadius:cornerRad].CGPath;
+        CGPathRef marqueePath = [UIBezierPath bezierPathWithRoundedRect:self.glassSurfaceView.bounds cornerRadius:cornerRad].CGPath;
         self.marqueeLayer.frame = self.glassSurfaceView.bounds;
-        self.marqueeLayer.path = [UIBezierPath bezierPathWithRoundedRect:self.glassSurfaceView.bounds cornerRadius:cornerRad].CGPath;
+        self.marqueeLayer.path = marqueePath;
+        self.marqueeFlowLayerA.frame = self.glassSurfaceView.bounds;
+        self.marqueeFlowLayerA.path = marqueePath;
+        self.marqueeFlowLayerB.frame = self.glassSurfaceView.bounds;
+        self.marqueeFlowLayerB.path = marqueePath;
 
         // 液态玻璃 specular 高光层与边缘光跟随折叠尺寸
         if (self.glassBackdropLayer) {
@@ -4485,8 +4525,13 @@ return self;
         // Native Glass frame 由 layoutSubviews 同步；不要在尺寸动画块里重复 updateForHostView。
         self.glassSurfaceView.layer.cornerRadius = expandedCornerRad;
         self.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, expandedW, expandedH) cornerRadius:expandedCornerRad].CGPath;
+        CGPathRef marqueePath = [UIBezierPath bezierPathWithRoundedRect:self.glassSurfaceView.bounds cornerRadius:expandedCornerRad].CGPath;
         self.marqueeLayer.frame = self.glassSurfaceView.bounds;
-        self.marqueeLayer.path = [UIBezierPath bezierPathWithRoundedRect:self.glassSurfaceView.bounds cornerRadius:expandedCornerRad].CGPath;
+        self.marqueeLayer.path = marqueePath;
+        self.marqueeFlowLayerA.frame = self.glassSurfaceView.bounds;
+        self.marqueeFlowLayerA.path = marqueePath;
+        self.marqueeFlowLayerB.frame = self.glassSurfaceView.bounds;
+        self.marqueeFlowLayerB.path = marqueePath;
         if (self.glassBackdropLayer) {
             self.glassBackdropLayer.frame = self.glassSurfaceView.bounds;
             self.glassBackdropLayer.cornerRadius = expandedCornerRad;

@@ -23,6 +23,9 @@
     if ([key isEqualToString:@"smartChargeUpperLimit"] || [key isEqualToString:@"smartChargeLowerLimit"]) {
         return [NSString stringWithFormat:@"%ld%%", (long)[value integerValue]];
     }
+    if ([key isEqualToString:@"chargeMarqueeStyle"]) {
+        return [value integerValue] == 1 ? @"双向对流光" : @"呼吸渐变";
+    }
     return value;
 }
 
@@ -61,6 +64,23 @@
                 [SBCPUChargePreferencesCommon setValue:values[i] forKey:key];
             }
             [SBCPUChargePreferencesCommon redecideDaemon];
+            [self reloadSpecifiers];
+        }]];
+    }
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    UIPopoverPresentationController *popover = alert.popoverPresentationController;
+    popover.sourceView = self.view;
+    popover.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1, 1);
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)selectMarqueeValue:(PSSpecifier *)specifier {
+    NSArray *values = @[@0, @1];
+    NSArray *titles = @[@"呼吸渐变", @"双向对流光"];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:[specifier name] message:@"请选择充电时的浮窗边框效果" preferredStyle:UIAlertControllerStyleActionSheet];
+    for (NSUInteger i = 0; i < values.count; i++) {
+        [alert addAction:[UIAlertAction actionWithTitle:titles[i] style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+            [SBCPUChargePreferencesCommon setValue:values[i] forKey:@"chargeMarqueeStyle"];
             [self reloadSpecifiers];
         }]];
     }
