@@ -4350,9 +4350,10 @@ return self;
         _miniBattLabel.hidden = YES;
         _miniTempLabel.hidden = YES;
         _statusDot.hidden = YES;
-    } else if (isLandscapeNow) {
-        _miniDockInfoLabel.hidden = YES;
-        if (!compactLandscapeCapsule) {
+        } else if (isLandscapeNow) {
+            _miniDockInfoLabel.hidden = YES;
+            _miniCpuLabel.hidden = NO;
+            if (!compactLandscapeCapsule) {
             _miniCpuLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
             _miniCpuLabel.frame = CGRectMake(24, 5, 56, 18);
             _miniFpsLabel.hidden = NO;
@@ -4375,6 +4376,7 @@ return self;
         }
     } else {
         _miniDockInfoLabel.hidden = YES;
+        _miniCpuLabel.hidden = NO;
         _miniCpuLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
         _miniCpuLabel.frame = CGRectMake(22, 5, 45, 18);
         _miniFpsLabel.hidden = YES;
