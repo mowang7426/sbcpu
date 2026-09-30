@@ -242,10 +242,13 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 // 展开/收起动画期间锁住周期性 updateFloatingSize，避免 1s 刷新打断尺寸动画造成“打开后又扩大一下”。
 @property (nonatomic, assign) BOOL layoutTransitionAnimating;
 @property (nonatomic, strong) NSTimer *inactivityTimer;
+@property (nonatomic, strong) NSTimer *statusDockReturnTimer;
 @property (nonatomic, strong) UITapGestureRecognizer *singleTapGesture;
 @property (nonatomic, strong) UILongPressGestureRecognizer *longPressGesture;
 
 - (void)resetInactivityTimer;
+- (void)scheduleStatusDockReturn;
+- (void)returnToStatusDock;
 - (void)collapseToEdgeAnimated:(BOOL)animated;
 - (void)expandFromEdgeAnimated:(BOOL)animated;
 - (void)syncCollapsedLayoutForOrientation;
@@ -3682,6 +3685,8 @@ return self;
     [self resetInactivityTimer];
 
     if (pan.state == UIGestureRecognizerStateBegan) {
+        [self.statusDockReturnTimer invalidate];
+        self.statusDockReturnTimer = nil;
         self.lastPoint = self.center;
     } else if (pan.state == UIGestureRecognizerStateChanged) {
         CGPoint translation = [pan translationInView:self.superview];
@@ -3712,7 +3717,12 @@ return self;
             [[NSUserDefaults standardUserDefaults] setObject:NSStringFromCGRect(self.frame) forKey:@"SBCPU.LastFrame"];
             [[NSUserDefaults standardUserDefaults] synchronize];
         }
-        clampAndPositionFloatingView(self.center, YES);
+        if (statusBarDockEnable && self.isCollapsed) {
+            // 先留在用户拖到的位置，给底下控件留出点击时间；两秒后再平滑吸回。
+            [self scheduleStatusDockReturn];
+        } else {
+            clampAndPositionFloatingView(self.center, YES);
+        }
         [self resetInactivityTimer];
     }
 }
@@ -4135,6 +4145,22 @@ return self;
 
     self.bounds = CGRectMake(0, 0, finalW, currentY);
     self.performanceContainer.frame = self.bounds;
+}
+
+- (void)scheduleStatusDockReturn {
+    [self.statusDockReturnTimer invalidate];
+    self.statusDockReturnTimer = [NSTimer scheduledTimerWithTimeInterval:2.0
+        target:self selector:@selector(returnToStatusDock) userInfo:nil repeats:NO];
+}
+
+- (void)returnToStatusDock {
+    [self.statusDockReturnTimer invalidate];
+    self.statusDockReturnTimer = nil;
+    if (!statusBarDockEnable || !self.isCollapsed || self.isShowingNotification ||
+        !self.superview || fastChargeStartupAnimating) return;
+    // clampAndPositionFloatingView restores the top safe-area dock position;
+    // its spring animation provides a smooth, non-jarring return.
+    clampAndPositionFloatingView(self.center, YES);
 }
 
 - (void)resetInactivityTimer {
