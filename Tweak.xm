@@ -4207,7 +4207,8 @@ return self;
         // 横屏迷你胶囊：默认 CPU / FPS / 电量 / 温度 四段；开启单段开关则仅 CPU 单段
         } else if (isLandscapeNow) {
             _miniDockInfoLabel.hidden = YES;
-            _miniCpuLabel.hidden = NO; = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+            _miniCpuLabel.hidden = NO;
+            _miniCpuLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
             _miniCpuLabel.frame = CGRectMake(24, 5, 56, 18);
             if (!compactLandscapeCapsule) {
                 _miniFpsLabel.hidden = NO;
