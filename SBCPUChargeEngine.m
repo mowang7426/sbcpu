@@ -296,7 +296,9 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
             gCfg.smartChargeEnabled, gCfg.upperLimit, gCfg.lowerLimit, gCfg.keepAC, gCfg.overrideOBC);
     }
 
-    // 夜间计划独立使用 CH0C。阶段切换时重置上一阶段的迟滞状态，避免70%阶段的阻止状态锁住85%/100%阶段。
+    // 夜间计划按“允许充电窗口”运行：窗口开始时先释放 CH0C，
+    // 达到本阶段目标后再次阻止充电。stage 0=下一阶段开始前等待，
+    // 1=目标70，2=目标85，3=目标100，4=最终阶段结束后的等待。
     NSInteger scheduleStage = 0, scheduleTarget = 0;
     if (gCfg.scheduleEnabled) {
         NSDateComponents *now = [[NSCalendar currentCalendar] components:(NSCalendarUnitHour | NSCalendarUnitMinute) fromDate:[NSDate date]];
@@ -304,17 +306,40 @@ void sb_engine_decide(int pct, bool charging, bool wireless, double temperatureC
         NSInteger start = gCfg.scheduleStartHour * 60 + gCfg.scheduleStartMinute;
         NSInteger stage2 = gCfg.scheduleStage2Hour * 60 + gCfg.scheduleStage2Minute;
         NSInteger stage3 = gCfg.scheduleStage3Hour * 60 + gCfg.scheduleStage3Minute;
-        BOOL overnight = start > stage2;
-        if ((overnight && (minuteOfDay >= start || minuteOfDay < stage2)) || (!overnight && minuteOfDay >= start && minuteOfDay < stage2)) { scheduleStage = 1; scheduleTarget = 70; }
-        else if (minuteOfDay >= stage2 && minuteOfDay < stage3) { scheduleStage = 2; scheduleTarget = 85; }
-        else { scheduleStage = 3; scheduleTarget = 100; }
+        if (start > stage2) {
+            // 跨午夜：22:00→05:00→06:30。
+            if (minuteOfDay >= start) { scheduleStage = 1; scheduleTarget = 70; }
+            else if (minuteOfDay < stage2) { scheduleStage = 1; scheduleTarget = 70; }
+            else if (minuteOfDay < stage3) { scheduleStage = 2; scheduleTarget = 85; }
+            else { scheduleStage = 3; scheduleTarget = 100; }
+        } else {
+            // 非跨午夜配置：开始时间以前等待，最终阶段开始后持续到下一周期。
+            if (minuteOfDay < start) { scheduleStage = 0; }
+            else if (minuteOfDay < stage2) { scheduleStage = 1; scheduleTarget = 70; }
+            else if (minuteOfDay < stage3) { scheduleStage = 2; scheduleTarget = 85; }
+            else { scheduleStage = 3; scheduleTarget = 100; }
+        }
     }
+    NSInteger previousScheduleStage = gScheduleStage;
     if (!gCfg.scheduleEnabled || scheduleStage != gScheduleStage) {
-        if (gScheduleStage != scheduleStage) gScheduleBlocked = false;
         gScheduleStage = scheduleStage;
+        // 阶段切换时下面将重新决定窗口动作。
+        gScheduleBlocked = false;
     }
-    if (scheduleStage && pct >= scheduleTarget) gScheduleBlocked = true;
-    else if (scheduleStage && pct <= MAX(0, scheduleTarget - 2)) gScheduleBlocked = false;
+    if (gCfg.scheduleEnabled) {
+        if (scheduleStage == 0 || scheduleStage == 4) {
+            // 第一阶段开始前保持停充。
+            gScheduleBlocked = true;
+        } else if (scheduleStage != previousScheduleStage) {
+            // 阶段时间到：解除阻止；若新一阶段目标已达到，则立即保持阻止。
+            gScheduleBlocked = (scheduleStage == 1 && pct >= scheduleTarget);
+        } else {
+            // 当前窗口达到阶段目标即阻止；窗口内电量未达目标则允许充电。
+            gScheduleBlocked = pct >= scheduleTarget;
+        }
+    } else {
+        gScheduleBlocked = false;
+    }
 
     // No early return for a manual request, wireless, or ExternalConnected=false:
     // CH0I itself can remove that signal. Each bit must still get its release.
