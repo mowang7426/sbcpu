@@ -4206,7 +4206,8 @@ return self;
             _statusDot.hidden = YES;
         // 横屏迷你胶囊：默认 CPU / FPS / 电量 / 温度 四段；开启单段开关则仅 CPU 单段
         } else if (isLandscapeNow) {
-            _miniCpuLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+            _miniDockInfoLabel.hidden = YES;
+            _miniCpuLabel.hidden = NO; = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
             _miniCpuLabel.frame = CGRectMake(24, 5, 56, 18);
             if (!compactLandscapeCapsule) {
                 _miniFpsLabel.hidden = NO;
@@ -4349,6 +4350,7 @@ return self;
         _miniTempLabel.hidden = YES;
         _statusDot.hidden = YES;
     } else if (isLandscapeNow) {
+        _miniDockInfoLabel.hidden = YES;
         if (!compactLandscapeCapsule) {
             _miniCpuLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
             _miniCpuLabel.frame = CGRectMake(24, 5, 56, 18);
@@ -4371,6 +4373,7 @@ return self;
             _statusDot.hidden = NO;
         }
     } else {
+        _miniDockInfoLabel.hidden = YES;
         _miniCpuLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
         _miniCpuLabel.frame = CGRectMake(22, 5, 45, 18);
         _miniFpsLabel.hidden = YES;
