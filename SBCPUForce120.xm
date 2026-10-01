@@ -9,11 +9,13 @@
 // ============================================================
 #import <Foundation/Foundation.h>
 #import <QuartzCore/QuartzCore.h>
+#import <objc/message.h>
 
 #define kPrefAppID CFSTR("com.yourname.sbcpufloating")
 #define kPrefChangedNotification CFSTR("com.yourname.sbcpufloating.prefschanged")
 
 #import <objc/runtime.h>
+#import <substrate.h>
 
 // V4.17.2: weak tracking + event-driven reapply; no thermal/CPU policy changes.
 @interface SBCPU120Request : NSObject
@@ -32,6 +34,31 @@ static NSObject *g120Lock;
 static NSHashTable<CADisplayLink *> *g120Links;
 static char g120RequestKey;
 static __thread BOOL g120InternalWrite = NO;
+
+// MotionX 的关键补充：向 CADynamicFrameRateSource 声明一个高刷原因。
+// 通过运行时反射调用，系统不支持时完全跳过，不依赖私有头文件。
+static void requestDynamicHighFrameRate(void) {
+    Class cls = NSClassFromString(@"CADynamicFrameRateSource");
+    if (!cls) return;
+    @try {
+        id source = [[cls alloc] init];
+        SEL one = NSSelectorFromString(@"setHighFrameRateReason:");
+        if ([source respondsToSelector:one]) {
+            ((void (*)(id, SEL, NSUInteger))objc_msgSend)(source, one, (NSUInteger)1);
+            return;
+        }
+        SEL many = NSSelectorFromString(@"setHighFrameRateReasons:count:");
+        if ([source respondsToSelector:many]) {
+            NSUInteger reason = 1;
+            ((void (*)(id, SEL, const NSUInteger *, NSUInteger))objc_msgSend)(source, many, &reason, 1);
+        }
+    } @catch (id exception) {}
+}
+
+static void releaseDynamicHighFrameRate(void) {
+    // CADynamicFrameRateSource 生命周期由系统管理；刷新偏好即可撤销本插件
+    // 对 display link/layer 的请求，不主动销毁系统对象。
+}
 
 static void prepare120Tracking(void) {
     static dispatch_once_t once;
@@ -60,6 +87,8 @@ static SBCPU120Request *request120(CADisplayLink *link) {
     return request;
 }
 
+static BOOL shouldForce120(void);
+
 static void updateForce120Pref(void) {
     prepare120Tracking();
     CFPreferencesAppSynchronize(kPrefAppID);
@@ -68,6 +97,8 @@ static void updateForce120Pref(void) {
     if (value && CFGetTypeID(value) == CFBooleanGetTypeID()) enabled = CFBooleanGetValue((CFBooleanRef)value);
     if (value) CFRelease(value);
     @synchronized(g120Lock) { gForce120Enabled = enabled; }
+    if (enabled && shouldForce120()) requestDynamicHighFrameRate();
+    else releaseDynamicHighFrameRate();
 }
 
 // Preserve the original low-power/critical-temperature conditions exactly.
@@ -76,6 +107,49 @@ static BOOL shouldForce120(void) {
     if (NSProcessInfo.processInfo.isLowPowerModeEnabled) return NO;
     if (NSProcessInfo.processInfo.thermalState == NSProcessInfoThermalStateCritical) return NO;
     return YES;
+}
+
+typedef void (*SBCPUSetHighReasonIMP)(id, SEL, NSUInteger);
+typedef void (*SBCPUSetHighReasonsIMP)(id, SEL, const NSUInteger *, NSUInteger);
+static SBCPUSetHighReasonIMP gOrigSetHighReason = NULL;
+static SBCPUSetHighReasonsIMP gOrigSetHighReasons = NULL;
+
+static void hookedSetHighReason(id self, SEL sel, NSUInteger reason) {
+    if (shouldForce120()) reason = 1;
+    if (gOrigSetHighReason) gOrigSetHighReason(self, sel, reason);
+}
+
+static void hookedSetHighReasons(id self, SEL sel, const NSUInteger *reasons, NSUInteger count) {
+    NSUInteger forced = 1;
+    if (shouldForce120() && gOrigSetHighReasons) {
+        gOrigSetHighReasons(self, sel, &forced, 1);
+    } else if (gOrigSetHighReasons) {
+        gOrigSetHighReasons(self, sel, reasons, count);
+    }
+}
+
+static void installDynamicFrameRateHooks(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Class cls = NSClassFromString(@"CADynamicFrameRateSource");
+        if (!cls) return;
+        SEL one = NSSelectorFromString(@"setHighFrameRateReason:");
+        Method oneMethod = class_getInstanceMethod(cls, one);
+        if (oneMethod) MSHookMessageEx(cls, one, (IMP)hookedSetHighReason, (IMP *)&gOrigSetHighReason);
+        SEL many = NSSelectorFromString(@"setHighFrameRateReasons:count:");
+        Method manyMethod = class_getInstanceMethod(cls, many);
+        if (manyMethod) MSHookMessageEx(cls, many, (IMP)hookedSetHighReasons, (IMP *)&gOrigSetHighReasons);
+    });
+}
+static NSInteger supported120Target(void) {
+    Class screenClass = NSClassFromString(@"UIScreen");
+    id screen = screenClass ? ((id (*)(id, SEL))objc_msgSend)(screenClass, NSSelectorFromString(@"mainScreen")) : nil;
+    SEL maxSel = NSSelectorFromString(@"maximumFramesPerSecond");
+    if (screen && [screen respondsToSelector:maxSel]) {
+        NSInteger max = ((NSInteger (*)(id, SEL))objc_msgSend)(screen, maxSel);
+        if (max > 0) return MIN(120, max);
+    }
+    return 120;
 }
 
 static void applyForce120ToLink(CADisplayLink *link) {
@@ -89,11 +163,15 @@ static void applyForce120ToLink(CADisplayLink *link) {
         g120InternalWrite = YES;
         @try {
             if (@available(iOS 15.0, *)) {
-                if (force) link.preferredFrameRateRange = CAFrameRateRangeMake(120, 120, 120);
+                CGFloat target = (CGFloat)supported120Target();
+                if (force) {
+                    requestDynamicHighFrameRate();
+                    link.preferredFrameRateRange = CAFrameRateRangeMake(target, target, target);
+                }
                 else if (request.usesRange) link.preferredFrameRateRange = CAFrameRateRangeMake(request.minimum, request.maximum, request.preferred);
                 else link.preferredFramesPerSecond = request.fps;
             } else {
-                link.preferredFramesPerSecond = force ? 120 : request.fps;
+                link.preferredFramesPerSecond = force ? supported120Target() : request.fps;
             }
             request.applied = force;
         } @catch (NSException *exception) {
@@ -161,7 +239,7 @@ static void force120PrefChanged(CFNotificationCenterRef center, void *observer, 
             request.preferred = range.preferred;
             request.usesRange = YES;
             request.applied = shouldForce120();
-            if (request.applied) range = CAFrameRateRangeMake(120, 120, 120);
+            if (request.applied) range = CAFrameRateRangeMake((CGFloat)supported120Target(), (CGFloat)supported120Target(), (CGFloat)supported120Target());
         }
         BOOL previous = g120InternalWrite;
         g120InternalWrite = YES;
@@ -180,7 +258,7 @@ static void force120PrefChanged(CFNotificationCenterRef center, void *observer, 
             request.fps = framesPerSecond;
             request.usesRange = NO;
             request.applied = shouldForce120();
-            if (request.applied) framesPerSecond = 120;
+            if (request.applied) framesPerSecond = supported120Target();
         }
         BOOL previous = g120InternalWrite;
         g120InternalWrite = YES;
@@ -198,7 +276,7 @@ static void force120PrefChanged(CFNotificationCenterRef center, void *observer, 
 // iOS 16+：图层动画的帧率需求也强制 120，覆盖 App 打开/退出转场动画
 - (void)setPreferredFrameRateRange:(CAFrameRateRange)range {
     if (shouldForce120()) {
-        range = CAFrameRateRangeMake(120.0, 120.0, 120.0);
+        range = CAFrameRateRangeMake((CGFloat)supported120Target(), (CGFloat)supported120Target(), (CGFloat)supported120Target());
     }
     %orig(range);
 }
@@ -208,6 +286,7 @@ static void force120PrefChanged(CFNotificationCenterRef center, void *observer, 
 #pragma clang diagnostic pop
 
 %ctor {
+    installDynamicFrameRateHooks();
     updateForce120Pref();
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, force120PrefChanged, kPrefChangedNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     // UIKit notification names as strings: no new UIKit link dependency.
