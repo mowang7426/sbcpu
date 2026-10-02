@@ -21,6 +21,12 @@ int main(void) {
   assert([SBChargeRead()[@"smartChargeUpperLimit"] intValue] == 55);
   assert([SBChargeRead()[@"chargeScheduleEnabled"] boolValue]);
   assert(!SBChargeRead()[@"unrelated"]);
+  assert(SBChargePatch(@{@"chargeDayStartHour": @8, @"chargeDayStartMinute": @0,
+                         @"chargeNightStartHour": @22, @"chargeNightStartMinute": @0}));
+  assert(!SBChargePatch(@{@"chargeDayStartHour": @22, @"chargeDayStartMinute": @0}));
+  assert([SBChargeRead()[@"chargeDayStartHour"] intValue] == 8);
+  assert(SBChargePatch(@{@"chargeDayNightAutoEnable": @YES}));
+  assert([SBChargeRead()[@"chargeDayNightAutoEnable"] boolValue]);
   NSLog(@"PASS: native charge store migration, stale overwrite isolation and per-key merge");
  }
  return 0;

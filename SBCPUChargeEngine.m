@@ -19,6 +19,7 @@
 #include "SBCPUChargePowerSource.h"
 #include "SBCPUChargeProtocol.h"
 #import "SBCPUChargeStore.h"
+#include "SBCPUChargeDayNight.h"
 
 static SBCPUChargeConfig gCfg = {0};
 static SBCPUChargeState gState = SBCPUChargeStateUnknown;
@@ -147,6 +148,11 @@ bool sb_engine_load_config(SBCPUChargeConfig *cfg) {
     c.scheduleStage2Minute = (uint8_t)pref_int(d, @"chargeScheduleStage2Minute", 30);
     c.scheduleStage3Hour = (uint8_t)pref_int(d, @"chargeScheduleStage3Hour", 6);
     c.scheduleStage3Minute = (uint8_t)pref_int(d, @"chargeScheduleStage3Minute", 30);
+    c.dayNightAutoEnabled = pref_bool(d, @"chargeDayNightAutoEnable", false);
+    c.dayStartHour = (uint8_t)pref_int(d, @"chargeDayStartHour", 8);
+    c.dayStartMinute = (uint8_t)pref_int(d, @"chargeDayStartMinute", 0);
+    c.nightStartHour = (uint8_t)pref_int(d, @"chargeNightStartHour", 22);
+    c.nightStartMinute = (uint8_t)pref_int(d, @"chargeNightStartMinute", 0);
     c.smartThermalEnabled = pref_bool(d, @"smartThermalChargeEnable", false);
     c.thermalUpperC = (uint8_t)pref_int(d, @"smartThermalUpperC", 42);
     c.thermalLowerC = (uint8_t)pref_int(d, @"smartThermalLowerC", 38);
@@ -162,6 +168,21 @@ bool sb_engine_load_config(SBCPUChargeConfig *cfg) {
     if (c.scheduleStage2Minute > 59) c.scheduleStage2Minute = 30;
     if (c.scheduleStage3Hour > 23) c.scheduleStage3Hour = 6;
     if (c.scheduleStage3Minute > 59) c.scheduleStage3Minute = 30;
+    if (c.dayStartHour > 23) c.dayStartHour = 8;
+    if (c.dayStartMinute > 59) c.dayStartMinute = 0;
+    if (c.nightStartHour > 23) c.nightStartHour = 22;
+    if (c.nightStartMinute > 59) c.nightStartMinute = 0;
+    if (c.dayStartHour * 60 + c.dayStartMinute == c.nightStartHour * 60 + c.nightStartMinute)
+        c.dayNightAutoEnabled = false; // store rejects this; fail safe for old files
+    if (c.dayNightAutoEnabled) {
+        NSDateComponents *now = [[NSCalendar currentCalendar] components:(NSCalendarUnitHour | NSCalendarUnitMinute) fromDate:[NSDate date]];
+        int minute = (int)(now.hour * 60 + now.minute);
+        bool day = sb_charge_is_daytime(minute, c.dayStartHour * 60 + c.dayStartMinute,
+                                        c.nightStartHour * 60 + c.nightStartMinute);
+        c.smartChargeEnabled = day;
+        c.chargeLimitEnabled = day;
+        c.scheduleEnabled = !day;
+    }
     if (c.thermalUpperC > 60) c.thermalUpperC = 60;
     if (c.thermalLowerC < 25) c.thermalLowerC = 25;
     if (c.thermalUpperC <= c.thermalLowerC) { c.thermalUpperC = 42; c.thermalLowerC = 38; }

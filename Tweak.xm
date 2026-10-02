@@ -30,6 +30,7 @@
 #include <ctype.h>
 #import "SBCPUThermalPaths.h"
 #import "SBCPUChargeStore.h"
+#import "SBCPUChargeDayNight.h"
 #import "SBCPUThermalPressure.h"
 #import "Shared/LGLiveBackdropView.h"
 
@@ -1034,16 +1035,25 @@ static void LoadPreferences(void) {
     liquidGlassBezel = getFloatPref(CFSTR("SBCPU.LiquidGlass.Bezel"), 0.90f);
     liquidGlassRefractiveIndex = getFloatPref(CFSTR("SBCPU.LiquidGlass.RefractiveIndex"), 1.70f);
     liquidGlassQuality = getFloatPref(CFSTR("SBCPU.LiquidGlass.Quality"), 1.0f);
-    smartChargeEnable = getBoolPref(CFSTR("smartChargeEnable"), NO);
-    smartChargeUpperLimit = (NSInteger)getFloatPref(CFSTR("smartChargeUpperLimit"), 80.0f);
-    smartChargeLowerLimit = (NSInteger)getFloatPref(CFSTR("smartChargeLowerLimit"), 70.0f);
-    chargeMarqueeStyle = MAX(0, MIN(1, getIntPref(CFSTR("chargeMarqueeStyle"), 0)));
-    smartChargeMode = (NSInteger)getFloatPref(CFSTR("smartChargeMode"), 0.0f);
-    blockChargingEnable = getBoolPref(CFSTR("blockChargingEnable"), NO);
-    blockPowerEnable = getBoolPref(CFSTR("blockPowerEnable"), NO);
-    chargeKeepAC = getBoolPref(CFSTR("chargeKeepAC"), YES);
-    chargeOverrideOBC = getBoolPref(CFSTR("chargeOverrideOBC"), NO);
-    smartThermalChargeEnable = getBoolPref(CFSTR("smartThermalChargeEnable"), NO);
+    NSDictionary *chargeStore = SBChargeRead();
+    smartChargeEnable = [chargeStore[@"smartChargeEnable"] ?: @NO boolValue];
+    smartChargeUpperLimit = [chargeStore[@"smartChargeUpperLimit"] ?: @80 integerValue];
+    smartChargeLowerLimit = [chargeStore[@"smartChargeLowerLimit"] ?: @70 integerValue];
+    chargeMarqueeStyle = MAX(0, MIN(1, [chargeStore[@"chargeMarqueeStyle"] ?: @0 integerValue]));
+    smartChargeMode = [chargeStore[@"smartChargeMode"] ?: @0 integerValue];
+    blockChargingEnable = [chargeStore[@"blockChargingEnable"] ?: @NO boolValue];
+    blockPowerEnable = [chargeStore[@"blockPowerEnable"] ?: @NO boolValue];
+    chargeKeepAC = [chargeStore[@"chargeKeepAC"] ?: @YES boolValue];
+    chargeOverrideOBC = [chargeStore[@"chargeOverrideOBC"] ?: @NO boolValue];
+    smartThermalChargeEnable = [chargeStore[@"smartThermalChargeEnable"] ?: @NO boolValue];
+    /* Show effective mode, never the stale CFPreferences copy. */
+    if ([chargeStore[@"chargeDayNightAutoEnable"] boolValue]) {
+        NSInteger day = [chargeStore[@"chargeDayStartHour"] integerValue] * 60 + [chargeStore[@"chargeDayStartMinute"] integerValue];
+        NSInteger night = [chargeStore[@"chargeNightStartHour"] integerValue] * 60 + [chargeStore[@"chargeNightStartMinute"] integerValue];
+        NSDateComponents *dc = [[NSCalendar currentCalendar] components:(NSCalendarUnitHour | NSCalendarUnitMinute) fromDate:[NSDate date]];
+        BOOL isDay = sb_charge_is_daytime((int)(dc.hour * 60 + dc.minute), (int)day, (int)night);
+        smartChargeEnable = isDay;
+    }
     smartThermalUpperC = MAX(35, MIN(60, (NSInteger)getFloatPref(CFSTR("smartThermalUpperC"), 42.0f)));
     smartThermalLowerC = MAX(25, MIN(55, (NSInteger)getFloatPref(CFSTR("smartThermalLowerC"), 38.0f)));
     if (smartThermalLowerC >= smartThermalUpperC) smartThermalLowerC = MAX(25, smartThermalUpperC - 1);

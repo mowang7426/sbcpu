@@ -22,6 +22,7 @@ preamble = r'''
 #include <assert.h>
 #include <stdio.h>
 #include "SBCPUChargeEngine.h"
+#include "SBCPUChargeDayNight.h"
 typedef long NSInteger;
 typedef bool BOOL;
 typedef int IOReturn;
@@ -65,6 +66,15 @@ static void reset(void){
  gChargeCache=gPowerCache=-1;
 }
 int main(void){
+ assert(sb_charge_is_daytime(7*60+59,8*60,22*60)==false);
+ assert(sb_charge_is_daytime(8*60,8*60,22*60)==true);
+ assert(sb_charge_is_daytime(21*60+59,8*60,22*60)==true);
+ assert(sb_charge_is_daytime(22*60,8*60,22*60)==false);
+ assert(sb_charge_is_daytime(23*60,22*60,8*60)==true);
+ assert(sb_charge_is_daytime(7*60+59,22*60,8*60)==true);
+ assert(sb_charge_is_daytime(8*60,22*60,8*60)==false);
+ assert(!sb_charge_day_night_times_valid(480,480));
+ assert(sb_charge_day_night_times_valid(480,1320));
  NSInteger target=0;
  assert(sb_schedule_stage_for_minute(true,22*60+30,1*60+30,22*60+29,&target)==2 && target==100);
  assert(sb_schedule_stage_for_minute(true,22*60+30,1*60+30,22*60+30,&target)==1 && target==70);

@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import "SBCPUChargeLimitController.h"
 #import "SBCPUChargePreferencesCommon.h"
+#import "../SBCPUChargeDayNight.h"
 
 @implementation SBCPUChargeLimitController
 
@@ -13,10 +14,20 @@
     NSString *key = [specifier propertyForKey:@"key"];
     id def = [specifier propertyForKey:@"default"];
     id value = [SBCPUChargePreferencesCommon valueForKey:key defaultValue:def];
+    if ([key isEqualToString:@"smartChargeEnable"] || [key isEqualToString:@"chargeScheduleEnabled"]) {
+        BOOL autoMode = [[SBCPUChargePreferencesCommon valueForKey:@"chargeDayNightAutoEnable" defaultValue:@NO] boolValue];
+        if (autoMode) {
+            NSInteger day = [[SBCPUChargePreferencesCommon valueForKey:@"chargeDayStartHour" defaultValue:@8] integerValue] * 60 + [[SBCPUChargePreferencesCommon valueForKey:@"chargeDayStartMinute" defaultValue:@0] integerValue];
+            NSInteger night = [[SBCPUChargePreferencesCommon valueForKey:@"chargeNightStartHour" defaultValue:@22] integerValue] * 60 + [[SBCPUChargePreferencesCommon valueForKey:@"chargeNightStartMinute" defaultValue:@0] integerValue];
+            NSDateComponents *dc = [[NSCalendar currentCalendar] components:(NSCalendarUnitHour | NSCalendarUnitMinute) fromDate:[NSDate date]];
+            BOOL dayNow = sb_charge_is_daytime((int)(dc.hour * 60 + dc.minute), (int)day, (int)night);
+            value = @([key isEqualToString:@"smartChargeEnable"] ? dayNow : !dayNow);
+        }
+    }
     if ([key hasSuffix:@"Hour"]) {
         NSInteger hour = [value integerValue];
         NSString *minuteKey = [key stringByReplacingOccurrencesOfString:@"Hour" withString:@"Minute"];
-        NSInteger minuteDefault = [key isEqualToString:@"chargeScheduleStartHour"] ? 0 : 30;
+        NSInteger minuteDefault = ([key isEqualToString:@"chargeScheduleStartHour"] || [key isEqualToString:@"chargeDayStartHour"] || [key isEqualToString:@"chargeNightStartHour"]) ? 0 : 30;
         NSInteger minute = [[SBCPUChargePreferencesCommon valueForKey:minuteKey defaultValue:@(minuteDefault)] integerValue];
         return [NSString stringWithFormat:@"%02ld:%02ld", (long)hour, (long)minute];
     }
@@ -31,7 +42,18 @@
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
-    [SBCPUChargePreferencesCommon setValue:value forKey:key];
+    if ([key isEqualToString:@"chargeDayNightAutoEnable"] && ![value boolValue]) {
+        /* Leaving auto preserves the currently effective mode as the new manual
+           baseline; subsequent edits are independent. */
+        NSInteger day = [[SBCPUChargePreferencesCommon valueForKey:@"chargeDayStartHour" defaultValue:@8] integerValue] * 60 + [[SBCPUChargePreferencesCommon valueForKey:@"chargeDayStartMinute" defaultValue:@0] integerValue];
+        NSInteger night = [[SBCPUChargePreferencesCommon valueForKey:@"chargeNightStartHour" defaultValue:@22] integerValue] * 60 + [[SBCPUChargePreferencesCommon valueForKey:@"chargeNightStartMinute" defaultValue:@0] integerValue];
+        NSDateComponents *dc = [[NSCalendar currentCalendar] components:(NSCalendarUnitHour | NSCalendarUnitMinute) fromDate:[NSDate date]];
+        BOOL dayNow = sb_charge_is_daytime((int)(dc.hour * 60 + dc.minute), (int)day, (int)night);
+        [SBCPUChargePreferencesCommon setValues:@{@"chargeDayNightAutoEnable": @NO,
+            @"smartChargeEnable": @(dayNow), @"chargeScheduleEnabled": @(!dayNow)}];
+    } else {
+        [SBCPUChargePreferencesCommon setValue:value forKey:key];
+    }
     [SBCPUChargePreferencesCommon redecideDaemon];
 }
 
@@ -58,8 +80,24 @@
         [alert addAction:[UIAlertAction actionWithTitle:titles[i] style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
             if (isTime) {
                 NSArray *pair = values[i];
-                [SBCPUChargePreferencesCommon setValue:pair[0] forKey:key];
-                [SBCPUChargePreferencesCommon setValue:pair[1] forKey:[key stringByReplacingOccurrencesOfString:@"Hour" withString:@"Minute"]];
+                NSString *minuteKey = [key stringByReplacingOccurrencesOfString:@"Hour" withString:@"Minute"];
+                if ([key isEqualToString:@"chargeDayStartHour"] || [key isEqualToString:@"chargeNightStartHour"]) {
+                    NSString *otherHour = [key isEqualToString:@"chargeDayStartHour"] ? @"chargeNightStartHour" : @"chargeDayStartHour";
+                    NSString *otherMinute = [otherHour stringByReplacingOccurrencesOfString:@"Hour" withString:@"Minute"];
+                    NSInteger proposed = [pair[0] integerValue] * 60 + [pair[1] integerValue];
+                    NSInteger other = [[SBCPUChargePreferencesCommon valueForKey:otherHour defaultValue:([otherHour hasPrefix:@"chargeDay"] ? @8 : @22)] integerValue] * 60 +
+                        [[SBCPUChargePreferencesCommon valueForKey:otherMinute defaultValue:@0] integerValue];
+                    if (proposed == other) {
+                        UIAlertController *error = [UIAlertController alertControllerWithTitle:@"时间无效" message:@"白天开始时间与夜间开始时间不能相同，请选择不同时间。" preferredStyle:UIAlertControllerStyleAlert];
+                        [error addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+                        [self presentViewController:error animated:YES completion:nil];
+                        return;
+                    }
+                    [SBCPUChargePreferencesCommon setValues:@{key: pair[0], minuteKey: pair[1]}];
+                } else {
+                    [SBCPUChargePreferencesCommon setValue:pair[0] forKey:key];
+                    [SBCPUChargePreferencesCommon setValue:pair[1] forKey:minuteKey];
+                }
             } else {
                 [SBCPUChargePreferencesCommon setValue:values[i] forKey:key];
             }

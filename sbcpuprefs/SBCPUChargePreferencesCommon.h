@@ -5,6 +5,7 @@
 @interface SBCPUChargePreferencesCommon : NSObject
 + (id)valueForKey:(NSString *)key defaultValue:(id)defaultValue;
 + (void)setValue:(id)value forKey:(NSString *)key;
++ (void)setValues:(NSDictionary *)values;
 + (void)redecideDaemon;
 + (BOOL)daemonRunning;
 + (NSString *)daemonStatusText;

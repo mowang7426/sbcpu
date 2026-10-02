@@ -27,6 +27,16 @@
     return defaultValue;
 }
 
++ (void)setValues:(NSDictionary *)values {
+    if (!values.count || !SBChargePatch(values)) {
+        NSLog(@"[SBCPUChargePrefs] rejected atomic charge configuration");
+        return;
+    }
+    [self redecideDaemon];
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.yourname.sbcpufloating.prefschanged"), NULL, NULL, YES);
+    notify_post("com.yourname.sbcpufloating/settingsChanged");
+}
+
 + (void)setValue:(id)value forKey:(NSString *)key {
     if (SBChargeKey(key)) {
         if (!value || !SBChargePatch(@{key: value})) {

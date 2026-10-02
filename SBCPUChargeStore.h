@@ -16,7 +16,7 @@
 #endif
 static inline BOOL SBChargeKey(NSString *key) {
     return [key hasPrefix:@"smartCharge"] || [key hasPrefix:@"smartThermal"] ||
-        [key hasPrefix:@"chargeSchedule"] || [@[@"chargeLimitEnabled", @"chargeMarqueeStyle", @"chargeKeepAC", @"chargeOverrideOBC", @"blockChargingEnable", @"blockPowerEnable"] containsObject:key];
+        [key hasPrefix:@"chargeSchedule"] || [key hasPrefix:@"chargeDayNight"] || [@[@"chargeLimitEnabled", @"chargeMarqueeStyle", @"chargeKeepAC", @"chargeOverrideOBC", @"blockChargingEnable", @"blockPowerEnable"] containsObject:key];
 }
 static inline NSMutableDictionary *SBChargeRead(void) {
     NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:@SBCPU_CHARGE_STORE];
@@ -36,6 +36,17 @@ static inline BOOL SBChargePatch(NSDictionary *patch) {
     NSMutableDictionary *d = SBChargeRead();
     for (NSString *key in patch) if (SBChargeKey(key)) d[key] = patch[key];
     if (patch[@"smartChargeEnable"]) d[@"chargeLimitEnabled"] = d[@"smartChargeEnable"];
+    /* Day/night automation has one unambiguous policy. Reject equal boundaries
+       while holding the lock, so two writers cannot publish an invalid pair. */
+    if (patch[@"chargeDayStartHour"] || patch[@"chargeDayStartMinute"] ||
+        patch[@"chargeNightStartHour"] || patch[@"chargeNightStartMinute"] ||
+        ([patch[@"chargeDayNightAutoEnable"] boolValue] && patch[@"chargeDayNightAutoEnable"] != nil)) {
+        NSInteger day = [d[@"chargeDayStartHour"] ?: @8 integerValue] * 60 + [d[@"chargeDayStartMinute"] ?: @0 integerValue];
+        NSInteger night = [d[@"chargeNightStartHour"] ?: @22 integerValue] * 60 + [d[@"chargeNightStartMinute"] ?: @0 integerValue];
+        if (day < 0 || day >= 1440 || night < 0 || night >= 1440 || day == night) {
+            flock(fd, LOCK_UN); close(fd); return NO;
+        }
+    }
     NSInteger upper = [(d[@"smartChargeUpperLimit"] ?: @80) integerValue];
     NSInteger lower = [(d[@"smartChargeLowerLimit"] ?: @70) integerValue];
     if (lower >= upper) {

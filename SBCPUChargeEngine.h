@@ -40,6 +40,11 @@ typedef struct {
     uint8_t scheduleStage2Minute; // 第二阶段分钟，默认30
     uint8_t scheduleStage3Hour; // 最终充满阶段小时，默认6
     uint8_t scheduleStage3Minute; // 最终充满阶段分钟，默认30
+    bool dayNightAutoEnabled;     // 日夜自动切换
+    uint8_t dayStartHour;
+    uint8_t dayStartMinute;
+    uint8_t nightStartHour;
+    uint8_t nightStartMinute;
     bool smartThermalEnabled;  // 智能温度停充
     uint8_t thermalUpperC;     // 温度上限 °C
     uint8_t thermalLowerC;     // 温度下限 °C
