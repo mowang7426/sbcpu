@@ -5818,25 +5818,6 @@ static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
 // 🔍 插件冲突检测：点击插件显示详情
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (indexPath.section == 8 && indexPath.row == 18) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"顶部拖动回位延迟"
-            message:@"松手后等待所选秒数，再平滑回到顶部；再次拖动会重新计时。"
-            preferredStyle:UIAlertControllerStyleActionSheet];
-        for (NSInteger seconds = 1; seconds <= 30; seconds++) {
-            [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%ld 秒", (long)seconds]
-                style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
-                    statusDockReturnDelay = seconds;
-                    SavePreferencesAndNotify();
-                    if (floatingView.statusDockReturnTimer.valid) [floatingView scheduleStatusDockReturn];
-                    [self.tableView reloadData];
-                }]];
-        }
-        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-        alert.popoverPresentationController.sourceView = self.view;
-        alert.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1, 1);
-        [self presentViewController:alert animated:YES completion:nil];
-        return;
-    }
 
     if (indexPath.section != 12) return;
     if (indexPath.row == 0) return;
@@ -7709,6 +7690,26 @@ static NSString *stripLeadingEmoji(NSString *s) {
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+
+    if (indexPath.section == 8 && indexPath.row == 18) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"顶部拖动回位延迟"
+            message:@"松手后等待所选秒数，再平滑回到顶部；再次拖动会重新计时。"
+            preferredStyle:UIAlertControllerStyleActionSheet];
+        for (NSInteger seconds = 1; seconds <= 30; seconds++) {
+            [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%ld 秒", (long)seconds]
+                style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+                    statusDockReturnDelay = seconds;
+                    SavePreferencesAndNotify();
+                    if (floatingView.statusDockReturnTimer.valid) [floatingView scheduleStatusDockReturn];
+                    [self.tableView reloadData];
+                }]];
+        }
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        alert.popoverPresentationController.sourceView = self.view;
+        alert.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1, 1);
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
 
     // 🔍 插件冲突检测：点击冲突警告或插件显示详情
     if (indexPath.section == 12) {
