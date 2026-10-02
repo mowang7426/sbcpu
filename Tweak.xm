@@ -244,6 +244,7 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, assign) BOOL layoutTransitionAnimating;
 @property (nonatomic, strong) NSTimer *inactivityTimer;
 @property (nonatomic, strong) NSTimer *statusDockReturnTimer;
+@property (nonatomic, assign) BOOL statusDockDragging;
 @property (nonatomic, strong) UITapGestureRecognizer *singleTapGesture;
 @property (nonatomic, strong) UILongPressGestureRecognizer *longPressGesture;
 
@@ -337,6 +338,7 @@ static BOOL keyboardAvoidEnable = YES;
 static BOOL smartDockEnable = YES;
 static NSInteger dockMode = 0;
 static BOOL rememberPositionEnable = YES;
+static NSInteger statusDockReturnDelay = 5;
 static BOOL statusBarDockEnable = NO; // 开启后浮窗吸附到顶部状态栏安全区域
 static BOOL statusDockShowCPU = YES;
 static BOOL statusDockShowFPS = YES;
@@ -1008,6 +1010,7 @@ static void LoadPreferences(void) {
     dockMode = getIntPref(CFSTR("dockMode"), 0);
     rememberPositionEnable = getBoolPref(CFSTR("rememberPositionEnable"), YES);
     statusBarDockEnable = getBoolPref(CFSTR("statusBarDockEnable"), NO);
+    statusDockReturnDelay = MAX(1, MIN(30, getIntPref(CFSTR("statusDockReturnDelay"), 5)));
     statusDockShowCPU = getBoolPref(CFSTR("statusDockShowCPU"), YES);
     statusDockShowFPS = getBoolPref(CFSTR("statusDockShowFPS"), YES);
     statusDockShowFrequency = getBoolPref(CFSTR("statusDockShowFrequency"), NO);
@@ -1109,6 +1112,7 @@ static void SavePreferencesAndNotify(void) {
     setIntPref(CFSTR("dockMode"), dockMode);
     setBoolPref(CFSTR("rememberPositionEnable"), rememberPositionEnable);
     setBoolPref(CFSTR("statusBarDockEnable"), statusBarDockEnable);
+    setIntPref(CFSTR("statusDockReturnDelay"), statusDockReturnDelay);
     setBoolPref(CFSTR("statusDockShowCPU"), statusDockShowCPU);
     setBoolPref(CFSTR("statusDockShowFPS"), statusDockShowFPS);
     setBoolPref(CFSTR("statusDockShowFrequency"), statusDockShowFrequency);
@@ -2323,6 +2327,8 @@ static inline CGFloat statusBarDockCapsuleHeight(void) { return 38.0f; }
 
 static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
     if (!floatingView || !floatingView.superview) return;
+    // Periodic layout must not cancel the user-selected undocked interval.
+    if (statusBarDockEnable && (floatingView.statusDockDragging || floatingView.statusDockReturnTimer.valid)) return;
 
     CGRect containerBounds = floatingView.superview.bounds;
     if (CGRectIsEmpty(containerBounds)) containerBounds = [UIScreen mainScreen].bounds;
@@ -3697,6 +3703,7 @@ return self;
     if (pan.state == UIGestureRecognizerStateBegan) {
         [self.statusDockReturnTimer invalidate];
         self.statusDockReturnTimer = nil;
+        self.statusDockDragging = statusBarDockEnable;
         self.lastPoint = self.center;
     } else if (pan.state == UIGestureRecognizerStateChanged) {
         CGPoint translation = [pan translationInView:self.superview];
@@ -3727,8 +3734,9 @@ return self;
             [[NSUserDefaults standardUserDefaults] setObject:NSStringFromCGRect(self.frame) forKey:@"SBCPU.LastFrame"];
             [[NSUserDefaults standardUserDefaults] synchronize];
         }
+        self.statusDockDragging = NO;
         if (statusBarDockEnable && self.isCollapsed) {
-            // 先留在用户拖到的位置，给底下控件留出点击时间；两秒后再平滑吸回。
+            // 拖开后按用户设置的延迟平滑吸回。
             [self scheduleStatusDockReturn];
         } else {
             clampAndPositionFloatingView(self.center, YES);
@@ -4159,7 +4167,7 @@ return self;
 
 - (void)scheduleStatusDockReturn {
     [self.statusDockReturnTimer invalidate];
-    self.statusDockReturnTimer = [NSTimer scheduledTimerWithTimeInterval:5.0
+    self.statusDockReturnTimer = [NSTimer scheduledTimerWithTimeInterval:(NSTimeInterval)statusDockReturnDelay
         target:self selector:@selector(returnToStatusDock) userInfo:nil repeats:NO];
 }
 
@@ -4416,7 +4424,8 @@ return self;
     if (cornerRad > targetH / 2.0f) cornerRad = targetH / 2.0f;
     self.glassSurfaceView.layer.cornerRadius = cornerRad;
     self.bounds = CGRectMake(0, 0, targetW, targetH);
-    self.center = CGPointMake(targetX, targetY);
+    if (!statusBarDockEnable || (!self.statusDockDragging && !self.statusDockReturnTimer.valid))
+        self.center = CGPointMake(targetX, targetY);
 
     if (statusBarDockEnable) {
         _miniDockInfoLabel.hidden = NO;
@@ -5809,6 +5818,26 @@ static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
 // 🔍 插件冲突检测：点击插件显示详情
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section == 8 && indexPath.row == 18) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"顶部拖动回位延迟"
+            message:@"松手后等待所选秒数，再平滑回到顶部；再次拖动会重新计时。"
+            preferredStyle:UIAlertControllerStyleActionSheet];
+        for (NSInteger seconds = 1; seconds <= 30; seconds++) {
+            [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%ld 秒", (long)seconds]
+                style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+                    statusDockReturnDelay = seconds;
+                    SavePreferencesAndNotify();
+                    if (floatingView.statusDockReturnTimer.valid) [floatingView scheduleStatusDockReturn];
+                    [self.tableView reloadData];
+                }]];
+        }
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        alert.popoverPresentationController.sourceView = self.view;
+        alert.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1, 1);
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
     if (indexPath.section != 12) return;
     if (indexPath.row == 0) return;
     if (gInstalledPlugins.count == 0) return;
@@ -6488,7 +6517,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 5) return 1;
     if (section == 6) return 10;
     if (section == 7) return 6; // 充电增强：充电增强/满血快充/屏蔽维修/充电历史/阻止充电/阻止外部供电
-    if (section == 8) return 18; // 位置与显示 + 状态栏胶囊内容
+    if (section == 8) return 19; // 位置与显示 + 状态栏胶囊内容
     if (section == 9) return 0; // 智能停充已统一到系统插件“充电限制”
     if (section == 10) return 0; // 📖 功能说明已移除
     if (section == 11) return 0; // 🌡️ 温控功能说明已移除
@@ -7668,6 +7697,10 @@ static NSString *stripLeadingEmoji(NSString *s) {
             cell.textLabel.text = @"顶部显示 SIM2 信号";
             UISwitch *sw = [UISwitch new]; sw.on = statusDockShowSIM2;
             [sw addTarget:self action:@selector(changeStatusDockSIM2:) forControlEvents:UIControlEventValueChanged]; cell.accessoryView = sw;
+        } else if (indexPath.row == 18) {
+            cell.textLabel.text = @"顶部拖动回位延迟";
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"%ld 秒", (long)statusDockReturnDelay];
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         }
     }
     applySettingsTheme(cell, indexPath);
@@ -8056,6 +8089,9 @@ static NSString *stripLeadingEmoji(NSString *s) {
 - (void)changeRememberPosition:(UISwitch *)sw { rememberPositionEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeStatusBarDock:(UISwitch *)sw {
     statusBarDockEnable = sw.isOn;
+    [floatingView.statusDockReturnTimer invalidate];
+    floatingView.statusDockReturnTimer = nil;
+    floatingView.statusDockDragging = NO;
     SavePreferencesAndNotify();
     if (floatingView) {
         // 状态栏模式本身就是胶囊：开启时立即收起，关闭时恢复完整浮窗。
