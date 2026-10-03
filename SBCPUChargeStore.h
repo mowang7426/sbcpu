@@ -17,7 +17,7 @@
 static inline BOOL SBChargeKey(NSString *key) {
     return [key hasPrefix:@"smartCharge"] || [key hasPrefix:@"smartThermal"] ||
         [key hasPrefix:@"chargeSchedule"] || [key hasPrefix:@"chargeDayNight"] ||
-        [key hasPrefix:@"chargeDayStart"] || [key hasPrefix:@"chargeNightStart"] || [@[@"chargeLimitEnabled", @"chargeMarqueeStyle", @"chargeKeepAC", @"chargeOverrideOBC", @"blockChargingEnable", @"blockPowerEnable"] containsObject:key];
+        [key hasPrefix:@"chargeDayStart"] || [key hasPrefix:@"chargeNightStart"] || [ @[@"chargeLimitEnabled", @"chargeMarqueeStyle", @"screenRecordingHighFrameRateEnabled", @"chargeKeepAC", @"chargeOverrideOBC", @"blockChargingEnable", @"blockPowerEnable"] containsObject:key];
 }
 static inline NSMutableDictionary *SBChargeRead(void) {
     NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:@SBCPU_CHARGE_STORE];

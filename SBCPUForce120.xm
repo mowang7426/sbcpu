@@ -16,6 +16,7 @@
 
 #import <objc/runtime.h>
 #import <substrate.h>
+#import "SBCPUChargeStore.h"
 
 // V4.17.2: weak tracking + event-driven reapply; no thermal/CPU policy changes.
 @interface SBCPU120Request : NSObject
@@ -33,6 +34,7 @@ static BOOL gForce120Enabled = NO;
 // 独立的录屏期间增强请求；默认关闭，仅在用户授权且系统报告录屏时短暂生效。
 static BOOL gScreenRecordingHighFrameRateEnabled = NO;
 static BOOL gScreenRecordingActive = NO;
+static NSTimer *gScreenRecordingPollTimer = nil;
 static NSObject *g120Lock;
 static NSHashTable<CADisplayLink *> *g120Links;
 static char g120RequestKey;
@@ -102,6 +104,9 @@ static void updateForce120Pref(void) {
     CFPropertyListRef recordingValue = CFPreferencesCopyAppValue(CFSTR("screenRecordingHighFrameRateEnabled"), kPrefAppID);
     BOOL recordingEnabled = recordingValue && CFGetTypeID(recordingValue) == CFBooleanGetTypeID() && CFBooleanGetValue((CFBooleanRef)recordingValue);
     if (recordingValue) CFRelease(recordingValue);
+    NSDictionary *chargeStore = SBChargeRead();
+    if (chargeStore[@"screenRecordingHighFrameRateEnabled"] != nil)
+        recordingEnabled = [chargeStore[@"screenRecordingHighFrameRateEnabled"] boolValue];
     @synchronized(g120Lock) { gScreenRecordingHighFrameRateEnabled = recordingEnabled; }
     if (enabled && shouldForce120()) requestDynamicHighFrameRate();
     else releaseDynamicHighFrameRate();
@@ -317,8 +322,11 @@ static void registerScreenRecordingLifecycle(void) {
             updateScreenRecordingState();
         }];
     }
+    gScreenRecordingPollTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(__unused NSTimer *timer) {
+        updateForce120Pref();
+        updateScreenRecordingState();
+    }];
 }
-
 %ctor {
     installDynamicFrameRateHooks();
     updateForce120Pref();
