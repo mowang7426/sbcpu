@@ -609,11 +609,24 @@ static void evaluateThermalPressureState(void) {
 
     SBCPUThermalPressureLevel pressure = normalizedThermalPressureLevel(state);
     g_currentPressureLevel = pressure;
-    // 稳定高性能不因普通 Heavy 压力瞬间切低功耗；极限满频只在
-// Trapping/Sleeping 级别允许安全保护接管，避免系统强保护造成更剧烈的掉频。
-BOOL severe = isExtremeFullPowerMode()
-    ? (pressure >= SBCPUThermalPressureLevelTrapping && pressure <= SBCPUThermalPressureLevelSleeping)
-    : (pressure >= SBCPUThermalPressureLevelHeavy && pressure <= SBCPUThermalPressureLevelSleeping);
+
+    // 极限满频模式：插件不主动接管为低功耗。系统/硬件层的温控保护仍可自行降频。
+    if (isExtremeFullPowerMode()) {
+        if (g_pressureSafetyOverride) {
+            g_pressureSafetyOverride = NO;
+            g_pressureNominalSince = 0;
+            publishThermalDiagnosticState(pressure, NO);
+            applyPowerModeToRuntime(NO);
+            NSLog(@"[SBCPUThermal] 极限满频模式已接管，清除插件热保护降频状态 pressure=%s", SBCPUThermalPressureString(pressure));
+        } else {
+            publishThermalDiagnosticState(pressure, NO);
+        }
+        return;
+    }
+
+    // 稳定高性能/低功耗模式继续使用原有自动热保护逻辑。
+    // 稳定高性能/低功耗模式：Heavy 及以上压力允许插件热保护接管。
+    BOOL severe = (pressure >= SBCPUThermalPressureLevelHeavy && pressure <= SBCPUThermalPressureLevelSleeping);
     publishThermalDiagnosticState(pressure, g_pressureSafetyOverride);
     if (severe) {
         g_pressureNominalSince = 0;
@@ -2367,12 +2380,14 @@ static void onPowerModeChanged(CFNotificationCenterRef center, void *observer, C
 dispatch_block_t block = ^{
 BOOL lowPower = NO;
 SBCPUThermalPowerMode selected;
-if (SBCPUThermalReadPostedPowerMode(&lowPower)) {
-selected = lowPower ? SBCPUThermalPowerModeLow : SBCPUThermalPowerModeFull;
-} else {
 NSDictionary *prefs = readPrefsDictionary();
 NSString *mode = [prefs[S("powerMode")] isKindOfClass:[NSString class]] ? prefs[S("powerMode")] : S("fullPower");
-selected = [mode isEqualToString:S("lowPower")] ? SBCPUThermalPowerModeLow : SBCPUThermalPowerModeFull;
+if (SBCPUThermalReadPostedPowerMode(&lowPower)) {
+selected = lowPower ? SBCPUThermalPowerModeLow :
+    ([mode isEqualToString:S("extremeFull")] ? SBCPUThermalPowerModeExtreme : SBCPUThermalPowerModeFull);
+} else {
+selected = [mode isEqualToString:S("lowPower")] ? SBCPUThermalPowerModeLow :
+    ([mode isEqualToString:S("extremeFull")] ? SBCPUThermalPowerModeExtreme : SBCPUThermalPowerModeFull);
 }
 BOOL blanked = SBCPUThermalScreenIsBlanked();
 SBCPUThermalPowerMode previous;
@@ -2384,7 +2399,7 @@ SBCPUThermalPowerMode runtimeMode = g_powerMode;
 os_unfair_lock_unlock(&g_modeLock);
 if (previous != runtimeMode) {
 applyPowerModeToRuntime(NO);
-if (previous == SBCPUThermalPowerModeLow && runtimeMode == SBCPUThermalPowerModeFull)
+if (previous == SBCPUThermalPowerModeLow && runtimeMode != SBCPUThermalPowerModeLow)
     scheduleThermalMonitorReload();
 }
 NSLog(@"[SBCPUThermal] 用户模式已选择:%@，当前屏幕:%@，运行模式:%@",
