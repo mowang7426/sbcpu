@@ -2898,12 +2898,12 @@ static void applySystemRefreshRate(void) {
     }
     _frameCount++;
     _sampleElapsed += interval;
-    // 用完整约1秒的实际 display-link 时间戳采样，而不是 preferredFrameRateRange；
-    // 因此显示的是系统实际送达本进程的刷新回调，避免开120却虚报120。
-    if (_sampleElapsed >= 1.0) {
+    // 约四分之一秒采样一次：降低显示延迟，同时保留足够的帧数抗抖动。
+    if (_sampleElapsed >= 0.25) {
         double measured = (double)_frameCount / _sampleElapsed;
         if (measured >= 1.0 && measured <= 240.0) {
-            _smoothedFPS = (_smoothedFPS > 0.0) ? (_smoothedFPS * 0.65 + measured * 0.35) : measured;
+            // 轻度平滑，避免 60/120Hz 之间因单次抖动跳变；不再使用 1 秒滞后窗口。
+            _smoothedFPS = (_smoothedFPS > 0.0) ? (_smoothedFPS * 0.35 + measured * 0.65) : measured;
             self.currentFPS = _smoothedFPS;
         }
         _frameCount = 0;
@@ -10572,7 +10572,7 @@ static void onPartRepairBundleDidLoad(CFNotificationCenterRef center, void *obse
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             createCPUWindow();
             registerV160Observers();
-            [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) { updateCPU(); chargeSessionTick(); }];
+            [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *timer) { updateCPU(); chargeSessionTick(); }];
         });
     }
 }
