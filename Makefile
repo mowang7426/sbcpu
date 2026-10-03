@@ -46,9 +46,9 @@ SBCPUFloatingCCRegistration_INSTALL_TARGET_PROCESSES = SpringBoard
 SBCPUForce120_FILES = SBCPUForce120.xm
 SBCPUForce120_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -fvisibility=hidden -Wno-error=unguarded-availability-new
 SBCPUForce120_LDFLAGS += -Wl,-x -Wl,-dead_strip -Wl,-U,___isOSVersionAtLeast
-SBCPUForce120_FRAMEWORKS = Foundation QuartzCore
+SBCPUForce120_FRAMEWORKS = Foundation QuartzCore AVFoundation CoreMedia
 SBCPUForce120_LIBRARIES = substrate
-SBCPUForce120_INSTALL_TARGET_PROCESSES = SpringBoard
+SBCPUForce120_INSTALL_TARGET_PROCESSES = SpringBoard replayd backboardd
 
 # 6. 充电控制 root daemon（V4.22 Charge Engine V1）：SpringBoard 无 AppleSMC entitlement，
 # 由 launchd 以 root 拉起本 daemon，ldid 签名带 com.apple.private.applesmc.user-access。

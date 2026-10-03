@@ -9,6 +9,7 @@
 // ============================================================
 #import <Foundation/Foundation.h>
 #import <QuartzCore/QuartzCore.h>
+#import <AVFoundation/AVFoundation.h>
 #import <objc/message.h>
 
 #define kPrefAppID CFSTR("com.yourname.sbcpufloating")
@@ -294,11 +295,45 @@ static void force120PrefChanged(CFNotificationCenterRef center, void *observer, 
     %orig(range);
 }
 
+static BOOL recordingBoostEnabled(void) {
+    NSDictionary *store = SBChargeRead();
+    id value = store[@"screenRecordingHighFrameRateEnabled"];
+    return value ? [value boolValue] : NO;
+}
+
+// replayd/backboardd 录屏虚拟显示：仅在用户开启录屏增强时提高明确的帧率选项。
+// 参数类型不匹配或系统没有该方法时由 Logos/运行时自然旁路。
+%hook UIScreen
+- (void)setFigVirtualDisplayOption:(id)value forKey:(id)key {
+    if (recordingBoostEnabled() && [key isKindOfClass:[NSString class]]) {
+        NSString *lower = [(NSString *)key lowercaseString];
+        if ([lower containsString:@"framerate"] || [lower containsString:@"frame_rate"] ||
+            [lower containsString:@"refreshrate"] || [lower containsString:@"refresh_rate"]) {
+            if ([value isKindOfClass:[NSNumber class]]) {
+                value = @(MAX(120, [value integerValue]));
+            }
+        }
+    }
+    %orig(value, key);
+}
 %end
 
-#pragma clang diagnostic pop
+// replayd 的视频编码输入：把预期源帧率和关键帧间隔设为120，
+// 但不强行改码率；如果源实际仍是60，最终文件仍会由时间戳反映真实帧率。
+%hook AVAssetWriterInput
+- (void)setOutputSettings:(NSDictionary *)settings {
+    if (recordingBoostEnabled() && [settings isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *patched = [settings mutableCopy];
+        patched[AVVideoExpectedSourceFrameRateKey] = @120;
+        patched[AVVideoMaxKeyFrameIntervalKey] = @120;
+        %orig(patched);
+        return;
+    }
+    %orig(settings);
+}
+%end
 
-static void updateScreenRecordingState(void) {
+
     BOOL recording = NO;
     Class recorder = NSClassFromString(@"RPScreenRecorder");
     SEL shared = NSSelectorFromString(@"sharedRecorder");
