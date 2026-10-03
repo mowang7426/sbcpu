@@ -2790,7 +2790,8 @@ static void applySystemRefreshRate(void) {
     CADisplayLink *_displayLink;
     CFTimeInterval _lastTimestamp;
     NSInteger _frameCount;
-}
+    CFTimeInterval _sampleElapsed;
+    double _smoothedFPS;
 
 + (instancetype)sharedInstance {
     static SBCPUFPSHelper *instance = nil;
@@ -2849,6 +2850,8 @@ static void applySystemRefreshRate(void) {
     [self stopDriverAnimation];
     _lastTimestamp = 0;
     _frameCount = 0;
+    _sampleElapsed = 0;
+    _smoothedFPS = 0;
     _currentFPS = 0.0;
 }
 
@@ -2877,16 +2880,33 @@ static void applySystemRefreshRate(void) {
 }
 
 - (void)tick:(CADisplayLink *)link {
-    if (_lastTimestamp == 0) {
-        _lastTimestamp = link.timestamp;
+    CFTimeInterval timestamp = link.timestamp;
+    if (_lastTimestamp == 0 || timestamp <= _lastTimestamp) {
+        _lastTimestamp = timestamp;
+        _frameCount = 0;
+        _sampleElapsed = 0;
+        return;
+    }
+    CFTimeInterval interval = timestamp - _lastTimestamp;
+    _lastTimestamp = timestamp;
+    // 后台切换/主线程卡顿会产生很大的时间洞，不能把它算进屏幕刷新率。
+    if (interval <= 0.0 || interval > 0.25) {
+        _frameCount = 0;
+        _sampleElapsed = 0;
         return;
     }
     _frameCount++;
-    CFTimeInterval delta = link.timestamp - _lastTimestamp;
-    if (delta >= 0.5) {
-        self.currentFPS = (double)_frameCount / delta;
+    _sampleElapsed += interval;
+    // 用完整约1秒的实际 display-link 时间戳采样，而不是 preferredFrameRateRange；
+    // 因此显示的是系统实际送达本进程的刷新回调，避免开120却虚报120。
+    if (_sampleElapsed >= 1.0) {
+        double measured = (double)_frameCount / _sampleElapsed;
+        if (measured >= 1.0 && measured <= 240.0) {
+            _smoothedFPS = (_smoothedFPS > 0.0) ? (_smoothedFPS * 0.65 + measured * 0.35) : measured;
+            self.currentFPS = _smoothedFPS;
+        }
         _frameCount = 0;
-        _lastTimestamp = link.timestamp;
+        _sampleElapsed = 0;
     }
 }
 @end
