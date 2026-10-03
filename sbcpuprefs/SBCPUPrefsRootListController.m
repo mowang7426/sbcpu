@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#import <Preferences/PSSpecifier.h>
 #import "SBCPUPrefsRootListController.h"
 #import "../SBCPUChargeStore.h"
 #import <notify.h>
