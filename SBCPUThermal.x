@@ -325,6 +325,15 @@ notify_cancel(token);
 return result == NOTIFY_STATUS_OK && state != 0;
 }
 
+static BOOL SBCPUThermalScreenIsLocked(void) {
+    int token = 0;
+    uint64_t state = 0;
+    if (notify_register_check("com.apple.springboard.lockstate", &token) != NOTIFY_STATUS_OK) return NO;
+    int result = notify_get_state(token, &state);
+    notify_cancel(token);
+    return result == NOTIFY_STATUS_OK && state != 0;
+}
+
 static BOOL isLowPowerMode(void) {
 os_unfair_lock_lock(&g_modeLock);
 BOOL res = (g_powerMode == SBCPUThermalPowerModeLow);
@@ -1499,9 +1508,12 @@ SBCPUThermalPowerMode selected = [mode isEqualToString:S("lowPower")]
     ? SBCPUThermalPowerModeLow
     : ([mode isEqualToString:S("extremeFull")] ? SBCPUThermalPowerModeExtreme : SBCPUThermalPowerModeFull);
 BOOL blanked = SBCPUThermalScreenIsBlanked();
+BOOL locked = SBCPUThermalScreenIsLocked();
 os_unfair_lock_lock(&g_modeLock);
 g_userSelectedPowerMode = selected;
-g_powerMode = blanked ? SBCPUThermalPowerModeLow : selected;
+// 只有确认真正锁屏且“锁屏省电保护”开启时才临时降到低功耗；
+// 桌面亮屏/通知亮屏不能再把极限满频误切走。
+g_powerMode = (g_lockScreenLowPowerEnabled && locked) ? SBCPUThermalPowerModeLow : selected;
 os_unfair_lock_unlock(&g_modeLock);
 }
 }
@@ -2443,11 +2455,12 @@ selected = [mode isEqualToString:S("lowPower")] ? SBCPUThermalPowerModeLow :
     ([mode isEqualToString:S("extremeFull")] ? SBCPUThermalPowerModeExtreme : SBCPUThermalPowerModeFull);
 }
 BOOL blanked = SBCPUThermalScreenIsBlanked();
+BOOL locked = SBCPUThermalScreenIsLocked();
 SBCPUThermalPowerMode previous;
 os_unfair_lock_lock(&g_modeLock);
 previous = g_powerMode;
 g_userSelectedPowerMode = selected;
-g_powerMode = blanked ? SBCPUThermalPowerModeLow : selected;
+g_powerMode = (g_lockScreenLowPowerEnabled && locked) ? SBCPUThermalPowerModeLow : selected;
 SBCPUThermalPowerMode runtimeMode = g_powerMode;
 os_unfair_lock_unlock(&g_modeLock);
 if (previous != runtimeMode) {
