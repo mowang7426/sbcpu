@@ -72,7 +72,43 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>▣ CPU / FPS</string>
+			<string>录屏与显示安全</string>
+			<key>footerText</key>
+			<string>录屏高帧率增强默认关闭。开启后仅在 RPScreenRecorder 报告录屏期间临时提高显示请求；不保证录屏文件为 120fps，低电量或系统临界温度时自动让位。温控防暗屏不拦截系统熄屏、锁屏或热安全路径。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>录屏高帧率增强（默认关闭）</string>
+			<key>key</key>
+			<string>screenRecordingHighFrameRateEnabled</string>
+			<key>default</key>
+			<false/>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:specifier:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSTitleValueCell</string>
+			<key>label</key>
+			<string>温控防暗屏</string>
+			<key>key</key>
+			<string>thermalPreventDimmingEnabled</string>
+			<key>default</key>
+			<false/>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>footerText</key>
+			<string>保留旧配置兼容；当前版本不持续写入背光，不阻止系统真正熄屏/锁屏，避免 iPhone 15 Pro Max iOS 17.0.3 暗屏风险。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>CPU / FPS</string>
 			<key>footerText</key>
 			<string>实时查看当前设备的 CPU 负载、物理频率与屏幕刷新帧率。</string>
 		</dict>

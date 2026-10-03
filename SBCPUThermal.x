@@ -246,6 +246,7 @@ static void scheduleThermalMonitorReload(void);
 static void scheduleThermalConfigurationReload(void);
 static void switchToLowPowerForSleep(const char *source);
 static void restoreUserModeAfterWake(const char *source);
+static void scheduleScreenStateRecovery(void);
 static void registerScreenWakeObservers(void);
 static void registerThermalPressureObserver(void);
 static void evaluateThermalPressureState(void);
@@ -291,10 +292,9 @@ return enabled && blockPopup;
 }
 
 static BOOL thermalDimmingPreventionEnabled(void) {
-BOOL enabled = NO;
-BOOL preventDimming = NO;
-runtimeConfigSnapshot(&enabled, NULL, NULL, NULL, &preventDimming);
-return enabled && preventDimming;
+    // 安全策略：不再以 thermalmonitord 配置或 IOKit 写入阻止暗屏。
+    // 系统熄屏、锁屏和热安全路径始终由 iOS 管理；保留偏好键仅用于兼容旧设置。
+    return NO;
 }
 
 static CommonProduct *commonProductSnapshot(void) {
@@ -412,6 +412,13 @@ os_unfair_lock_unlock(&g_runtimeLock);
 scheduleThermalMonitorReload();
 }
 
+static void scheduleScreenStateRecovery(void) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(120 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        // 超时只在已亮屏时恢复；真实锁屏/熄屏仍让系统低功耗路径接管。
+        if (!SBCPUThermalScreenIsBlanked()) restoreUserModeAfterWake("screen-state-timeout");
+    });
+}
+
 static void switchToLowPowerForSleep(const char *source) {
 if (!g_lockScreenLowPowerEnabled) return;
 BOOL changed = NO;
@@ -422,6 +429,7 @@ changed = YES;
 }
 os_unfair_lock_unlock(&g_modeLock);
 if (changed) applyPowerModeToRuntime(NO);
+scheduleScreenStateRecovery();
 NSLog(@"[SBCPUThermal] %s 状态临时进入低功耗，保留用户模式:%@", source ?: "sleep",
       g_userSelectedPowerMode == SBCPUThermalPowerModeLow ? S("低功耗") : S("解除温控"));
 }
@@ -459,8 +467,9 @@ if (state == 0) restoreUserModeAfterWake("unlock");
 static void handleBlankedScreenToken(int token) {
 uint64_t state = UINT64_MAX;
 if (token <= 0 || notify_get_state(token, &state) != NOTIFY_STATUS_OK) return;
-if (state == 0) restoreUserModeAfterWake("screen-on");
-else switchToLowPowerForSleep("screen-off");
+// hasBlankedScreen 可能因通知/临时亮屏抖动；仅在确认熄屏时进入省电，
+// 亮屏恢复统一由 lockstate=unlocked 处理，避免误判导致性能模式抖动。
+if (state != 0) switchToLowPowerForSleep("screen-off");
 }
 
 static uint64_t SBCPUThermalUnixMilliseconds(void) {

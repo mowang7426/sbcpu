@@ -30,6 +30,9 @@
 @end
 
 static BOOL gForce120Enabled = NO;
+// 独立的录屏期间增强请求；默认关闭，仅在用户授权且系统报告录屏时短暂生效。
+static BOOL gScreenRecordingHighFrameRateEnabled = NO;
+static BOOL gScreenRecordingActive = NO;
 static NSObject *g120Lock;
 static NSHashTable<CADisplayLink *> *g120Links;
 static char g120RequestKey;
@@ -96,14 +99,19 @@ static void updateForce120Pref(void) {
     BOOL enabled = NO;
     if (value && CFGetTypeID(value) == CFBooleanGetTypeID()) enabled = CFBooleanGetValue((CFBooleanRef)value);
     if (value) CFRelease(value);
-    @synchronized(g120Lock) { gForce120Enabled = enabled; }
+    CFPropertyListRef recordingValue = CFPreferencesCopyAppValue(CFSTR("screenRecordingHighFrameRateEnabled"), kPrefAppID);
+    BOOL recordingEnabled = recordingValue && CFGetTypeID(recordingValue) == CFBooleanGetTypeID() && CFBooleanGetValue((CFBooleanRef)recordingValue);
+    if (recordingValue) CFRelease(recordingValue);
+    @synchronized(g120Lock) { gScreenRecordingHighFrameRateEnabled = recordingEnabled; }
     if (enabled && shouldForce120()) requestDynamicHighFrameRate();
     else releaseDynamicHighFrameRate();
 }
 
 // Preserve the original low-power/critical-temperature conditions exactly.
 static BOOL shouldForce120(void) {
-    if (!gForce120Enabled) return NO;
+    @synchronized(g120Lock) {
+        if (!(gForce120Enabled || (gScreenRecordingHighFrameRateEnabled && gScreenRecordingActive))) return NO;
+    }
     if (NSProcessInfo.processInfo.isLowPowerModeEnabled) return NO;
     if (NSProcessInfo.processInfo.thermalState == NSProcessInfoThermalStateCritical) return NO;
     return YES;
@@ -285,9 +293,37 @@ static void force120PrefChanged(CFNotificationCenterRef center, void *observer, 
 
 #pragma clang diagnostic pop
 
+static void updateScreenRecordingState(void) {
+    BOOL recording = NO;
+    Class recorder = NSClassFromString(@"RPScreenRecorder");
+    SEL shared = NSSelectorFromString(@"sharedRecorder");
+    SEL isRecording = NSSelectorFromString(@"isRecording");
+    if (recorder && [recorder respondsToSelector:shared]) {
+        id instance = ((id (*)(id, SEL))objc_msgSend)(recorder, shared);
+        if (instance && [instance respondsToSelector:isRecording])
+            recording = ((BOOL (*)(id, SEL))objc_msgSend)(instance, isRecording);
+    }
+    @synchronized(g120Lock) { gScreenRecordingActive = recording; }
+    refresh120Links();
+}
+
+static void registerScreenRecordingLifecycle(void) {
+    NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+    for (NSString *name in @[@"RPScreenRecorderRecordingDidStartNotification",
+                             @"RPScreenRecorderRecordingDidStopNotification",
+                             @"RPScreenRecorderRecordingDidFailNotification"]) {
+        [center addObserverForName:name object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
+            (void)note;
+            updateScreenRecordingState();
+        }];
+    }
+}
+
 %ctor {
     installDynamicFrameRateHooks();
     updateForce120Pref();
+    registerScreenRecordingLifecycle();
+    updateScreenRecordingState();
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, force120PrefChanged, kPrefChangedNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     // UIKit notification names as strings: no new UIKit link dependency.
     for (NSString *name in @[@"UIApplicationDidBecomeActiveNotification",
