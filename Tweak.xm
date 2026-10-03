@@ -2792,6 +2792,7 @@ static void applySystemRefreshRate(void) {
     NSInteger _frameCount;
     CFTimeInterval _sampleElapsed;
     double _smoothedFPS;
+}
 
 + (instancetype)sharedInstance {
     static SBCPUFPSHelper *instance = nil;
