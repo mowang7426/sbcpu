@@ -241,7 +241,8 @@ static void runLowPowerApplyPulse(int remainingPulses);
 static void applyCurrentModeToApplePPMCPU(void);
 static void forceCPUPerformanceLevelOnController(id controller);
 static void applyFullPowerBudgetsOnController(id controller);
-static void applyLowPowerToCommonProduct(void);
+static void restoreFullPowerToController(id controller);
+static void trackPowerController(id controller);
 static void applyLowPowerPerformancePreferenceToController(id controller);
 static void restoreNativeRuntimeAfterDisable(void);
 static void correctNominalStateIfNeeded(void);
@@ -794,6 +795,11 @@ os_unfair_lock_lock(&g_controllerLock);
 if (!g_mitigationControllers) g_mitigationControllers = [NSHashTable weakObjectsHashTable];
 [g_mitigationControllers addObject:controller];
 os_unfair_lock_unlock(&g_controllerLock);
+// 前台 App / 桌面切换可能刚好重建功耗控制器；登记后立即套用当前全局模式，
+// 不等待下一次周期定时器，避免新对象先以系统默认低频运行。
+if (shouldApplyFullCPUProtection() && !g_restoringFullPower) {
+    restoreFullPowerToController(controller);
+}
 }
 
 static NSArray *trackedPowerControllersSnapshot(void) {
@@ -1203,8 +1209,8 @@ static void startExtremePerformanceTimer(void) {
         return;
     }
     g_extremePerformanceTimer = timer;
-    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, (uint64_t)(0.5 * NSEC_PER_SEC)),
-                              (uint64_t)(0.5 * NSEC_PER_SEC), (uint64_t)(0.1 * NSEC_PER_SEC));
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, (uint64_t)(0.2 * NSEC_PER_SEC)),
+                              (uint64_t)(0.2 * NSEC_PER_SEC), (uint64_t)(0.05 * NSEC_PER_SEC));
     dispatch_source_set_event_handler(timer, ^{
         if (!runtimeProtectionEnabled() || !isExtremeFullPowerMode()) {
             stopExtremePerformanceTimer();

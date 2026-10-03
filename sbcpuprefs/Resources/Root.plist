@@ -106,8 +106,8 @@
 		</dict>
 		<dict>
 			<key>cell</key><string>PSGroupCell</string>
-			<key>label</key><string>CPUthermal 温控</string>
-			<key>footerText</key><string>温控功能已移至系统插件设置。极限满频只阻止插件主动降频，不关闭系统与硬件安全保护。</string>
+			<key>label</key><string>修改温控 bug</string>
+			<key>footerText</key><string>修改温控 bug：极限满频在 App、桌面与前后台切换时同步性能状态；保留系统与硬件临界温度安全保护。</string>
 		</dict>
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>温度保护总开关</string><key>key</key><string>thermalEngineEnabled</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 		<dict>
