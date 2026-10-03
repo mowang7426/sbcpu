@@ -110,7 +110,12 @@
 			<key>footerText</key><string>温控功能已移至系统插件设置。极限满频只阻止插件主动降频，不关闭系统与硬件安全保护。</string>
 		</dict>
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>温度保护总开关</string><key>key</key><string>thermalEngineEnabled</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
-		<dict><key>cell</key><string>PSMultiValueCell</string><key>label</key><string>运行方式</string><key>key</key><string>powerMode</string><key>values</key><array><string>lowPower</string><string>fullPower</string><string>extremeFull</string></array><key>titles</key><array><string>省电保护</string><string>稳定高性能</string><string>极限满频</string></array><key>default</key><string>fullPower</string><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+		<dict>
+			<key>cell</key><string>PSLinkCell</string>
+			<key>label</key><string>运行方式</string>
+			<key>detail</key><string>SBCPUThermalModeController</string>
+			<key>isController</key><true/>
+		</dict>
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>过热自动保护</string><key>key</key><string>thermalPressureAutoProtectionEnabled</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>锁屏省电保护</string><key>key</key><string>thermalLockScreenLowPowerEnabled</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>温度正常后自动恢复</string><key>key</key><string>thermalNominalAutoRecoveryEnabled</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
@@ -139,14 +144,6 @@
 			<string>▣ 通知中心与悬浮聊天</string>
 			<key>footerText</key>
 			<string>无缝显示微信/QQ消息，点击直达聊天窗口。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>▣ CPUthermal 温控核心</string>
-			<key>footerText</key>
-			<string>内置温度保护功能：设备温度压力太高时可自动降低功耗；熄屏可自动省电，温度恢复正常后自动恢复。设置页面会实时显示当前保护状态。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
