@@ -193,6 +193,7 @@ static __thread BOOL g_restoringFullPower = NO;
 static BOOL g_fullPowerRecoveryPulseScheduled = NO;
 static BOOL g_lowPowerApplyPulseScheduled = NO;
 static dispatch_source_t g_lowPowerRescheduleTimer = NULL;
+static dispatch_source_t g_extremePerformanceTimer = NULL;
 static BOOL g_thermalReloadScheduled = NO;
 static BOOL g_forceThermalConfigReload = NO;
 static int g_lockStateToken = -1;
@@ -232,8 +233,8 @@ static void applyPowerModeToRuntime(BOOL respectBootGuard);
 static void scheduleFullPowerRecoveryPulse(void);
 static void runFullPowerRecoveryPulse(int remainingPulses);
 static void scheduleLowPowerApplyPulse(void);
-static void stopLowPowerRescheduleTimer(void);
-static void startLowPowerRescheduleTimer(void);
+static void stopExtremePerformanceTimer(void);
+static void startExtremePerformanceTimer(void);
 static void runLowPowerApplyPulse(int remainingPulses);
 static void applyCurrentModeToApplePPMCPU(void);
 static void forceCPUPerformanceLevelOnController(id controller);
@@ -1076,6 +1077,7 @@ static void applyPowerModeToRuntime(BOOL respectBootGuard) {
 if (!runtimeProtectionEnabled()) return;
 (void)respectBootGuard;
 if (isLowPowerMode()) {
+stopExtremePerformanceTimer();
 applyLowPowerToCommonProduct();
 applyLowPowerLimitsToTrackedControllers();
 applyCurrentModeToApplePPMCPU();
@@ -1084,7 +1086,7 @@ startLowPowerRescheduleTimer();
 return;
 }
 if (isFullPowerMode()) {
-// 切换时有限恢复并伪造 Nominal；持续热决策由 hook 就地拦截，无需周期保活。
+startExtremePerformanceTimer();
 SBCPUThermalForceNominalCombined();
 applyFullPowerToCommonProduct();
 restoreFullPowerToTrackedControllers();
@@ -1164,6 +1166,46 @@ runLowPowerApplyPulse(remainingPulses - 1);
 });
 }
 
+
+static void stopExtremePerformanceTimer(void) {
+    os_unfair_lock_lock(&g_runtimeLock);
+    dispatch_source_t timer = g_extremePerformanceTimer;
+    g_extremePerformanceTimer = NULL;
+    if (timer) dispatch_source_cancel(timer);
+    os_unfair_lock_unlock(&g_runtimeLock);
+}
+
+static void startExtremePerformanceTimer(void) {
+    if (!runtimeProtectionEnabled() || !isExtremeFullPowerMode()) {
+        stopExtremePerformanceTimer();
+        return;
+    }
+    os_unfair_lock_lock(&g_runtimeLock);
+    if (g_extremePerformanceTimer) {
+        os_unfair_lock_unlock(&g_runtimeLock);
+        return;
+    }
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    if (!timer) {
+        os_unfair_lock_unlock(&g_runtimeLock);
+        return;
+    }
+    g_extremePerformanceTimer = timer;
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, (uint64_t)(0.5 * NSEC_PER_SEC)),
+                              (uint64_t)(0.5 * NSEC_PER_SEC), (uint64_t)(0.1 * NSEC_PER_SEC));
+    dispatch_source_set_event_handler(timer, ^{
+        if (!runtimeProtectionEnabled() || !isExtremeFullPowerMode()) {
+            stopExtremePerformanceTimer();
+            return;
+        }
+        // 仅重申插件自己的性能请求；不改系统热阈值、不拦截硬件紧急保护。
+        applyFullPowerToCommonProduct();
+        restoreFullPowerToTrackedControllers();
+        applyCurrentModeToApplePPMCPU();
+    });
+    dispatch_resume(timer);
+    os_unfair_lock_unlock(&g_runtimeLock);
+}
 
 static void stopLowPowerRescheduleTimer(void) {
 os_unfair_lock_lock(&g_runtimeLock);
