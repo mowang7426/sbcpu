@@ -1507,7 +1507,6 @@ NSString *mode = [d[S("powerMode")] isKindOfClass:[NSString class]] ? d[S("power
 SBCPUThermalPowerMode selected = [mode isEqualToString:S("lowPower")]
     ? SBCPUThermalPowerModeLow
     : ([mode isEqualToString:S("extremeFull")] ? SBCPUThermalPowerModeExtreme : SBCPUThermalPowerModeFull);
-BOOL blanked = SBCPUThermalScreenIsBlanked();
 BOOL locked = SBCPUThermalScreenIsLocked();
 os_unfair_lock_lock(&g_modeLock);
 g_userSelectedPowerMode = selected;
