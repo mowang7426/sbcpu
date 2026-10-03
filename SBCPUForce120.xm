@@ -294,6 +294,7 @@ static void force120PrefChanged(CFNotificationCenterRef center, void *observer, 
     }
     %orig(range);
 }
+%end
 
 static BOOL recordingBoostEnabled(void) {
     NSDictionary *store = SBChargeRead();
@@ -333,7 +334,7 @@ static BOOL recordingBoostEnabled(void) {
 }
 %end
 
-
+static void updateScreenRecordingState(void) {
     BOOL recording = NO;
     Class recorder = NSClassFromString(@"RPScreenRecorder");
     SEL shared = NSSelectorFromString(@"sharedRecorder");
