@@ -105,10 +105,18 @@
 			<string>保留旧配置兼容；当前版本不持续写入背光，不阻止系统真正熄屏/锁屏，避免 iPhone 15 Pro Max iOS 17.0.3 暗屏风险。</string>
 		</dict>
 		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>CPU / FPS</string>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>CPUthermal 温控</string>
+			<key>footerText</key><string>温控功能已移至系统插件设置。极限满频只阻止插件主动降频，不关闭系统与硬件安全保护。</string>
+		</dict>
+		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>温度保护总开关</string><key>key</key><string>thermalEngineEnabled</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+		<dict><key>cell</key><string>PSMultiValueCell</string><key>label</key><string>运行方式</string><key>key</key><string>powerMode</string><key>values</key><array><string>lowPower</string><string>fullPower</string><string>extremeFull</string></array><key>titles</key><array><string>省电保护</string><string>稳定高性能</string><string>极限满频</string></array><key>default</key><string>fullPower</string><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>过热自动保护</string><key>key</key><string>thermalPressureAutoProtectionEnabled</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>锁屏省电保护</string><key>key</key><string>thermalLockScreenLowPowerEnabled</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>温度正常后自动恢复</string><key>key</key><string>thermalNominalAutoRecoveryEnabled</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>温控防暗屏</string><key>key</key><string>thermalPreventDimmingEnabled</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>不弹出高温警告</string><key>key</key><string>thermalBlockNotifPopup</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+
 			<key>footerText</key>
 			<string>实时查看当前设备的 CPU 负载、物理频率与屏幕刷新帧率。</string>
 		</dict>

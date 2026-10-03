@@ -2,6 +2,7 @@
 #import <Preferences/PSSpecifier.h>
 #import "SBCPUPrefsRootListController.h"
 #import "../SBCPUChargeStore.h"
+#import "../include/SBCPUThermalPaths.h"
 #import <notify.h>
 
 @implementation SBCPUPrefsRootListController
@@ -19,6 +20,11 @@
     NSString *key = [specifier propertyForKey:@"key"];
     if ([key isEqualToString:@"screenRecordingHighFrameRateEnabled"])
         return SBChargeRead()[key] ?: @NO;
+    NSArray *thermalKeys = @[@"thermalEngineEnabled", @"powerMode", @"thermalPressureAutoProtectionEnabled", @"thermalLockScreenLowPowerEnabled", @"thermalNominalAutoRecoveryEnabled", @"thermalPreventDimmingEnabled", @"thermalBlockNotifPopup"];
+    if ([thermalKeys containsObject:key]) {
+        NSDictionary *prefs = SBCPUThermalReadPrefs();
+        return prefs[key] ?: ([key isEqualToString:@"powerMode"] ? @"fullPower" : @YES);
+    }
     return nil;
 }
 
@@ -27,8 +33,18 @@
     if ([key isEqualToString:@"screenRecordingHighFrameRateEnabled"]) {
         if (SBChargePatch(@{key: @([value boolValue])})) {
             notify_post("com.yourname.sbcpufloating/settingsChanged");
-            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-                CFSTR("com.yourname.sbcpufloating.prefschanged"), NULL, NULL, YES);
+            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.yourname.sbcpufloating.prefschanged"), NULL, NULL, YES);
+        }
+        return;
+    }
+    NSArray *thermalKeys = @[@"thermalEngineEnabled", @"powerMode", @"thermalPressureAutoProtectionEnabled", @"thermalLockScreenLowPowerEnabled", @"thermalNominalAutoRecoveryEnabled", @"thermalPreventDimmingEnabled", @"thermalBlockNotifPopup"];
+    if ([thermalKeys containsObject:key]) {
+        NSMutableDictionary *prefs = [SBCPUThermalReadPrefs() mutableCopy] ?: [NSMutableDictionary dictionary];
+        prefs[key] = value ?: @NO;
+        if (SBCPUThermalWritePrefs(prefs)) {
+            notify_post("com.yourname.sbcpufloating/settingsChanged");
+            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.yourname.sbcpufloating.prefschanged"), NULL, NULL, YES);
+            if ([key isEqualToString:@"powerMode"]) SBCPUThermalPostPowerMode(prefs[key]);
         }
         return;
     }

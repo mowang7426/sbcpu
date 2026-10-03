@@ -339,6 +339,8 @@ static BOOL smartDockEnable = YES;
 static NSInteger dockMode = 0;
 static BOOL rememberPositionEnable = YES;
 static NSInteger statusDockReturnDelay = 5;
+static NSTimer *gFloatingUpdateTimer = nil;
+static NSTimeInterval floatingValueRefreshInterval = 0.5;
 static BOOL statusBarDockEnable = NO; // 开启后浮窗吸附到顶部状态栏安全区域
 static BOOL statusDockShowCPU = YES;
 static BOOL statusDockShowFPS = YES;
@@ -1010,7 +1012,7 @@ static void LoadPreferences(void) {
     dockMode = getIntPref(CFSTR("dockMode"), 0);
     rememberPositionEnable = getBoolPref(CFSTR("rememberPositionEnable"), YES);
     statusBarDockEnable = getBoolPref(CFSTR("statusBarDockEnable"), NO);
-    statusDockReturnDelay = MAX(1, MIN(30, getIntPref(CFSTR("statusDockReturnDelay"), 5)));
+    floatingValueRefreshInterval = MAX(0.25, MIN(2.0, getFloatPref(CFSTR("floatingValueRefreshInterval"), 0.5f)));
     statusDockShowCPU = getBoolPref(CFSTR("statusDockShowCPU"), YES);
     statusDockShowFPS = getBoolPref(CFSTR("statusDockShowFPS"), YES);
     statusDockShowFrequency = getBoolPref(CFSTR("statusDockShowFrequency"), NO);
@@ -6517,9 +6519,9 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 3) return 7; // 通知管理
     if (section == 4) return 3;
     if (section == 5) return 1;
-    if (section == 6) return 10;
+    if (section == 6) return 0; // 温控功能已移至系统插件设置
     if (section == 7) return 6; // 充电增强：充电增强/满血快充/屏蔽维修/充电历史/阻止充电/阻止外部供电
-    if (section == 8) return 19; // 位置与显示 + 状态栏胶囊内容
+    if (section == 8) return 20; // 位置与显示 + 状态栏胶囊内容
     if (section == 9) return 0; // 智能停充已统一到系统插件“充电限制”
     if (section == 10) return 0; // 📖 功能说明已移除
     if (section == 11) return 0; // 🌡️ 温控功能说明已移除
@@ -6540,7 +6542,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 3) return @"💬 消息与通知管理";
     if (section == 4) return @"🧠 智能选项";
     if (section == 5) return @"🎮 性能与高刷锁定";
-    if (section == 6) return @"🌡️ 温度保护"; 
+    if (section == 6) return @"";
     if (section == 7) return @"🔌 充电增强";
     if (section == 8) return @"📍 位置与显示";
     if (section == 9) return @""; // 充电智能设置已移至系统插件“充电限制”
@@ -7703,6 +7705,10 @@ static NSString *stripLeadingEmoji(NSString *s) {
             cell.textLabel.text = @"顶部拖动回位延迟";
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%ld 秒", (long)statusDockReturnDelay];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        } else if (indexPath.row == 19) {
+            cell.textLabel.text = @"浮窗数值刷新频率";
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"%.2g 秒", floatingValueRefreshInterval];
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         }
     }
     applySettingsTheme(cell, indexPath);
@@ -7712,7 +7718,30 @@ static NSString *stripLeadingEmoji(NSString *s) {
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 
-    if (indexPath.section == 8 && indexPath.row == 18) {
+    if (indexPath.section == 8 && indexPath.row == 19) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"浮窗数值刷新频率"
+            message:@"数值越小越实时，也会增加桌面读取和刷新开销。"
+            preferredStyle:UIAlertControllerStyleActionSheet];
+        NSArray *values = @[@0.25, @0.5, @1.0, @2.0];
+        for (NSNumber *number in values) {
+            [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%.2g 秒", number.doubleValue]
+                style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+                    floatingValueRefreshInterval = number.doubleValue;
+                    setFloatPref(CFSTR("floatingValueRefreshInterval"), (float)floatingValueRefreshInterval);
+                    [gFloatingUpdateTimer invalidate];
+                    gFloatingUpdateTimer = [NSTimer scheduledTimerWithTimeInterval:floatingValueRefreshInterval repeats:YES block:^(NSTimer *timer) { updateCPU(); chargeSessionTick(); }];
+                    [[NSRunLoop mainRunLoop] addTimer:gFloatingUpdateTimer forMode:NSRunLoopCommonModes];
+                    [self.tableView reloadData];
+                }]];
+        }
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        alert.popoverPresentationController.sourceView = self.view;
+        alert.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1, 1);
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
+
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"顶部拖动回位延迟"
             message:@"松手后等待所选秒数，再平滑回到顶部；再次拖动会重新计时。"
             preferredStyle:UIAlertControllerStyleActionSheet];
@@ -10572,7 +10601,8 @@ static void onPartRepairBundleDidLoad(CFNotificationCenterRef center, void *obse
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             createCPUWindow();
             registerV160Observers();
-            [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *timer) { updateCPU(); chargeSessionTick(); }];
+            gFloatingUpdateTimer = [NSTimer scheduledTimerWithTimeInterval:floatingValueRefreshInterval repeats:YES block:^(NSTimer *timer) { updateCPU(); chargeSessionTick(); }];
+            [[NSRunLoop mainRunLoop] addTimer:gFloatingUpdateTimer forMode:NSRunLoopCommonModes];
         });
     }
 }
