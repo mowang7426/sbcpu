@@ -1,4 +1,5 @@
 #import "SBCPUThermalModeController.h"
+#import <Preferences/PSSpecifier.h>
 #import "../include/SBCPUThermalPaths.h"
 #import <notify.h>
 
@@ -7,13 +8,13 @@
     if (!_specifiers) {
         PSSpecifier *group = [PSSpecifier groupSpecifierWithName:@"选择温控运行方式"];
         [group setProperty:@"极限满频仅阻止插件主动降频，不关闭系统与硬件安全保护。" forKey:@"footerText"];
-        PSSpecifier *low = [PSSpecifier preferenceSpecifierNamed:@"省电保护" target:self set:@selector(setMode:specifier:) get:@selector(getMode:) detail:nil cell:PSRadioCell edit:nil];
-        PSSpecifier *full = [PSSpecifier preferenceSpecifierNamed:@"稳定高性能" target:self set:@selector(setMode:specifier:) get:@selector(getMode:) detail:nil cell:PSRadioCell edit:nil];
-        PSSpecifier *extreme = [PSSpecifier preferenceSpecifierNamed:@"极限满频" target:self set:@selector(setMode:specifier:) get:@selector(getMode:) detail:nil cell:PSRadioCell edit:nil];
+        PSSpecifier *low = [PSSpecifier preferenceSpecifierNamed:@"省电保护" target:self set:@selector(setMode:specifier:) get:@selector(getMode:) detail:nil cell:PSLinkCell edit:nil];
+        PSSpecifier *full = [PSSpecifier preferenceSpecifierNamed:@"稳定高性能" target:self set:@selector(setMode:specifier:) get:@selector(getMode:) detail:nil cell:PSLinkCell edit:nil];
+        PSSpecifier *extreme = [PSSpecifier preferenceSpecifierNamed:@"极限满频" target:self set:@selector(setMode:specifier:) get:@selector(getMode:) detail:nil cell:PSLinkCell edit:nil];
         [low setProperty:@"lowPower" forKey:@"modeValue"];
         [full setProperty:@"fullPower" forKey:@"modeValue"];
         [extreme setProperty:@"extremeFull" forKey:@"modeValue"];
-        _specifiers = @[group, low, full, extreme];
+        _specifiers = [@[group, low, full, extreme] mutableCopy];
     }
     return _specifiers;
 }
