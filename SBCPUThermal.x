@@ -1196,7 +1196,8 @@ static void startExtremePerformanceTimer(void) {
         os_unfair_lock_unlock(&g_runtimeLock);
         return;
     }
-    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                                                      dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0));
     if (!timer) {
         os_unfair_lock_unlock(&g_runtimeLock);
         return;
