@@ -427,8 +427,8 @@ scheduleThermalMonitorReload();
 
 static void scheduleScreenStateRecovery(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(120 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        // 超时只在已亮屏时恢复；真实锁屏/熄屏仍让系统低功耗路径接管。
-        if (!SBCPUThermalScreenIsBlanked()) restoreUserModeAfterWake("screen-state-timeout");
+        // 只有确认已经解锁才恢复；hasBlankedScreen 会被通知中心/临时亮屏抖动影响。
+        if (!SBCPUThermalScreenIsLocked()) restoreUserModeAfterWake("screen-state-timeout");
     });
 }
 
@@ -475,14 +475,15 @@ static void handleLockStateToken(int token) {
 uint64_t state = UINT64_MAX;
 if (token <= 0 || notify_get_state(token, &state) != NOTIFY_STATUS_OK) return;
 if (state == 0) restoreUserModeAfterWake("unlock");
+else if (g_lockScreenLowPowerEnabled) switchToLowPowerForSleep("lockstate");
 }
 
 static void handleBlankedScreenToken(int token) {
 uint64_t state = UINT64_MAX;
 if (token <= 0 || notify_get_state(token, &state) != NOTIFY_STATUS_OK) return;
-// hasBlankedScreen 可能因通知/临时亮屏抖动；仅在确认熄屏时进入省电，
-// 亮屏恢复统一由 lockstate=unlocked 处理，避免误判导致性能模式抖动。
-if (state != 0) switchToLowPowerForSleep("screen-off");
+// hasBlankedScreen 不是锁屏信号：通知中心、控制中心和临时亮屏都可能改变它。
+// 锁屏省电只允许由 lockstate 的真实锁屏事件进入，避免下拉通知中心误降频。
+(void)state;
 }
 
 static uint64_t SBCPUThermalUnixMilliseconds(void) {
