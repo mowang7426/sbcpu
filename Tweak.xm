@@ -1012,6 +1012,7 @@ static void LoadPreferences(void) {
     dockMode = getIntPref(CFSTR("dockMode"), 0);
     rememberPositionEnable = getBoolPref(CFSTR("rememberPositionEnable"), YES);
     statusBarDockEnable = getBoolPref(CFSTR("statusBarDockEnable"), NO);
+    statusDockReturnDelay = MAX(1, MIN(30, getIntPref(CFSTR("statusDockReturnDelay"), 5)));
     floatingValueRefreshInterval = MAX(0.25, MIN(2.0, getFloatPref(CFSTR("floatingValueRefreshInterval"), 0.5f)));
     statusDockShowCPU = getBoolPref(CFSTR("statusDockShowCPU"), YES);
     statusDockShowFPS = getBoolPref(CFSTR("statusDockShowFPS"), YES);
@@ -7740,8 +7741,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
         [self presentViewController:alert animated:YES completion:nil];
         return;
     }
-
-
+    if (indexPath.section == 8 && indexPath.row == 18) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"顶部拖动回位延迟"
             message:@"松手后等待所选秒数，再平滑回到顶部；再次拖动会重新计时。"
             preferredStyle:UIAlertControllerStyleActionSheet];
