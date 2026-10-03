@@ -233,6 +233,8 @@ static void applyPowerModeToRuntime(BOOL respectBootGuard);
 static void scheduleFullPowerRecoveryPulse(void);
 static void runFullPowerRecoveryPulse(int remainingPulses);
 static void scheduleLowPowerApplyPulse(void);
+static void stopLowPowerRescheduleTimer(void);
+static void startLowPowerRescheduleTimer(void);
 static void stopExtremePerformanceTimer(void);
 static void startExtremePerformanceTimer(void);
 static void runLowPowerApplyPulse(int remainingPulses);
