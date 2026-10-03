@@ -116,7 +116,11 @@
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>温度正常后自动恢复</string><key>key</key><string>thermalNominalAutoRecoveryEnabled</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>温控防暗屏</string><key>key</key><string>thermalPreventDimmingEnabled</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>不弹出高温警告</string><key>key</key><string>thermalBlockNotifPopup</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
-
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>CPU / FPS</string>
 			<key>footerText</key>
 			<string>实时查看当前设备的 CPU 负载、物理频率与屏幕刷新帧率。</string>
 		</dict>
