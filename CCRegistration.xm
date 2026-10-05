@@ -15,6 +15,7 @@ static void (*origQueueUpdateAllModuleMetadata)(id, SEL) = NULL;
 static void (*origUpdateAllModuleMetadata)(id, SEL) = NULL;
 static BOOL gRepositoryHooksInstalled = NO;
 static BOOL gExternalCCSupportDetected = NO;
+static int gExternalCCSupportCache = -1;
 
 static BOOL SBCPUPathExists(NSString *path) {
     return path.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:path];
@@ -30,18 +31,23 @@ static BOOL SBCPUImageNameContains(const char *needle) {
 }
 
 static BOOL SBCPUExternalCCSupportPresent(void) {
-    if (objc_getClass("CCSModuleProviderManager")) return YES;
-    if (SBCPUImageNameContains("CCSupport.dylib") || SBCPUImageNameContains("/CCSupport/")) return YES;
+    if (gExternalCCSupportCache >= 0) return gExternalCCSupportCache != 0;
+    BOOL present = NO;
+    if (objc_getClass("CCSModuleProviderManager")) present = YES;
+    if (!present && (SBCPUImageNameContains("CCSupport.dylib") || SBCPUImageNameContains("/CCSupport/"))) present = YES;
 
-    NSMutableArray<NSString *> *roots = [NSMutableArray arrayWithObjects:S(""), S("/var/jb"), nil];
-    NSString *rootHideRoot = SBCPUThermalCurrentRootHideRoot();
-    if (rootHideRoot.length > 0) [roots addObject:rootHideRoot];
+    if (!present) {
+        NSMutableArray<NSString *> *roots = [NSMutableArray arrayWithObjects:S(""), S("/var/jb"), nil];
+        NSString *rootHideRoot = SBCPUThermalCurrentRootHideRoot();
+        if (rootHideRoot.length > 0) [roots addObject:rootHideRoot];
 
-    for (NSString *root in roots) {
-        NSString *dylib = [root stringByAppendingPathComponent:S("Library/MobileSubstrate/DynamicLibraries/CCSupport.dylib")];
-        if (SBCPUPathExists(dylib)) return YES;
+        for (NSString *root in roots) {
+            NSString *dylib = [root stringByAppendingPathComponent:S("Library/MobileSubstrate/DynamicLibraries/CCSupport.dylib")];
+            if (SBCPUPathExists(dylib)) { present = YES; break; }
+        }
     }
-    return NO;
+    gExternalCCSupportCache = present ? 1 : 0;
+    return present;
 }
 
 static NSString *SBCPUCCModulesPath(void) {

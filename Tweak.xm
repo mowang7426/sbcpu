@@ -324,7 +324,8 @@ static NSInteger dockMode = 0;
 static BOOL rememberPositionEnable = YES;
 static NSInteger statusDockReturnDelay = 5;
 static NSTimer *gFloatingUpdateTimer = nil;
-static NSTimeInterval floatingValueRefreshInterval = 0.5;
+static BOOL gCPUUpdatePending = NO;
+static NSTimeInterval floatingValueRefreshInterval = 1.0;
 static BOOL statusBarDockEnable = NO; // 开启后浮窗吸附到顶部状态栏安全区域
 static BOOL statusDockShowCPU = YES;
 static BOOL statusDockShowFPS = YES;
@@ -995,7 +996,7 @@ static void LoadPreferences(void) {
     rememberPositionEnable = getBoolPref(CFSTR("rememberPositionEnable"), YES);
     statusBarDockEnable = getBoolPref(CFSTR("statusBarDockEnable"), NO);
     statusDockReturnDelay = MAX(1, MIN(30, getIntPref(CFSTR("statusDockReturnDelay"), 5)));
-    floatingValueRefreshInterval = MAX(0.25, MIN(2.0, getFloatPref(CFSTR("floatingValueRefreshInterval"), 0.5f)));
+    floatingValueRefreshInterval = MAX(1.0, MIN(2.0, getFloatPref(CFSTR("floatingValueRefreshInterval"), 1.0f)));
     statusDockShowCPU = getBoolPref(CFSTR("statusDockShowCPU"), YES);
     statusDockShowFPS = getBoolPref(CFSTR("statusDockShowFPS"), YES);
     statusDockShowFrequency = getBoolPref(CFSTR("statusDockShowFrequency"), NO);
@@ -1006,7 +1007,7 @@ static void LoadPreferences(void) {
     statusDockShowSIM2 = getBoolPref(CFSTR("statusDockShowSIM2"), NO);
     
     showCpuFrequency = getBoolPref(CFSTR("showCpuFrequency"), YES);
-    showFps = getBoolPref(CFSTR("showFps"), YES);
+    showFps = getBoolPref(CFSTR("showFps"), NO);
     showSignalStrength = getBoolPref(CFSTR("showSignalStrength"), YES);
     
     showBatteryPercent = getBoolPref(CFSTR("showBatteryPercent"), YES);
@@ -1066,7 +1067,7 @@ static void LoadPreferences(void) {
 
     if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
         applyVisibility();
-        if (showFps || collapsedDisplayMode == 1) {
+        if (NO) {
             [[SBCPUFPSHelper sharedInstance] startMonitoring];
         } else {
             [[SBCPUFPSHelper sharedInstance] stopMonitoring];
@@ -1137,7 +1138,7 @@ static void SavePreferencesAndNotify(void) {
     
     CFPreferencesSynchronize(kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
 
-    if (showFps || collapsedDisplayMode == 1) {
+    if (NO) {
         [[SBCPUFPSHelper sharedInstance] startMonitoring];
     } else {
         [[SBCPUFPSHelper sharedInstance] stopMonitoring];
@@ -2553,13 +2554,16 @@ static void checkHighCPU(double cpu) {
 }
 
 static void updateCPU(void) {
-    if (!isEnabled) return;
+    if (!isEnabled || gCPUUpdatePending) return;
+    gCPUUpdatePending = YES;
 
     if (!cpuWindow || !floatingView) {
         createCPUWindow();
     }
-    if (!floatingView) return;
-
+    if (!floatingView) {
+        gCPUUpdatePending = NO;
+        return;
+    }
     double cpu = getSpringBoardCPUUsage();
     double cpuFreq = getRealCPUFrequency(cpu);
     double fps = [SBCPUFPSHelper sharedInstance].currentFPS;
@@ -2569,7 +2573,10 @@ static void updateCPU(void) {
     // (Charge Engine, 事件驱动) 负责，不依赖浮窗是否存在。此处只同步显示状态。
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (!floatingView) return;
+        if (!floatingView) {
+            gCPUUpdatePending = NO;
+            return;
+        }
 
         [UIDevice currentDevice].batteryMonitoringEnabled = YES;
         NSInteger battery = (NSInteger)([UIDevice currentDevice].batteryLevel * 100);
@@ -2584,7 +2591,8 @@ static void updateCPU(void) {
         } else if (!chargeBoostEnable && chargeLimit100Applied) {
             applyExperimentalChargeLimit100(NO);
         }
-if (charging && !previousChargingState) {
+        BOOL chargingStateChanged = (charging != previousChargingState);
+        if (charging && !previousChargingState) {
             if (floatingView.isCollapsed && !floatingView.isShowingNotification) {
                 [floatingView expandFromEdgeAnimated:YES];
             }
@@ -2643,7 +2651,8 @@ if (charging && !previousChargingState) {
                                 current:current 
                              isCharging:charging];
 
-        updateFloatingSize();
+        if (chargingStateChanged) updateFloatingSize();
+        gCPUUpdatePending = NO;
     });
 }
 
@@ -3484,9 +3493,8 @@ static void LGRemoveLabelShadowInView(UIView *view) {
             // 液态玻璃：根据开关应用样式（开→液态玻璃+阴影+反色，关→原版）
         [self applyLiquidGlassStyle];
 
-        // 实时背景采样反色定时器：每 0.5 秒采样浮窗下方背景亮度，文字自动反色
-        _adaptiveTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:self selector:@selector(applyAdaptiveTextColors) userInfo:nil repeats:YES];
-        [[NSRunLoop mainRunLoop] addTimer:_adaptiveTimer forMode:NSRunLoopCommonModes];
+        // 关闭持续截图采样；仅在初始化、布局变化和系统外观变化时更新文字颜色。
+        _adaptiveTimer = nil;
 
 return self;
 }
@@ -7608,7 +7616,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"浮窗数值刷新频率"
             message:@"数值越小越实时，也会增加桌面读取和刷新开销。"
             preferredStyle:UIAlertControllerStyleActionSheet];
-        NSArray *values = @[@0.25, @0.5, @1.0, @2.0];
+        NSArray *values = @[@1.0, @2.0];
         for (NSNumber *number in values) {
             [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%.2g 秒", number.doubleValue]
                 style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
