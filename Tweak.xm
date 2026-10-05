@@ -1007,7 +1007,7 @@ static void LoadPreferences(void) {
     statusDockShowSIM2 = getBoolPref(CFSTR("statusDockShowSIM2"), NO);
     
     showCpuFrequency = getBoolPref(CFSTR("showCpuFrequency"), YES);
-    showFps = getBoolPref(CFSTR("showFps"), NO);
+    showFps = getBoolPref(CFSTR("showFps"), YES);
     showSignalStrength = getBoolPref(CFSTR("showSignalStrength"), YES);
     
     showBatteryPercent = getBoolPref(CFSTR("showBatteryPercent"), YES);
@@ -1067,7 +1067,7 @@ static void LoadPreferences(void) {
 
     if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
         applyVisibility();
-        if (NO) {
+        if (showFps || collapsedDisplayMode == 1) {
             [[SBCPUFPSHelper sharedInstance] startMonitoring];
         } else {
             [[SBCPUFPSHelper sharedInstance] stopMonitoring];
@@ -1138,7 +1138,7 @@ static void SavePreferencesAndNotify(void) {
     
     CFPreferencesSynchronize(kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
 
-    if (NO) {
+    if (showFps || collapsedDisplayMode == 1) {
         [[SBCPUFPSHelper sharedInstance] startMonitoring];
     } else {
         [[SBCPUFPSHelper sharedInstance] stopMonitoring];
@@ -6457,7 +6457,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     (void)tableView;
     // 隐藏真正没有内容的说明区，其他分组标题保持呼吸感。
-    if (section == 5 || section == 9 || section == 10 || section == 11) return 2.0;
+    if (section == 5 || section == 6 || section == 9 || section == 10 || section == 11) return 0.01;
     // V4.18.2 — 分组入口行样式：卡片高度 48
     if (section == 0) return 54.0;
     return 48.0;
