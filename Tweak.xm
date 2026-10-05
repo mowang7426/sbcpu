@@ -85,18 +85,6 @@ static NSMutableArray *gPluginCategories = nil; // 分类列表：[{name, count,
 - (BOOL)openApplicationWithBundleID:(NSString *)bundleID;
 @end
 
-@interface CAWindowServer : NSObject
-+ (id)serverIfRunning;
-- (NSArray *)displays;
-@end
-
-@interface CAWindowServerDisplay : NSObject
-- (void)setAllowsVirtualModes:(BOOL)allows;
-- (void)setMinimumRefreshRate:(float)rate;
-- (void)setMaximumRefreshRate:(float)rate;
-- (void)setIdealRefreshRate:(float)rate;
-@end
-
 @interface SBLockScreenManager : NSObject
 + (id)sharedInstance;
 - (BOOL)isUILocked;
@@ -126,11 +114,7 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 + (instancetype)sharedInstance;
 - (void)startMonitoring;
 - (void)stopMonitoring;
-- (void)updateFrameRate;
-- (void)startDriverAnimation;
-- (void)stopDriverAnimation;
 @property (nonatomic, assign) double currentFPS;
-@property (nonatomic, strong) CALayer *driverLayer;
 @end
 
 // 独立的消息数据模型
@@ -353,7 +337,6 @@ static BOOL statusDockShowSIM2 = NO;
 
 static BOOL showCpuFrequency = YES;
 static BOOL showFps = YES;                       
-static BOOL force120HzEnable = NO;               
 static BOOL showSignalStrength = YES; // 📶 浮窗底部显示 SIM 卡信号（V4.18.0）
 
 
@@ -438,7 +421,6 @@ static void setFloatPref(CFStringRef key, float value);
 static void setIntPref(CFStringRef key, NSInteger value);
 static void applyVisibility(void);
 static void applyFloatingAlpha(void);
-static void applySystemRefreshRate(void);
 static void LoadPreferences(void);
 static void SavePreferencesAndNotify(void);
 static void applyExperimentalChargeLimit100(BOOL enable);
@@ -1025,7 +1007,6 @@ static void LoadPreferences(void) {
     
     showCpuFrequency = getBoolPref(CFSTR("showCpuFrequency"), YES);
     showFps = getBoolPref(CFSTR("showFps"), YES);
-    force120HzEnable = getBoolPref(CFSTR("force120HzEnable"), NO);
     showSignalStrength = getBoolPref(CFSTR("showSignalStrength"), YES);
     
     showBatteryPercent = getBoolPref(CFSTR("showBatteryPercent"), YES);
@@ -1085,13 +1066,12 @@ static void LoadPreferences(void) {
 
     if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
         applyVisibility();
-        if (showFps || force120HzEnable || collapsedDisplayMode == 1) {
+        if (showFps || collapsedDisplayMode == 1) {
             [[SBCPUFPSHelper sharedInstance] startMonitoring];
         } else {
             [[SBCPUFPSHelper sharedInstance] stopMonitoring];
         }
-        applySystemRefreshRate(); 
-    }
+}
 }
 
 static void SavePreferencesAndNotify(void) {
@@ -1126,7 +1106,6 @@ static void SavePreferencesAndNotify(void) {
     setBoolPref(CFSTR("statusDockShowSIM2"), statusDockShowSIM2);
     setBoolPref(CFSTR("showCpuFrequency"), showCpuFrequency);
     setBoolPref(CFSTR("showFps"), showFps);
-    setBoolPref(CFSTR("force120HzEnable"), force120HzEnable);
     setBoolPref(CFSTR("showSignalStrength"), showSignalStrength);
     setBoolPref(CFSTR("showBatteryPercent"), showBatteryPercent);
     setBoolPref(CFSTR("showBatteryTemperature"), showBatteryTemperature);
@@ -1158,13 +1137,12 @@ static void SavePreferencesAndNotify(void) {
     
     CFPreferencesSynchronize(kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
 
-    if (showFps || force120HzEnable || collapsedDisplayMode == 1) {
+    if (showFps || collapsedDisplayMode == 1) {
         [[SBCPUFPSHelper sharedInstance] startMonitoring];
     } else {
         [[SBCPUFPSHelper sharedInstance] stopMonitoring];
     }
-    applySystemRefreshRate(); 
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), kPrefChangedNotification, NULL, NULL, YES);
+CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), kPrefChangedNotification, NULL, NULL, YES);
     
 
 }
@@ -2480,8 +2458,6 @@ static void createCPUWindow(void) {
     cpuWindow.rootViewController.view.backgroundColor = UIColor.clearColor;
     cpuWindow.hidden = !isEnabled;
 
-    [cpuWindow.layer addSublayer:[SBCPUFPSHelper sharedInstance].driverLayer];
-
     CGRect initFrame = CGRectMake(20, 160, 240, 60);
     NSString *savedFrame = [[NSUserDefaults standardUserDefaults] stringForKey:@"SBCPU.LastFrame"];
     if (rememberPositionEnable && savedFrame) {
@@ -2671,33 +2647,6 @@ if (charging && !previousChargingState) {
     });
 }
 
-static void applySystemRefreshRate(void) {
-    BOOL apply120 = force120HzEnable;
-    
-    Class serverClass = NSClassFromString(@"CAWindowServer");
-    if (serverClass && [serverClass respondsToSelector:@selector(serverIfRunning)]) {
-        id server = [serverClass serverIfRunning];
-        if (server) {
-            for (id display in [server displays]) {
-                if ([display respondsToSelector:@selector(setAllowsVirtualModes:)]) {
-                    [display setAllowsVirtualModes:YES];
-                }
-                if (apply120) {
-                    if ([display respondsToSelector:@selector(setMinimumRefreshRate:)]) [display setMinimumRefreshRate:120.0f];
-                    if ([display respondsToSelector:@selector(setMaximumRefreshRate:)]) [display setMaximumRefreshRate:120.0f];
-                    if ([display respondsToSelector:@selector(setIdealRefreshRate:)]) [display setIdealRefreshRate:120.0f];
-                }
-            }
-        }
-    }
-
-    if (cpuWindow && [SBCPUFPSHelper sharedInstance].driverLayer.superlayer == nil) {
-        [cpuWindow.layer addSublayer:[SBCPUFPSHelper sharedInstance].driverLayer];
-    }
-
-    [[SBCPUFPSHelper sharedInstance] updateFrameRate];
-}
-
 #pragma mark - 5. Notification Manager 实现
 
 @implementation SBNotificationManager
@@ -2806,43 +2755,11 @@ static void applySystemRefreshRate(void) {
     return instance;
 }
 
-- (instancetype)init {
-    if (self = [super init]) {
-        _driverLayer = [CALayer layer];
-        _driverLayer.frame = CGRectMake(0, 0, 2, 2);
-        _driverLayer.backgroundColor = [UIColor clearColor].CGColor;
-        _driverLayer.opacity = 0.01f;
-    }
-    return self;
-}
 
-- (void)startDriverAnimation {
-    if (!_driverLayer) return;
-    [_driverLayer removeAnimationForKey:@"ProMotion120Driver"];
-
-    CABasicAnimation *driveAnim = [CABasicAnimation animationWithKeyPath:@"opacity"];
-    driveAnim.fromValue = @(0.01f);
-    driveAnim.toValue = @(0.02f);
-    driveAnim.duration = 1.0;
-    driveAnim.repeatCount = HUGE_VALF;
-    driveAnim.autoreverses = YES;
-    driveAnim.removedOnCompletion = NO;
-    if (@available(iOS 15.0, *)) {
-        driveAnim.preferredFrameRateRange = CAFrameRateRangeMake(120.0f, 120.0f, 120.0f);
-    }
-    [_driverLayer addAnimation:driveAnim forKey:@"ProMotion120Driver"];
-}
-
-- (void)stopDriverAnimation {
-    if (_driverLayer) {
-        [_driverLayer removeAnimationForKey:@"ProMotion120Driver"];
-    }
-}
 
 - (void)startMonitoring {
     if (_displayLink) return;
     _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(tick:)];
-    [self updateFrameRate];
     [_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
 }
 
@@ -2851,7 +2768,6 @@ static void applySystemRefreshRate(void) {
         [_displayLink invalidate];
         _displayLink = nil;
     }
-    [self stopDriverAnimation];
     _lastTimestamp = 0;
     _frameCount = 0;
     _sampleElapsed = 0;
@@ -2859,29 +2775,6 @@ static void applySystemRefreshRate(void) {
     _currentFPS = 0.0;
 }
 
-- (void)updateFrameRate {
-    if (!_displayLink) return;
-
-    BOOL apply120 = force120HzEnable;
-
-    if (@available(iOS 15.0, *)) {
-        float targetFps = apply120 ? 120.0f : 60.0f;
-        _displayLink.preferredFrameRateRange = CAFrameRateRangeMake(targetFps, targetFps, targetFps);
-        
-        if (apply120) {
-            if ([_displayLink respondsToSelector:@selector(setHighFrameRateReason:)]) {
-                @try {
-                    [_displayLink setValue:@(1114113) forKey:@"highFrameRateReason"];
-                } @catch (id ex) {}
-            }
-            [self startDriverAnimation];
-        } else {
-            [self stopDriverAnimation];
-        }
-    } else {
-        _displayLink.preferredFramesPerSecond = apply120 ? 120 : 60;
-    }
-}
 
 - (void)tick:(CADisplayLink *)link {
     CFTimeInterval timestamp = link.timestamp;
@@ -6519,7 +6412,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 2) return 5;
     if (section == 3) return 7; // 通知管理
     if (section == 4) return 3;
-    if (section == 5) return 1;
+    if (section == 5) return 0;
     if (section == 6) return 0; // 温控功能已移至系统插件设置
     if (section == 7) return 6; // 充电增强：充电增强/满血快充/屏蔽维修/充电历史/阻止充电/阻止外部供电
     if (section == 8) return 20; // 位置与显示 + 状态栏胶囊内容
@@ -6542,7 +6435,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 2) return @"🔲 悬浮窗外观";
     if (section == 3) return @"💬 消息与通知管理";
     if (section == 4) return @"🧠 智能选项";
-    if (section == 5) return @"🎮 性能与高刷锁定";
+    if (section == 5) return @"";
     if (section == 6) return @"";
     if (section == 7) return @"🔌 充电增强";
     if (section == 8) return @"📍 位置与显示";
@@ -6556,7 +6449,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     (void)tableView;
     // 隐藏真正没有内容的说明区，其他分组标题保持呼吸感。
-    if (section == 9 || section == 10 || section == 11) return 2.0;
+    if (section == 5 || section == 9 || section == 10 || section == 11) return 2.0;
     // V4.18.2 — 分组入口行样式：卡片高度 48
     if (section == 0) return 54.0;
     return 48.0;
@@ -7465,14 +7358,6 @@ static NSString *stripLeadingEmoji(NSString *s) {
             cell.detailTextLabel.text = (dockMode >= 0 && dockMode < modes.count) ? modes[dockMode] : @"自动";
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         }
-    } else if (indexPath.section == 5) {
-        if (indexPath.row == 0) {
-            cell.textLabel.text = @"强制 120Hz 高刷模式";
-            UISwitch *sw = [UISwitch new];
-            sw.on = force120HzEnable;
-            [sw addTarget:self action:@selector(changeForce120Hz:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = sw;
-        }
     } else if (indexPath.section == 6) {
         if (indexPath.row == 0) {
             cell.textLabel.text = @"温度保护总开关";
@@ -8164,7 +8049,6 @@ static NSString *stripLeadingEmoji(NSString *s) {
 - (void)changeStatusDockBattery:(UISwitch *)sw { statusDockShowBattery = sw.isOn; SavePreferencesAndNotify(); if (floatingView) [floatingView syncCollapsedLayoutForOrientation]; }
 - (void)changeStatusDockSIM1:(UISwitch *)sw { statusDockShowSIM1 = sw.isOn; SavePreferencesAndNotify(); if (floatingView) [floatingView syncCollapsedLayoutForOrientation]; }
 - (void)changeStatusDockSIM2:(UISwitch *)sw { statusDockShowSIM2 = sw.isOn; SavePreferencesAndNotify(); if (floatingView) [floatingView syncCollapsedLayoutForOrientation]; }
-- (void)changeForce120Hz:(UISwitch *)sw { force120HzEnable = sw.isOn; SavePreferencesAndNotify(); }
 - (void)changeShowCpuFreq:(UISwitch *)sw { showCpuFrequency = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowFps:(UISwitch *)sw { showFps = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }
 - (void)changeShowSignalStrength:(UISwitch *)sw { showSignalStrength = sw.isOn; SavePreferencesAndNotify(); updateFloatingSize(); }

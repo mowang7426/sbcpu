@@ -3,9 +3,9 @@ TARGET = iphone:clang:16.5:14.0
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = SBCPUFloating SBCPUThermal SBCPUPowerd SBCPUFloatingCCRegistration SBCPUForce120
+TWEAK_NAME = SBCPUFloating SBCPUThermal SBCPUPowerd SBCPUFloatingCCRegistration
 
-# 1. 桌面 UI、悬浮窗、120Hz/FPS、通知管理
+# 1. 桌面 UI、悬浮窗、FPS 监测、通知管理
 SBCPUFloating_FILES = Tweak.xm Shared/LGLiveBackdropView.m Shared/LGWallpaperBlurCache.m Shared/LGSharedSupport.m
 SBCPUFloating_CFLAGS = -fobjc-arc -Iinclude -IShared
 SBCPUFloating_LDFLAGS = -Wl,-U,___isOSVersionAtLeast
@@ -40,16 +40,6 @@ SBCPUFloatingCCRegistration_FRAMEWORKS = Foundation CoreFoundation
 SBCPUFloatingCCRegistration_LIBRARIES = substrate
 SBCPUFloatingCCRegistration_INSTALL_TARGET_PROCESSES = SpringBoard
 
-# 5. 全局 120Hz 强制（V4.17.0）：注入所有进程，hook 每个 App 的 CADisplayLink
-# CAFrameRateRange 是 iOS 15+ 类型，源码内 @available 已做运行时保护；
-# 编译期压掉 unguarded-availability 警告（Logos 生成的声明无法消音，-Werror 会转 error）
-SBCPUForce120_FILES = SBCPUForce120.xm
-SBCPUForce120_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -fvisibility=hidden -Wno-error=unguarded-availability-new
-SBCPUForce120_LDFLAGS += -Wl,-x -Wl,-dead_strip -Wl,-U,___isOSVersionAtLeast
-SBCPUForce120_FRAMEWORKS = Foundation QuartzCore
-SBCPUForce120_LIBRARIES = substrate
-SBCPUForce120_INSTALL_TARGET_PROCESSES = SpringBoard
-
 # 6. 充电控制 root daemon（V4.22 Charge Engine V1）：SpringBoard 无 AppleSMC entitlement，
 # 由 launchd 以 root 拉起本 daemon，ldid 签名带 com.apple.private.applesmc.user-access。
 # 分层：SBCPUChargeSMC(AppleSMC读写) + SBCPUChargePowerSource(IOPMPowerSource事件)
@@ -64,7 +54,6 @@ SBCPUChargeDaemon_INSTALL_PATH = /usr/libexec
 ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
 SBCPUThermal_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide
 SBCPUFloatingCCRegistration_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide
-SBCPUForce120_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide
 SBCPUChargeDaemon_CFLAGS += -I$(THEOS_VENDOR_INCLUDE_PATH)/roothide
 SBCPUChargeDaemon_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide
 endif
@@ -94,7 +83,6 @@ include $(THEOS_MAKE_PATH)/aggregate.mk
 after-stage::
 	$(ECHO_NOTHING)mkdir -p "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries"$(ECHO_END)
 	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/SBCPUPowerd.plist" "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/SBCPUPowerd.plist"$(ECHO_END)
-	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/SBCPUForce120.plist" "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/SBCPUForce120.plist"$(ECHO_END)
 	$(ECHO_NOTHING)mkdir -p "$(THEOS_STAGING_DIR)/Library/ControlCenter/Bundles/SBCPUFloatingCC.bundle"$(ECHO_END)
 	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/ControlCenter/resources/Info.plist" "$(THEOS_STAGING_DIR)/Library/ControlCenter/Bundles/SBCPUFloatingCC.bundle/Info.plist"$(ECHO_END)
 	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/ControlCenter/resources/SettingsIcon.png" "$(THEOS_STAGING_DIR)/Library/ControlCenter/Bundles/SBCPUFloatingCC.bundle/SettingsIcon.png"$(ECHO_END)
