@@ -29,7 +29,8 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
 }
 
 - (void)receiveScanResult {
-    NSDictionary *snapshot = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sbcpu.floating.plugin-scan.json"];
+    NSData *data = [NSData dataWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sbcpu.floating.plugin-scan.json"];
+    NSDictionary *snapshot = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
     if (![snapshot isKindOfClass:[NSDictionary class]] || ![snapshot[@"finished"] boolValue]) return;
     self.scanning = NO;
     self.results = snapshot[@"conflicts"] ?: @[];

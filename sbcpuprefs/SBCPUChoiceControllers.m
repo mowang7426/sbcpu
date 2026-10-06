@@ -6,7 +6,23 @@
 @implementation SBCPUChoiceBase
 - (NSString *)choiceKey{return @"";} - (NSArray *)choiceTitles{return @[];} - (NSArray *)choiceValues{return @[];} - (NSString *)choiceUnit{return @"";}
 - (NSArray *)specifiers { if(!_specifiers){NSMutableArray *a=[NSMutableArray array]; NSArray *v=[self choiceValues],*t=[self choiceTitles]; CFPropertyListRef raw=CFPreferencesCopyValue((__bridge CFStringRef)[self choiceKey],CFSTR("com.yourname.sbcpufloating"),kCFPreferencesCurrentUser,kCFPreferencesAnyHost); double cur=raw?[(id)CFBridgingRelease(raw) doubleValue]:[v.firstObject doubleValue]; for(NSUInteger i=0;i<v.count;i++){ PSSpecifier *s=[PSSpecifier preferenceSpecifierNamed:[NSString stringWithFormat:@"%@%@",t[i],[self choiceUnit]] target:self set:NULL get:NULL detail:nil cell:PSButtonCell edit:nil]; [s setProperty:v[i] forKey:@"choiceValue"]; [s setProperty:@(fabs([v[i] doubleValue]-cur)<0.001) forKey:@"choiceSelected"]; [a addObject:s]; } _specifiers=a;} return _specifiers; }
-- (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)p { PSSpecifier *s=[self specifierAtIndex:p.row]; NSNumber *v=[s propertyForKey:@"choiceValue"]; CFPreferencesSetValue((__bridge CFStringRef)[self choiceKey],(__bridge CFPropertyListRef)v,CFSTR("com.yourname.sbcpufloating"),kCFPreferencesCurrentUser,kCFPreferencesAnyHost); CFPreferencesSynchronize(CFSTR("com.yourname.sbcpufloating"),kCFPreferencesCurrentUser,kCFPreferencesAnyHost); notify_post("com.yourname.sbcpufloating.prefschanged"); [self.navigationController popViewControllerAnimated:YES]; }
+- (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)p {
+    [t deselectRowAtIndexPath:p animated:YES];
+    PSSpecifier *s = [self specifierAtIndexPath:p];
+    NSNumber *v = [s propertyForKey:@"choiceValue"];
+    if (![v isKindOfClass:[NSNumber class]]) return;
+    CFStringRef key = (__bridge CFStringRef)[self choiceKey];
+    CFPreferencesSetValue(key, (__bridge CFPropertyListRef)v, CFSTR("com.yourname.sbcpufloating"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    CFPreferencesSynchronize(CFSTR("com.yourname.sbcpufloating"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    notify_post("com.yourname.sbcpufloating.prefschanged");
+    [self.navigationController popViewControllerAnimated:YES];
+}
+
+- (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
+    PSSpecifier *s = [self specifierAtIndexPath:indexPath];
+    cell.accessoryType = [[s propertyForKey:@"choiceSelected"] boolValue] ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+}
+
 @end
 @interface SBCPUAlphaChoiceController: SBCPUChoiceBase @end
 @implementation SBCPUAlphaChoiceController
