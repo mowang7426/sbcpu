@@ -12,10 +12,37 @@
 
 @implementation SBCPUPluginConflictController
 
+static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    (void)center; (void)name; (void)object; (void)userInfo;
+    SBCPUPluginConflictController *controller = (__bridge SBCPUPluginConflictController *)observer;
+    dispatch_async(dispatch_get_main_queue(), ^{ [controller receiveScanResult]; });
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"插件冲突检测";
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)self, SBCPUPluginScanFinished, CFSTR("com.sbcpu.floating.plugin-scan.finished"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
 }
+
+- (void)dealloc {
+    CFNotificationCenterRemoveObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)self, CFSTR("com.sbcpu.floating.plugin-scan.finished"), NULL);
+}
+
+- (void)receiveScanResult {
+    NSDictionary *snapshot = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sbcpu.floating.plugin-scan.json"];
+    if (![snapshot isKindOfClass:[NSDictionary class]] || ![snapshot[@"finished"] boolValue]) return;
+    self.scanning = NO;
+    self.results = snapshot[@"conflicts"] ?: @[];
+    self.scannedDirectories = 1;
+    self.scannedPlists = [snapshot[@"pluginCount"] unsignedIntegerValue];
+    NSString *method = snapshot[@"method"] ?: @"SpringBoard 扫描";
+    NSString *error = snapshot[@"error"];
+    self.scanMessage = [NSString stringWithFormat:@"扫描完成：%@，已识别 %lu 个插件。%@", method, (unsigned long)self.scannedPlists, error.length ? [@" 诊断：" stringByAppendingString:error] : @""];
+    _specifiers = nil;
+    [self reloadSpecifiers];
+}
+
+- (void)viewDidAppear:(BOOL)animated {
 
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
@@ -45,10 +72,11 @@
         } else {
             [items addObject:[PSSpecifier groupSpecifierWithName:[NSString stringWithFormat:@"发现 %lu 个潜在冲突", (unsigned long)_results.count]]];
             for (NSDictionary *item in _results) {
-                NSString *process = item[@"process"] ?: @"未知进程";
+                NSString *title = item[@"title"] ?: item[@"process"] ?: @"潜在冲突";
+                NSString *description = item[@"desc"] ?: @"";
                 NSArray *plugins = item[@"plugins"] ?: @[];
-                NSString *detail = [NSString stringWithFormat:@"%lu 个插件同时注入：%@", (unsigned long)plugins.count, [plugins componentsJoinedByString:@"、"]];
-                [items addObject:[PSSpecifier preferenceSpecifierNamed:[NSString stringWithFormat:@"%@：%@", process, detail] target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
+                NSString *detail = plugins.count ? [NSString stringWithFormat:@"%@\n涉及插件：%@", description, [plugins componentsJoinedByString:@"、"]] : description;
+                [items addObject:[PSSpecifier preferenceSpecifierNamed:[NSString stringWithFormat:@"%@：%@", title, detail] target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
             }
         }
         _specifiers = items;
@@ -124,22 +152,29 @@ static NSArray *SBCPUProcessNamesFromFilter(NSDictionary *filter) {
 - (void)startScan {
     if (self.scanning) return;
     self.scanning = YES;
+    self.scanMessage = @"正在请求 SpringBoard 扫描插件目录…";
     _specifiers = nil;
     [self reloadSpecifiers];
+    [[NSFileManager defaultManager] removeItemAtPath:@"/var/mobile/Library/Preferences/com.sbcpu.floating.plugin-scan.json" error:nil];
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sbcpu.floating.plugin-scan.request"), NULL, NULL, YES);
     __weak typeof(self) weakSelf = self;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        NSDictionary *snapshot = [weakSelf scanSnapshot];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            SBCPUPluginConflictController *strongSelf = weakSelf;
-            if (!strongSelf) return;
-            strongSelf.results = snapshot[@"results"] ?: @[];
-            strongSelf.scannedDirectories = [snapshot[@"directories"] unsignedIntegerValue];
-            strongSelf.scannedPlists = [snapshot[@"plists"] unsignedIntegerValue];
-            strongSelf.scanMessage = [NSString stringWithFormat:@"扫描完成：%lu 个插件目录，%lu 个过滤器。", (unsigned long)strongSelf.scannedDirectories, (unsigned long)strongSelf.scannedPlists];
+    __block NSUInteger attempts = 0;
+    __block dispatch_block_t check = nil;
+    check = ^{
+        SBCPUPluginConflictController *strongSelf = weakSelf;
+        if (!strongSelf || !strongSelf.scanning) return;
+        [strongSelf receiveScanResult];
+        if (!strongSelf.scanning) return;
+        attempts++;
+        if (attempts >= 30) {
             strongSelf.scanning = NO;
+            strongSelf.scanMessage = @"扫描请求未收到 SpringBoard 响应；确认插件已注入 SpringBoard 后重试。";
             strongSelf->_specifiers = nil;
             [strongSelf reloadSpecifiers];
-        });
-    });
+            return;
+        }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), check);
+    };
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), check);
 }
 @end

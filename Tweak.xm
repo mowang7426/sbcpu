@@ -66,7 +66,8 @@ static NSString *gScanMethod = @"";
 static NSString *gScanError = @"";
 static NSInteger gDylibCount = 0;
 static NSString *gDylibPath = @"";
-static NSMutableArray *gPluginCategories = nil; // 分类列表：[{name, count, startRow}]
+static void scanInstalledPlugins(void);
+static void onPluginScanRequested(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
 
 
 @interface NSObject (SBCPUDummySafeCalls)
@@ -8865,6 +8866,26 @@ static void scanInstalledPlugins(void) {
     gPluginScanDone = YES;
 }
 
+static void onPluginScanRequested(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
+    if (![[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) return;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        scanInstalledPlugins();
+        NSMutableArray *plugins = [NSMutableArray array];
+        for (NSDictionary *plugin in gInstalledPlugins ?: @[]) {
+            [plugins addObject:@{ @"name": plugin[@"name"] ?: @"未知插件", @"injectedBundles": plugin[@"injectedBundles"] ?: @[] }];
+        }
+        NSMutableArray *conflicts = [NSMutableArray array];
+        for (NSDictionary *conflict in gPluginConflicts ?: @[]) {
+            [conflicts addObject:@{ @"title": conflict[@"title"] ?: @"潜在冲突", @"desc": conflict[@"desc"] ?: @"", @"severity": conflict[@"severity"] ?: @0, @"plugins": conflict[@"plugins"] ?: @[] }];
+        }
+        NSDictionary *snapshot = @{ @"plugins": plugins, @"conflicts": conflicts, @"pluginCount": @(gPluginTotalCount), @"method": gScanMethod ?: @"", @"error": gScanError ?: @"", @"finished": @YES };
+        NSData *data = [NSJSONSerialization dataWithJSONObject:snapshot options:0 error:nil];
+        if (data) [data writeToFile:@"/var/mobile/Library/Preferences/com.sbcpu.floating.plugin-scan.json" atomically:YES];
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sbcpu.floating.plugin-scan.finished"), NULL, NULL, YES);
+    });
+}
+
 // 冲突检测
 // ========== 插件耗电等级评估 ==========
 // 返回：0=低耗电，1=中耗电，2=高耗电
@@ -10448,6 +10469,7 @@ static void onPartRepairBundleDidLoad(CFNotificationCenterRef center, void *obse
     installReferenceRepairHooks();
     NSString *processName = [NSProcessInfo processInfo].processName;
     if ([processName isEqualToString:@"SpringBoard"]) {
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onPluginScanRequested, CFSTR("com.sbcpu.floating.plugin-scan.request"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         LoadPreferences();
         registerThermalHeartbeatListener();
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onCCNotificationReceived, kPrefChangedNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);

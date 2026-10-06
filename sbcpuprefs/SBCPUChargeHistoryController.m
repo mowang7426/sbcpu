@@ -7,6 +7,16 @@
 
 @implementation SBCPUChargeHistoryController
 
+- (void)showSessionDetails:(PSSpecifier *)specifier {
+    NSDictionary *session = [specifier propertyForKey:@"SBCPUChargeSession"];
+    if (![session isKindOfClass:[NSDictionary class]]) return;
+    NSTimeInterval duration = [session[@"duration"] doubleValue];
+    NSString *message = [NSString stringWithFormat:@"时长：%.0f 分钟\\n电量：%@%% → %@%%\\n充入电量：%.0f mAh\\n输入能量：%.2f Wh\\n电池吸收能量：%.2f Wh\\n峰值输入功率：%.1f W\\n峰值电池功率：%.1f W\\n峰值电池温度：%@\\n充电方式：%@\\n热降频：%@ 秒", duration / 60.0, session[@"startPercent"] ?: @0, session[@"endPercent"] ?: @0, [session[@"batteryMah"] doubleValue], [session[@"inputWh"] doubleValue], [session[@"batteryWh"] doubleValue], [session[@"peakInputW"] doubleValue], [session[@"peakBattW"] doubleValue], session[@"peakTemp"] == [NSNull null] ? @"未知" : [NSString stringWithFormat:@"%.1f°C", [session[@"peakTemp"] doubleValue]], [session[@"wireless"] boolValue] ? @"无线" : @"有线", session[@"throttledSeconds"] ?: @0];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"充电详情" message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"充电历史";
@@ -44,7 +54,9 @@
                 double duration = [session[@"duration"] doubleValue];
                 NSString *durationText = duration < 3600 ? [NSString stringWithFormat:@"%ld 分钟", (long)(duration / 60)] : [NSString stringWithFormat:@"%ld 小时 %ld 分钟", (long)(duration / 3600), (long)(((NSInteger)duration % 3600) / 60)];
                 NSString *label = [NSString stringWithFormat:@"%@  ·  %@\n电量 %ld%% → %ld%%，输入 %.2f Wh，峰值 %.1f W%@", [formatter stringFromDate:date], durationText, (long)from, (long)to, [session[@"inputWh"] doubleValue], [session[@"peakInputW"] doubleValue], [session[@"wireless"] boolValue] ? @" · 无线" : @""];
-                PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:label target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil];
+                PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:label target:self set:NULL get:NULL detail:Nil cell:PSButtonCell edit:nil];
+                [row setProperty:session forKey:@"SBCPUChargeSession"];
+                [row setButtonAction:@selector(showSessionDetails:)];
                 [items addObject:row];
             }
         }
