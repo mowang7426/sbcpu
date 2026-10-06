@@ -9611,6 +9611,11 @@ static NSString *appDisplayNameForBundleID(NSString *bundleID) {
 static void onCCNotificationReceived(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
     LoadPreferences();
+    if (floatingView) {
+        [floatingView applyLiquidGlassStyle];
+        [floatingView refreshNativeLiquidGlass];
+        updateFloatingSize();
+    }
 }
 
 static void registerV160Observers(void) {
