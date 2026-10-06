@@ -24,20 +24,16 @@
         [scan setProperty:@(!self.scanning) forKey:@"enabled"];
         [items addObject:scan];
         if (!_results) {
-            [items addObject:[PSSpecifier preferenceSpecifierNamed:@"尚未扫描"
-                target:nil set:NULL get:NULL detail:@"只扫描常见 DynamicLibraries 目录，不修改任何插件。"
-                cell:PSStaticTextCell edit:nil]];
+            [items addObject:[PSSpecifier preferenceSpecifierNamed:@"只扫描常见 DynamicLibraries 目录，不修改任何插件。" target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
         } else if (!_results.count) {
-            [items addObject:[PSSpecifier preferenceSpecifierNamed:@"未发现明显冲突"
-                target:nil set:NULL get:NULL detail:@"扫描完成，未发现多个插件同时注入同一系统进程。"
-                cell:PSStaticTextCell edit:nil]];
+            [items addObject:[PSSpecifier preferenceSpecifierNamed:@"未发现多个插件同时注入同一系统进程。" target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
         } else {
             [items addObject:[PSSpecifier groupSpecifierWithName:[NSString stringWithFormat:@"发现 %lu 个潜在冲突", (unsigned long)_results.count]]];
             for (NSDictionary *item in _results) {
                 NSString *process = item[@"process"] ?: @"未知进程";
                 NSArray *plugins = item[@"plugins"] ?: @[];
                 NSString *detail = [NSString stringWithFormat:@"%lu 个插件同时注入：%@", (unsigned long)plugins.count, [plugins componentsJoinedByString:@"、"]];
-                [items addObject:[PSSpecifier preferenceSpecifierNamed:process target:nil set:NULL get:NULL detail:detail cell:PSStaticTextCell edit:nil]];
+                [items addObject:[PSSpecifier preferenceSpecifierNamed:[NSString stringWithFormat:@"%@：%@", process, detail] target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
             }
         }
         _specifiers = items;
