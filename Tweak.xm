@@ -264,9 +264,9 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) NSArray *filteredApps;
 @property (nonatomic, strong) UISearchBar *searchBar;
 @end
-@interface SBCPULockCleanupWhitelistController : UITableViewController
+@interface SBCPUSpringBoardLockCleanupWhitelistController : UITableViewController
 @end
-@interface SBCPUChargeHistoryController : UITableViewController
+@interface SBCPUSpringBoardChargeHistoryController : UITableViewController
 @end
 @interface SBCPUSettingsController : UITableViewController <UIGestureRecognizerDelegate>
 - (void)saveConfigs;
@@ -7846,7 +7846,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
             SBCPUTimePickerController *vc = [[SBCPUTimePickerController alloc] initWithStyle:UITableViewStyleInsetGrouped];
             [self.navigationController pushViewController:vc animated:YES];
         } else if (indexPath.row == 4) {
-            SBCPULockCleanupWhitelistController *vc = [[SBCPULockCleanupWhitelistController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+            SBCPUSpringBoardLockCleanupWhitelistController *vc = [[SBCPUSpringBoardLockCleanupWhitelistController alloc] initWithStyle:UITableViewStyleInsetGrouped];
             [self.navigationController pushViewController:vc animated:YES];
         }
     } else if (indexPath.section == 2) {
@@ -7912,7 +7912,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
         }
     } else if (indexPath.section == 7) {
         if (indexPath.row == 3) {
-            SBCPUChargeHistoryController *vc = [[SBCPUChargeHistoryController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+            SBCPUSpringBoardChargeHistoryController *vc = [[SBCPUSpringBoardChargeHistoryController alloc] initWithStyle:UITableViewStyleInsetGrouped];
             [self.navigationController pushViewController:vc animated:YES];
         }
     }
@@ -9416,7 +9416,7 @@ static NSString *appDisplayNameForBundleID(NSString *bundleID) {
 @end
 
 // ===== 锁屏清理白名单管理页 =====
-@implementation SBCPULockCleanupWhitelistController
+@implementation SBCPUSpringBoardLockCleanupWhitelistController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
@@ -9482,7 +9482,7 @@ static NSString *appDisplayNameForBundleID(NSString *bundleID) {
 }
 @end
 
-@implementation SBCPUChargeHistoryController
+@implementation SBCPUSpringBoardChargeHistoryController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
