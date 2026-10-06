@@ -156,23 +156,16 @@ static NSArray *SBCPUProcessNamesFromFilter(NSDictionary *filter) {
     [[NSFileManager defaultManager] removeItemAtPath:@"/var/mobile/Library/Preferences/com.sbcpu.floating.plugin-scan.json" error:nil];
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sbcpu.floating.plugin-scan.request"), NULL, NULL, YES);
     __weak typeof(self) weakSelf = self;
-    __block NSUInteger attempts = 0;
-    __block dispatch_block_t check = nil;
-    check = ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         SBCPUPluginConflictController *strongSelf = weakSelf;
         if (!strongSelf || !strongSelf.scanning) return;
         [strongSelf receiveScanResult];
-        if (!strongSelf.scanning) return;
-        attempts++;
-        if (attempts >= 30) {
+        if (strongSelf.scanning) {
             strongSelf.scanning = NO;
             strongSelf.scanMessage = @"扫描请求未收到 SpringBoard 响应；确认插件已注入 SpringBoard 后重试。";
             strongSelf->_specifiers = nil;
             [strongSelf reloadSpecifiers];
-            return;
         }
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), check);
-    };
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), check);
+    });
 }
 @end
