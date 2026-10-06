@@ -22,7 +22,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -40,7 +40,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -58,7 +58,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -76,7 +76,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -94,7 +94,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -112,7 +112,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -130,7 +130,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -148,7 +148,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -166,7 +166,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -184,7 +184,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -258,7 +258,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -296,7 +296,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -314,7 +314,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -332,7 +332,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -350,7 +350,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -388,7 +388,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -406,7 +406,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -444,7 +444,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -462,7 +462,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -486,7 +486,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -504,7 +504,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -522,7 +522,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -540,7 +540,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -558,7 +558,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -592,7 +592,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -610,7 +610,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -628,7 +628,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -646,7 +646,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -664,7 +664,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -682,7 +682,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -700,7 +700,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -718,7 +718,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -736,7 +736,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -806,7 +806,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -824,7 +824,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -842,7 +842,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -870,7 +870,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>
@@ -888,7 +888,7 @@
 			<key>get</key>
 			<string>getPreferenceValue:</string>
 			<key>set</key>
-			<string>setPreferenceValue:</string>
+			<string>setPreferenceValue:specifier:</string>
 			<key>PostNotification</key>
 			<string>com.yourname.sbcpufloating.prefschanged</string>
 			<key>defaults</key>

@@ -17,20 +17,6 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<true/>
-			<key>defaults</key>
-			<string>com.yourname.sbcpufloating</string>
-			<key>key</key>
-			<string>isEnabled</string>
-			<key>label</key>
-			<string>开启浮窗</string>
-			<key>PostNotification</key>
-			<string>com.yourname.sbcpufloating.prefschanged</string>
-		</dict>
-		<dict>
-			<key>cell</key>
 			<string>PSLinkCell</string>
 			<key>label</key>
 			<string>液态玻璃</string>
