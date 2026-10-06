@@ -38,6 +38,8 @@
         }
         if (!_results) {
             [items addObject:[PSSpecifier preferenceSpecifierNamed:@"等待扫描结果" target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
+        } else if (!self.scannedDirectories) {
+            [items addObject:[PSSpecifier preferenceSpecifierNamed:@"无法访问插件扫描目录，不能判定是否存在冲突。" target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
         } else if (!_results.count) {
             [items addObject:[PSSpecifier preferenceSpecifierNamed:@"未发现多个插件同时注入同一系统进程。" target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
         } else {
@@ -56,9 +58,16 @@
 
 static NSArray *SBCPUPluginDirectories(void) {
     return @[@"/var/jb/Library/MobileSubstrate/DynamicLibraries",
+             @"/private/var/jb/Library/MobileSubstrate/DynamicLibraries",
              @"/Library/MobileSubstrate/DynamicLibraries",
+             @"/var/lib/MobileSubstrate/DynamicLibraries",
+             @"/private/var/lib/MobileSubstrate/DynamicLibraries",
              @"/var/jb/usr/lib/TweakInject",
-             @"/usr/lib/TweakInject"];
+             @"/private/var/jb/usr/lib/TweakInject",
+             @"/usr/lib/TweakInject",
+             @"/var/jb/Library/TweakInject",
+             @"/private/var/jb/Library/TweakInject",
+             @"/Library/TweakInject"];
 }
 
 static NSArray *SBCPUProcessNamesFromFilter(NSDictionary *filter) {
