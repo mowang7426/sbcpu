@@ -8,6 +8,7 @@
 @property(nonatomic,copy) NSArray<NSDictionary *> *plugins;
 @property(nonatomic,assign) BOOL scanning;
 @property(nonatomic,copy) NSString *scanMessage;
+@property(nonatomic,copy) NSString *scanPath;
 @property(nonatomic,assign) NSUInteger scannedPlists;
 @property(nonatomic,assign) NSUInteger scannedDirectories;
 @end
@@ -38,11 +39,11 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
     self.results = snapshot[@"conflicts"] ?: @[];
     self.plugins = snapshot[@"plugins"] ?: @[];
     self.scannedDirectories = [snapshot[@"directories"] unsignedIntegerValue];
-    if (!self.scannedDirectories && [self.plugins count]) self.scannedDirectories = 1;
-    self.scannedPlists = [snapshot[@"pluginCount"] unsignedIntegerValue];
+    self.scanPath = snapshot[@"scanPath"] ?: @"";
+    self.scannedPlists = [snapshot[@"dylibCount"] unsignedIntegerValue];
     NSString *method = snapshot[@"method"] ?: @"SpringBoard 扫描";
     NSString *error = snapshot[@"error"];
-    self.scanMessage = [NSString stringWithFormat:@"扫描完成：%@，已识别 %lu 个插件。%@", method, (unsigned long)self.scannedPlists, error.length ? [@" 诊断：" stringByAppendingString:error] : @""];
+    self.scanMessage = [NSString stringWithFormat:@"扫描完成：%@；插件 %lu 个，动态库 %lu 个，扫描目录 %lu 个。%@", method, (unsigned long)self.plugins.count, (unsigned long)self.scannedPlists, (unsigned long)self.scannedDirectories, error.length ? [@" 诊断：" stringByAppendingString:error] : @""];
     _specifiers = nil;
     [self reloadSpecifiers];
 }
@@ -76,6 +77,9 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
                 [items addObject:row];
             }
         }
+        if (self.scanPath.length) {
+            [items addObject:[PSSpecifier preferenceSpecifierNamed:[NSString stringWithFormat:@"扫描目录：%@", self.scanPath] target:nil set:NULL get:NULL detail:nil cell:PSStaticTextCell edit:nil]];
+        }
         if (!_results) {
             [items addObject:[PSSpecifier preferenceSpecifierNamed:@"等待扫描结果" target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
         } else if (!self.scannedDirectories) {
@@ -104,7 +108,8 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
     NSDictionary *plugin = [specifier propertyForKey:@"pluginInfo"];
     if (!plugin) return;
     NSArray *targets = plugin[@"injectedBundles"] ?: @[];
-    NSString *message = targets.count ? [targets componentsJoinedByString:@"\n"] : @"未声明 Bundles/Executables，可能是全局注入或使用其他过滤规则。";
+    NSString *targetText = [plugin[@"injectionKnown"] boolValue] && targets.count ? [targets componentsJoinedByString:@"\n"] : @"无法从已识别规则确认注入进程（可能全局注入、过滤格式暂不支持或无过滤项）。";
+    NSString *message = [NSString stringWithFormat:@"分类：%@\n版本：%@\nBundle ID：%@\n\n注入进程：\n%@\n\n%@", plugin[@"category"] ?: @"其他", plugin[@"version"] ?: @"未知", plugin[@"bundleID"] ?: @"未知", targetText, plugin[@"desc"] ?: @""];
     [self showMessage:message title:plugin[@"name"] ?: @"插件详情"];
 }
 
@@ -112,7 +117,11 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
     NSDictionary *conflict = [specifier propertyForKey:@"conflictInfo"];
     if (!conflict) return;
     NSArray *names = conflict[@"plugins"] ?: @[];
-    NSString *message = [NSString stringWithFormat:@"%@\n\n涉及插件：%@", conflict[@"desc"] ?: @"", names.count ? [names componentsJoinedByString:@"、"] : @"未知"];
+    NSInteger severity = [conflict[@"severity"] integerValue];
+    NSString *risk = severity == 0 ? @"高" : (severity == 1 ? @"中" : @"低");
+    NSString *confidenceCode = conflict[@"confidence"] ?: @"heuristic";
+    NSString *confidence = [confidenceCode isEqualToString:@"known-rule"] ? @"已知规则命中" : ([confidenceCode isEqualToString:@"injection-overlap"] ? @"基于注入目标重叠（需人工确认）" : @"基于名称/类别启发式推断（仅供参考）");
+    NSString *message = [NSString stringWithFormat:@"风险等级：%@\n判断依据：%@\n\n%@\n\n涉及插件：%@", risk, confidence, conflict[@"desc"] ?: @"", names.count ? [names componentsJoinedByString:@"、"] : @"未知"];
     [self showMessage:message title:conflict[@"title"] ?: @"冲突详情"];
 }
 

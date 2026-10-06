@@ -65,6 +65,7 @@ static NSInteger gDpkgParsedCount = 0;
 static NSString *gScanMethod = @"";
 static NSString *gScanError = @"";
 static NSInteger gDylibCount = 0;
+static NSUInteger gPluginScanDirectoryCount = 0;
 static NSString *gDylibPath = @"";
 static NSMutableArray *gPluginCategories = nil; // 分类列表
 static void scanInstalledPlugins(void);
@@ -8465,6 +8466,11 @@ static void scanInstalledPlugins(void) {
     gPluginConflicts = [NSMutableArray array];
     gPluginTotalCount = 0;
     gPluginConflictCount = 0;
+    gScanError = @"";
+    gScanMethod = @"";
+    gDylibPath = @"";
+    gDylibCount = 0;
+    gPluginScanDirectoryCount = 0;
 
     NSFileManager *fm = [NSFileManager defaultManager];
 
@@ -8545,6 +8551,8 @@ static void scanInstalledPlugins(void) {
     // 如果通过自身路径找到了 dylib，直接用这些作为插件列表（最可靠，不需要猜路径）
     if (selfFoundDylibs.count > 0) {
         gScanMethod = @"自身路径探测";
+        gDylibPath = dynamicLibDir ?: @"";
+        gPluginScanDirectoryCount = dynamicLibDir.length ? 1 : 0;
         for (NSDictionary *pluginInfo in selfFoundDylibs) {
             NSString *dn = pluginInfo[@"name"];
             NSArray *injected = pluginInfo[@"injectedBundles"];
@@ -8599,6 +8607,7 @@ static void scanInstalledPlugins(void) {
         NSArray *files = [fm contentsOfDirectoryAtPath:libPath error:&err];
         NSLog(@"[SBCPUFloating] DynamicLibraries %@ files:%ld err:%@", libPath, (long)files.count, err);
         if (!files) continue;
+        gPluginScanDirectoryCount++;
         if (gDylibCount == 0) gDylibPath = libPath;
         for (NSString *f in files) {
             if ([f.pathExtension isEqualToString:@"dylib"]) {
@@ -8874,13 +8883,13 @@ static void onPluginScanRequested(CFNotificationCenterRef center, void *observer
         scanInstalledPlugins();
         NSMutableArray *plugins = [NSMutableArray array];
         for (NSDictionary *plugin in gInstalledPlugins ?: @[]) {
-            [plugins addObject:@{ @"name": plugin[@"name"] ?: @"未知插件", @"injectedBundles": plugin[@"injectedBundles"] ?: @[] }];
+            [plugins addObject:@{ @"name": plugin[@"name"] ?: @"未知插件", @"bundleID": plugin[@"bundleID"] ?: @"", @"version": plugin[@"version"] ?: @"", @"category": plugin[@"category"] ?: @"其他", @"desc": plugin[@"desc"] ?: @"", @"injectedBundles": plugin[@"injectedBundles"] ?: @[], @"injectionKnown": @([plugin[@"injectedBundles"] count] > 0) }];
         }
         NSMutableArray *conflicts = [NSMutableArray array];
         for (NSDictionary *conflict in gPluginConflicts ?: @[]) {
-            [conflicts addObject:@{ @"title": conflict[@"title"] ?: @"潜在冲突", @"desc": conflict[@"desc"] ?: @"", @"severity": conflict[@"severity"] ?: @0, @"plugins": conflict[@"plugins"] ?: @[] }];
+            [conflicts addObject:@{ @"title": conflict[@"title"] ?: @"潜在冲突", @"desc": conflict[@"desc"] ?: @"", @"severity": conflict[@"severity"] ?: @0, @"confidence": conflict[@"confidence"] ?: @"heuristic", @"plugins": conflict[@"plugins"] ?: @[] }];
         }
-        NSDictionary *snapshot = @{ @"plugins": plugins, @"conflicts": conflicts, @"pluginCount": @(gPluginTotalCount), @"directories": @(gScanMethod.length ? 1 : 0), @"method": gScanMethod ?: @"", @"error": gScanError ?: @"", @"finished": @YES };
+        NSDictionary *snapshot = @{ @"plugins": plugins, @"conflicts": conflicts, @"pluginCount": @(gPluginTotalCount), @"dylibCount": @(gDylibCount), @"directories": @(gPluginScanDirectoryCount), @"scanPath": gDylibPath ?: @"", @"method": gScanMethod ?: @"", @"error": gScanError ?: @"", @"finished": @YES };
         NSData *data = [NSJSONSerialization dataWithJSONObject:snapshot options:0 error:nil];
         if (data) [data writeToFile:@"/var/mobile/Library/Preferences/com.sbcpu.floating.plugin-scan.json" atomically:YES];
         CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sbcpu.floating.plugin-scan.finished"), NULL, NULL, YES);
@@ -8966,7 +8975,7 @@ static void detectPluginConflicts(void) {
         }
         if (found1 && found2) {
             [gPluginConflicts addObject:@{
-                @"title": title, @"desc": desc, @"severity": @(severity),
+                @"title": title, @"desc": desc, @"severity": @(severity), @"confidence": @"known-rule",
                 @"plugins": @[id1, id2],
             }];
             gPluginConflictCount++;
@@ -9007,7 +9016,7 @@ static void detectPluginConflicts(void) {
                                   p1[@"name"], p2[@"name"], (long)overlap.count,
                                   [overlap componentsJoinedByString:@"、"]];
                 [gPluginConflicts addObject:@{
-                    @"title": title, @"desc": desc, @"severity": @(severity),
+                    @"title": title, @"desc": desc, @"severity": @(severity), @"confidence": @"injection-overlap",
                     @"plugins": @[p1[@"name"], p2[@"name"]],
                 }];
                 gPluginConflictCount++;
@@ -9054,7 +9063,7 @@ static void detectPluginConflicts(void) {
             NSString *desc = [NSString stringWithFormat:@"检测到 %ld 个%@相关插件（%@），功能可能重叠，建议保留一个",
                               (long)matched.count, groupName, [names componentsJoinedByString:@"、"]];
             [gPluginConflicts addObject:@{
-                @"title": title, @"desc": desc, @"severity": @(groupSeverity),
+                @"title": title, @"desc": desc, @"severity": @(groupSeverity), @"confidence": @"keyword-heuristic",
                 @"plugins": names,
             }];
             gPluginConflictCount++;
