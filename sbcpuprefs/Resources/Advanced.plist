@@ -428,7 +428,7 @@
 			<key>label</key>
 			<string>锁屏清理白名单</string>
 			<key>detail</key>
-			<string>SBCPULockCleanupWhitelistController</string>
+			<string>SBCPUPrefsWhitelistController</string>
 			<key>isController</key>
 			<true/>
 		</dict>
