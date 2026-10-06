@@ -1,9 +1,11 @@
 #import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 #import <Preferences/PSListController.h>
 #import <Preferences/PSSpecifier.h>
 
 @interface SBCPUPluginConflictController : PSListController
 @property(nonatomic,copy) NSArray<NSDictionary *> *results;
+@property(nonatomic,copy) NSArray<NSDictionary *> *plugins;
 @property(nonatomic,assign) BOOL scanning;
 @property(nonatomic,copy) NSString *scanMessage;
 @property(nonatomic,assign) NSUInteger scannedPlists;
@@ -34,7 +36,9 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
     if (![snapshot isKindOfClass:[NSDictionary class]] || ![snapshot[@"finished"] boolValue]) return;
     self.scanning = NO;
     self.results = snapshot[@"conflicts"] ?: @[];
-    self.scannedDirectories = 1;
+    self.plugins = snapshot[@"plugins"] ?: @[];
+    self.scannedDirectories = [snapshot[@"directories"] unsignedIntegerValue];
+    if (!self.scannedDirectories && [self.plugins count]) self.scannedDirectories = 1;
     self.scannedPlists = [snapshot[@"pluginCount"] unsignedIntegerValue];
     NSString *method = snapshot[@"method"] ?: @"SpringBoard 扫描";
     NSString *error = snapshot[@"error"];
@@ -62,6 +66,16 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
         } else {
             [items addObject:[PSSpecifier preferenceSpecifierNamed:@"进入此页面后会自动扫描；也可点上方按钮重新扫描。" target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
         }
+        if (_plugins.count) {
+            [items addObject:[PSSpecifier groupSpecifierWithName:[NSString stringWithFormat:@"已扫描插件（%lu）— 点按查看注入进程", (unsigned long)_plugins.count]]];
+            for (NSDictionary *plugin in _plugins) {
+                NSString *name = plugin[@"name"] ?: @"未知插件";
+                PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:name target:self set:NULL get:NULL detail:nil cell:PSButtonCell edit:nil];
+                [row setButtonAction:@selector(showPluginDetail:)];
+                [row setProperty:plugin forKey:@"pluginInfo"];
+                [items addObject:row];
+            }
+        }
         if (!_results) {
             [items addObject:[PSSpecifier preferenceSpecifierNamed:@"等待扫描结果" target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
         } else if (!self.scannedDirectories) {
@@ -83,6 +97,14 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
     return _specifiers;
 }
 
+- (void)showPluginDetail:(PSSpecifier *)specifier {
+    NSDictionary *plugin = [specifier propertyForKey:@"pluginInfo"];
+    NSArray *targets = plugin[@"injectedBundles"] ?: @[];
+    NSString *message = targets.count ? [targets componentsJoinedByString:@"\n"] : @"插件规则未声明 Bundles/Executables（可能为全局注入或使用其他过滤规则）。";
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:plugin[@"name"] ?: @"插件详情" message:[NSString stringWithFormat:@"注入进程：\n%@", message] preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
 static NSArray *SBCPUPluginDirectories(void) {
     return @[@"/var/jb/Library/MobileSubstrate/DynamicLibraries",
              @"/private/var/jb/Library/MobileSubstrate/DynamicLibraries",

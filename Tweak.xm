@@ -8880,7 +8880,7 @@ static void onPluginScanRequested(CFNotificationCenterRef center, void *observer
         for (NSDictionary *conflict in gPluginConflicts ?: @[]) {
             [conflicts addObject:@{ @"title": conflict[@"title"] ?: @"潜在冲突", @"desc": conflict[@"desc"] ?: @"", @"severity": conflict[@"severity"] ?: @0, @"plugins": conflict[@"plugins"] ?: @[] }];
         }
-        NSDictionary *snapshot = @{ @"plugins": plugins, @"conflicts": conflicts, @"pluginCount": @(gPluginTotalCount), @"method": gScanMethod ?: @"", @"error": gScanError ?: @"", @"finished": @YES };
+        NSDictionary *snapshot = @{ @"plugins": plugins, @"conflicts": conflicts, @"pluginCount": @(gPluginTotalCount), @"directories": @(gScanMethod.length ? 1 : 0), @"method": gScanMethod ?: @"", @"error": gScanError ?: @"", @"finished": @YES };
         NSData *data = [NSJSONSerialization dataWithJSONObject:snapshot options:0 error:nil];
         if (data) [data writeToFile:@"/var/mobile/Library/Preferences/com.sbcpu.floating.plugin-scan.json" atomically:YES];
         CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sbcpu.floating.plugin-scan.finished"), NULL, NULL, YES);
