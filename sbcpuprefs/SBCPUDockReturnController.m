@@ -15,9 +15,10 @@
         CFPropertyListRef raw = CFPreferencesCopyValue(CFSTR("statusDockReturnDelay"), CFSTR("com.yourname.sbcpufloating"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
         NSInteger current = raw ? [(id)CFBridgingRelease(raw) integerValue] : 5;
         for (NSInteger seconds = 1; seconds <= 10; seconds++) {
-            PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:[NSString stringWithFormat:@"%ld 秒", (long)seconds] target:self set:NULL get:NULL detail:nil cell:PSLinkCell edit:nil];
+            PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:[NSString stringWithFormat:@"%ld 秒", (long)seconds] target:self set:NULL get:NULL detail:nil cell:PSButtonCell edit:nil];
             [row setProperty:@(seconds) forKey:@"returnDelayValue"];
             [row setProperty:@(seconds == current) forKey:@"returnDelaySelected"];
+            [row setButtonAction:@selector(selectDelay:)];
             [items addObject:row];
         }
         _specifiers = items;
@@ -25,9 +26,7 @@
     return _specifiers;
 }
 
-- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
+- (void)selectDelay:(PSSpecifier *)specifier {
     NSNumber *value = [specifier propertyForKey:@"returnDelayValue"];
     if (!value) return;
     CFPreferencesSetValue(CFSTR("statusDockReturnDelay"), (__bridge CFPropertyListRef)value, CFSTR("com.yourname.sbcpufloating"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);

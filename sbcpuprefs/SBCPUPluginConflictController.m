@@ -70,8 +70,9 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
             [items addObject:[PSSpecifier groupSpecifierWithName:[NSString stringWithFormat:@"已扫描插件（%lu）— 点按查看注入进程", (unsigned long)_plugins.count]]];
             for (NSDictionary *plugin in _plugins) {
                 NSString *name = plugin[@"name"] ?: @"未知插件";
-                PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:name target:self set:NULL get:NULL detail:nil cell:PSLinkCell edit:nil];
+                PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:name target:self set:NULL get:NULL detail:nil cell:PSButtonCell edit:nil];
                 [row setProperty:plugin forKey:@"pluginInfo"];
+                [row setButtonAction:@selector(showPluginDetail:)];
                 [items addObject:row];
             }
         }
@@ -88,8 +89,9 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
                 NSString *description = item[@"desc"] ?: @"";
                 NSArray *plugins = item[@"plugins"] ?: @[];
                 NSString *detail = plugins.count ? [NSString stringWithFormat:@"%@\n涉及插件：%@", description, [plugins componentsJoinedByString:@"、"]] : description;
-                PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:[NSString stringWithFormat:@"%@：%@", title, detail] target:self set:NULL get:NULL detail:nil cell:PSLinkCell edit:nil];
+                PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:[NSString stringWithFormat:@"%@：%@", title, detail] target:self set:NULL get:NULL detail:nil cell:PSButtonCell edit:nil];
                 [row setProperty:item forKey:@"conflictInfo"];
+                [row setButtonAction:@selector(showConflictDetail:)];
                 [items addObject:row];
             }
         }
@@ -98,20 +100,20 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
     return _specifiers;
 }
 
-- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
+- (void)showPluginDetail:(PSSpecifier *)specifier {
     NSDictionary *plugin = [specifier propertyForKey:@"pluginInfo"];
+    if (!plugin) return;
+    NSArray *targets = plugin[@"injectedBundles"] ?: @[];
+    NSString *message = targets.count ? [targets componentsJoinedByString:@"\n"] : @"未声明 Bundles/Executables，可能是全局注入或使用其他过滤规则。";
+    [self showMessage:message title:plugin[@"name"] ?: @"插件详情"];
+}
+
+- (void)showConflictDetail:(PSSpecifier *)specifier {
     NSDictionary *conflict = [specifier propertyForKey:@"conflictInfo"];
-    if (plugin) {
-        NSArray *targets = plugin[@"injectedBundles"] ?: @[];
-        NSString *message = targets.count ? [targets componentsJoinedByString:@"\n"] : @"未声明 Bundles/Executables，可能是全局注入或使用其他过滤规则。";
-        [self showMessage:message title:plugin[@"name"] ?: @"插件详情"];
-    } else if (conflict) {
-        NSArray *names = conflict[@"plugins"] ?: @[];
-        NSString *message = [NSString stringWithFormat:@"%@\n\n涉及插件：%@", conflict[@"desc"] ?: @"", names.count ? [names componentsJoinedByString:@"、"] : @"未知"];
-        [self showMessage:message title:conflict[@"title"] ?: @"冲突详情"];
-    }
+    if (!conflict) return;
+    NSArray *names = conflict[@"plugins"] ?: @[];
+    NSString *message = [NSString stringWithFormat:@"%@\n\n涉及插件：%@", conflict[@"desc"] ?: @"", names.count ? [names componentsJoinedByString:@"、"] : @"未知"];
+    [self showMessage:message title:conflict[@"title"] ?: @"冲突详情"];
 }
 
 - (void)showMessage:(NSString *)message title:(NSString *)title {
