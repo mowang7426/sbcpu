@@ -1,9 +1,43 @@
+#import <UIKit/UIKit.h>
 #import <Preferences/PSListController.h>
 #import <Preferences/PSSpecifier.h>
 #import <notify.h>
-@interface SBCPUDockReturnController : PSListController @end
+
+@interface SBCPUDockReturnController : PSListController
+@end
+
 @implementation SBCPUDockReturnController
-- (NSArray *)specifiers { if (!_specifiers) _specifiers=[self loadSpecifiersFromPlistName:@"DockReturn" target:self]; return _specifiers; }
-- (id)getValue:(PSSpecifier *)s { CFPropertyListRef v=CFPreferencesCopyValue(CFSTR("statusDockReturnDelay"),CFSTR("com.yourname.sbcpufloating"),kCFPreferencesCurrentUser,kCFPreferencesAnyHost); return v?CFBridgingRelease(v):@5; }
-- (void)setValue:(id)value specifier:(PSSpecifier *)s { NSNumber *n=[value isKindOfClass:[NSNumber class]]?value:@([value integerValue]); if(!n)return; CFPreferencesSetValue(CFSTR("statusDockReturnDelay"),(__bridge CFPropertyListRef)n,CFSTR("com.yourname.sbcpufloating"),kCFPreferencesCurrentUser,kCFPreferencesAnyHost); CFPreferencesSynchronize(CFSTR("com.yourname.sbcpufloating"),kCFPreferencesCurrentUser,kCFPreferencesAnyHost); notify_post("com.yourname.sbcpufloating.prefschanged"); }
+
+- (NSArray *)specifiers {
+    if (!_specifiers) {
+        NSMutableArray *items = [NSMutableArray array];
+        [items addObject:[PSSpecifier groupSpecifierWithName:@"选择顶部拖动回位时间"]];
+        CFPropertyListRef raw = CFPreferencesCopyValue(CFSTR("statusDockReturnDelay"), CFSTR("com.yourname.sbcpufloating"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        NSInteger current = raw ? [(id)CFBridgingRelease(raw) integerValue] : 5;
+        for (NSInteger seconds = 1; seconds <= 10; seconds++) {
+            PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:[NSString stringWithFormat:@"%ld 秒", (long)seconds] target:self set:NULL get:NULL detail:nil cell:PSLinkCell edit:nil];
+            [row setProperty:@(seconds) forKey:@"returnDelayValue"];
+            [row setProperty:@(seconds == current) forKey:@"returnDelaySelected"];
+            [items addObject:row];
+        }
+        _specifiers = items;
+    }
+    return _specifiers;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
+    NSNumber *value = [specifier propertyForKey:@"returnDelayValue"];
+    if (!value) return;
+    CFPreferencesSetValue(CFSTR("statusDockReturnDelay"), (__bridge CFPropertyListRef)value, CFSTR("com.yourname.sbcpufloating"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    CFPreferencesSynchronize(CFSTR("com.yourname.sbcpufloating"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    notify_post("com.yourname.sbcpufloating.prefschanged");
+    [self.navigationController popViewControllerAnimated:YES];
+}
+
+- (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
+    PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
+    cell.accessoryType = [[specifier propertyForKey:@"returnDelaySelected"] boolValue] ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+}
 @end
