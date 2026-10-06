@@ -21,7 +21,7 @@
                                    [record[@"startPercent"] integerValue], [record[@"endPercent"] integerValue]];
                 NSString *detail = [NSString stringWithFormat:@"充入 %.0f mAh · 峰值 %.1f W",
                                     [record[@"batteryMah"] doubleValue], [record[@"peakInputW"] doubleValue]];
-                [result addObject:[PSSpecifier preferenceSpecifierNamed:title target:nil set:NULL get:NULL detail:detail cell:PSStaticTextCell edit:nil]];
+                [result addObject:[PSSpecifier preferenceSpecifierNamed:title target:nil set:NULL get:NULL detail:nil cell:PSStaticTextCell edit:nil]];
             }
         }
         _specifiers = result;
