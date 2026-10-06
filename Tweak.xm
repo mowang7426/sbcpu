@@ -66,6 +66,7 @@ static NSString *gScanMethod = @"";
 static NSString *gScanError = @"";
 static NSInteger gDylibCount = 0;
 static NSString *gDylibPath = @"";
+static NSMutableArray *gPluginCategories = nil; // 分类列表
 static void scanInstalledPlugins(void);
 static void onPluginScanRequested(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
 
