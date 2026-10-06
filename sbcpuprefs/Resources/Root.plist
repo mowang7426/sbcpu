@@ -5,12 +5,15 @@
 	<key>items</key>
 	<array>
 		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>浮窗状态</string>
-			<key>footerText</key>
-			<string>提示：关闭后浮窗将立即隐藏，详细参数请双击桌面的悬浮窗进行设置。</string>
+			<key>cell</key><string>PSLinkCell</string>
+			<key>label</key><string>浮窗全部设置</string>
+			<key>detail</key><string>SBCPUFloatingAdvancedController</string>
+			<key>isController</key><true/>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>浮窗状态</string>
+			<key>footerText</key><string>所有浮窗功能均可在“浮窗全部设置”中修改。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -160,16 +163,6 @@
 			<string></string>
 			<key>value</key>
 			<string>展开胶囊 / 消息直达</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSTitleValueCell</string>
-			<key>label</key>
-			<string>✌️ 双击浮窗</string>
-			<key>get</key>
-			<string></string>
-			<key>value</key>
-			<string>进入高级设置中心</string>
 		</dict>
 		<dict>
 			<key>cell</key>

@@ -123,8 +123,8 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, copy) NSString *title;
 @property (nonatomic, copy) NSString *message;
 @property (nonatomic, strong) NSDate *timestamp;
-@property (nonatomic, strong) NSDictionary *userInfoPayload; 
-@property (nonatomic, strong) id originalRequest; 
+@property (nonatomic, strong) NSDictionary *userInfoPayload;
+@property (nonatomic, strong) id originalRequest;
 @end
 @implementation SBNotifReq
 @end
@@ -162,14 +162,14 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 // 液态玻璃厚度层：半透明白色 tint，遮挡背景提升可读性
 @property (nonatomic, strong) CALayer *glassTintLayer;
 @property (nonatomic, strong) NSTimer *adaptiveTimer; // 实时背景采样反色定时器
-@property (nonatomic, strong) UIView *horizontalDiv; 
+@property (nonatomic, strong) UIView *horizontalDiv;
 
-@property (nonatomic, strong) UIView *performanceContainer; 
+@property (nonatomic, strong) UIView *performanceContainer;
 @property (nonatomic, strong) UILabel *cpuTitleLabel;
 @property (nonatomic, strong) UILabel *cpuValueLabel;
 @property (nonatomic, strong) UILabel *cpuFreqLabel;
 @property (nonatomic, strong) UIView *div1;
-@property (nonatomic, strong) UILabel *fpsTitleLabel; 
+@property (nonatomic, strong) UILabel *fpsTitleLabel;
 @property (nonatomic, strong) UILabel *fpsValueLabel;
 @property (nonatomic, strong) UILabel *fpsSubLabel;
 @property (nonatomic, strong) UIView *divFps;
@@ -178,7 +178,7 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) UILabel *batterySubLabel;
 @property (nonatomic, strong) UIView *div2;
 
-@property (nonatomic, strong) UIImageView *tempIconView; 
+@property (nonatomic, strong) UIImageView *tempIconView;
 @property (nonatomic, strong) UILabel *tempValueLabel;
 @property (nonatomic, strong) UILabel *tempSubLabel;
 @property (nonatomic, strong) UIView *div3;
@@ -186,7 +186,7 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) UILabel *currentValueLabel;
 @property (nonatomic, strong) UILabel *currentSubLabel;
 @property (nonatomic, strong) UIView *bottomCapsule;
-@property (nonatomic, strong) UIView *batteryProgressView; 
+@property (nonatomic, strong) UIView *batteryProgressView;
 @property (nonatomic, strong) UILabel *statusLabel;
 // 实时温控状态：直接读取 SBCPUThermal 的诊断通知，不依赖设置页面缓存。
 @property (nonatomic, strong) UILabel *thermalStatusLabel;
@@ -291,10 +291,10 @@ static UIWindow *cpuWindow = nil;
 static SBCPUFloatingView *floatingView = nil;
 static SBCPUDetailViewController *detailVC = nil;
 
-static BOOL isEnabled = YES; 
+static BOOL isEnabled = YES;
 static CGFloat floatingScale = 1.0;
 static CGFloat floatingFontSize = 13.0;
-static CGFloat floatingCornerRadius = 20.0f; // 液态玻璃圆润大圆角（可在插件设置里改） 
+static CGFloat floatingCornerRadius = 20.0f; // 液态玻璃圆润大圆角（可在插件设置里改）
 
 static BOOL settingsShowing = NO;
 static BOOL detailShowing = NO;
@@ -302,12 +302,12 @@ static BOOL previousChargingState = NO;
 
 static BOOL autoCollapseEnable = YES;
 static NSInteger autoCollapseDelay = 4;
-static NSInteger collapsedDisplayMode = 0; 
+static NSInteger collapsedDisplayMode = 0;
 static BOOL autoExpandLandscape = YES;
 static BOOL compactLandscapeCapsule = NO; // 横屏迷你胶囊：开启后收成竖屏式单段（仅 CPU），不碍眼
 // 横屏模式：修正 iPad 开启横屏锁定后系统仍返回 Portrait 导致浮窗竖着的问题。
 static BOOL landscapeModeEnable = YES;
-static BOOL wasLandscape = NO; 
+static BOOL wasLandscape = NO;
 
 static BOOL autoLogoutEnable = NO;
 static double logoutCPUThreshold = 100.0;
@@ -316,7 +316,7 @@ static NSDate *cpuHighStartTime = nil;
 static BOOL logoutCounting = NO;
 
 static BOOL floatingAlphaEnable = YES;
-static CGFloat floatingAlpha = 0.85f; 
+static CGFloat floatingAlpha = 0.85f;
 
 static BOOL keyboardAvoidEnable = YES;
 static BOOL smartDockEnable = YES;
@@ -337,7 +337,7 @@ static BOOL statusDockShowSIM1 = NO;
 static BOOL statusDockShowSIM2 = NO;
 
 static BOOL showCpuFrequency = YES;
-static BOOL showFps = YES;                       
+static BOOL showFps = YES;
 static BOOL showSignalStrength = YES; // 📶 浮窗底部显示 SIM 卡信号（V4.18.0）
 
 
@@ -384,7 +384,7 @@ static BOOL blockPowerEnable = NO;             // V4.21 — 阻止外部供电�
 static BOOL chargeKeepAC = YES;                // V4.25 — 达到上限时保留外部供电（只停充不断 AC）
 static BOOL gSmartChargeHoldDisplay = NO; // V4.34：CH0I 停充时仍保持浮窗充电布局
 static BOOL chargeOverrideOBC = NO;            // V4.25 — 覆盖系统"优化电池充电"接管（OBC）
-// 双击浮窗设置：智能温度停充（独立于 CPU thermalmonitord 温控）
+// 智能温度停充（独立于 CPU thermalmonitord 温控）
 static BOOL smartThermalChargeEnable = NO;
 static NSInteger smartThermalUpperC = 42;
 static NSInteger smartThermalLowerC = 38;
@@ -441,7 +441,6 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate);
 static void updateFloatingSize(void);
 static void createCPUWindow(void);
 static void openDetailView(void);
-static void openSettings(void);
 static void checkHighCPU(double cpu);
 static void updateCPU(void);
 
@@ -972,24 +971,24 @@ static void applyFloatingAlpha(void) {
 static void LoadPreferences(void) {
     CFPreferencesAppSynchronize(kPrefAppID);
 
-    isEnabled = getBoolPref(CFSTR("isEnabled"), YES); 
+    isEnabled = getBoolPref(CFSTR("isEnabled"), YES);
     autoCollapseEnable = getBoolPref(CFSTR("autoCollapseEnable"), YES);
     autoCollapseDelay = getIntPref(CFSTR("autoCollapseDelay"), 4);
     collapsedDisplayMode = getIntPref(CFSTR("collapsedDisplayMode"), 0);
     autoExpandLandscape = getBoolPref(CFSTR("autoExpandLandscape"), YES);
     compactLandscapeCapsule = getBoolPref(CFSTR("compactLandscapeCapsule"), NO);
-    landscapeModeEnable = getBoolPref(CFSTR("landscapeModeEnable"), YES); 
-    
+    landscapeModeEnable = getBoolPref(CFSTR("landscapeModeEnable"), YES);
+
     autoLogoutEnable = getBoolPref(CFSTR("autoLogoutEnable"), NO);
     logoutCPUThreshold = (double)getFloatPref(CFSTR("logoutCPUThreshold"), 100.0);
     logoutDuration = getIntPref(CFSTR("logoutDuration"), 60);
-    
+
     floatingAlphaEnable = getBoolPref(CFSTR("floatingAlphaEnable"), YES);
     floatingAlpha = getFloatPref(CFSTR("floatingAlpha"), 0.85f);
     floatingScale = getFloatPref(CFSTR("floatingScale"), 1.0f);
     floatingFontSize = getFloatPref(CFSTR("floatingFontSize"), 13.0f);
     floatingCornerRadius = getFloatPref(CFSTR("floatingCornerRadius"), 16.0f);
-    
+
     keyboardAvoidEnable = getBoolPref(CFSTR("keyboardAvoidEnable"), YES);
     smartDockEnable = getBoolPref(CFSTR("smartDockEnable"), YES);
     dockMode = getIntPref(CFSTR("dockMode"), 0);
@@ -1005,11 +1004,11 @@ static void LoadPreferences(void) {
     statusDockShowBattery = getBoolPref(CFSTR("statusDockShowBattery"), YES);
     statusDockShowSIM1 = getBoolPref(CFSTR("statusDockShowSIM1"), NO);
     statusDockShowSIM2 = getBoolPref(CFSTR("statusDockShowSIM2"), NO);
-    
+
     showCpuFrequency = getBoolPref(CFSTR("showCpuFrequency"), YES);
     showFps = getBoolPref(CFSTR("showFps"), YES);
     showSignalStrength = getBoolPref(CFSTR("showSignalStrength"), YES);
-    
+
     showBatteryPercent = getBoolPref(CFSTR("showBatteryPercent"), YES);
     showBatteryTemperature = getBoolPref(CFSTR("showBatteryTemperature"), YES);
     showBatteryCurrent = getBoolPref(CFSTR("showBatteryCurrent"), YES);
@@ -1049,11 +1048,11 @@ static void LoadPreferences(void) {
     if (glassDimOpacity < 0.40f) glassDimOpacity = 0.90f; // 旧版语义（白雾透明度）迁移为玻璃不透明度
     glassBlurRadius = getFloatPref(CFSTR("glassBlurRadius"), 50.0f);
     glassCardOpacity = getFloatPref(CFSTR("glassCardOpacity"), 0.80f);
-    
+
     chargeBoostEnable = getBoolPref(CFSTR("chargeBoostEnable"), NO);
     forceFastChargeEnable = getBoolPref(CFSTR("forceFastChargeEnable"), NO);
     suppressPartRepairEnabled = getBoolPref(CFSTR("suppressPartRepair"), NO);
-    
+
     notificationEnable = getBoolPref(CFSTR("notificationEnable"), YES);
     wechatEnable = getBoolPref(CFSTR("wechatEnable"), YES);
     qqEnable = getBoolPref(CFSTR("qqEnable"), YES);
@@ -1082,7 +1081,7 @@ static void SavePreferencesAndNotify(void) {
     setIntPref(CFSTR("collapsedDisplayMode"), collapsedDisplayMode);
     setBoolPref(CFSTR("autoExpandLandscape"), autoExpandLandscape);
     setBoolPref(CFSTR("compactLandscapeCapsule"), compactLandscapeCapsule);
-    setBoolPref(CFSTR("landscapeModeEnable"), landscapeModeEnable); 
+    setBoolPref(CFSTR("landscapeModeEnable"), landscapeModeEnable);
     setBoolPref(CFSTR("autoLogoutEnable"), autoLogoutEnable);
     setFloatPref(CFSTR("logoutCPUThreshold"), (float)logoutCPUThreshold);
     setIntPref(CFSTR("logoutDuration"), logoutDuration);
@@ -1135,7 +1134,7 @@ static void SavePreferencesAndNotify(void) {
     setArrayPref(CFSTR("lockCleanupWhitelist"), lockCleanupWhitelist);
     setBoolPref(CFSTR("landscapeNotificationEnable"), landscapeNotificationEnable);
     setIntPref(CFSTR("notificationDuration"), notificationDuration);
-    
+
     CFPreferencesSynchronize(kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
 
     if (showFps || collapsedDisplayMode == 1) {
@@ -1144,7 +1143,7 @@ static void SavePreferencesAndNotify(void) {
         [[SBCPUFPSHelper sharedInstance] stopMonitoring];
     }
 CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), kPrefChangedNotification, NULL, NULL, YES);
-    
+
 
 }
 
@@ -1995,20 +1994,20 @@ static double getTotalCPUUsage(void) {
     mach_msg_type_number_t count;
     static host_cpu_load_info_data_t previous_info = {0, 0, 0, 0};
     host_cpu_load_info_data_t info;
-    
+
     count = HOST_CPU_LOAD_INFO_COUNT;
     kr = host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, (host_info_t)&info, &count);
     if (kr != KERN_SUCCESS) return 0.0;
-    
+
     natural_t user   = info.cpu_ticks[CPU_STATE_USER] - previous_info.cpu_ticks[CPU_STATE_USER];
     natural_t system = info.cpu_ticks[CPU_STATE_SYSTEM] - previous_info.cpu_ticks[CPU_STATE_SYSTEM];
     natural_t idle   = info.cpu_ticks[CPU_STATE_IDLE] - previous_info.cpu_ticks[CPU_STATE_IDLE];
     natural_t nice   = info.cpu_ticks[CPU_STATE_NICE] - previous_info.cpu_ticks[CPU_STATE_NICE];
-    
+
     previous_info = info;
     double totalTicks = user + system + idle + nice;
     if (totalTicks <= 0.0) return 0.0;
-    
+
     double cpuUsage = (user + system + nice) / totalTicks * 100.0;
     return cpuUsage;
 }
@@ -2332,7 +2331,7 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
         CGFloat targetH = statusBarDockEnable ? statusBarDockCapsuleHeight() : 28.0f;
         CGFloat targetHalfW = targetW / 2.0f;
         CGFloat targetHalfH = targetH / 2.0f;
-        
+
         CGFloat colMinX = targetHalfW + 4.0f;
         CGFloat colMaxX = containerBounds.size.width - targetHalfW - 4.0f;
         CGFloat colMinY = targetHalfH + floatingTopSafeMargin(floatingView.superview);
@@ -2350,10 +2349,10 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
         // 状态栏吸附：浮窗整体停在顶部安全区域内，横向位置仍可拖动。
         targetCenter.y = minY;
     } else if (smartDockEnable) {
-        if (dockMode == 1) { targetCenter.x = minX; } 
-        else if (dockMode == 2) { targetCenter.x = maxX; } 
-        else if (dockMode == 3) { targetCenter.y = minY; } 
-        else if (dockMode == 4) { targetCenter.y = maxY; } 
+        if (dockMode == 1) { targetCenter.x = minX; }
+        else if (dockMode == 2) { targetCenter.x = maxX; }
+        else if (dockMode == 3) { targetCenter.y = minY; }
+        else if (dockMode == 4) { targetCenter.y = maxY; }
         else if (dockMode == 0) {
             CGFloat distLeft = targetCenter.x - minX;
             CGFloat distRight = maxX - targetCenter.x;
@@ -2450,8 +2449,7 @@ static void createCPUWindow(void) {
     cpuWindow = [[SBCPUWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     cpuWindow.windowScene = scene;
     // 主浮窗必须始终位于普通 App 窗口之上。
-    // 双击设置页仍在此窗口内展示；不要为了降低设置页层级而牺牲主浮窗置顶。
-    // 使用高于系统 Alert 的自定义层级，避免打开任意 App 后浮窗被压住。
+
     cpuWindow.windowLevel = UIWindowLevelAlert + 100.0;
     cpuWindow.backgroundColor = UIColor.clearColor;
     cpuWindow.opaque = NO;
@@ -2492,28 +2490,6 @@ static void openDetailView(void) {
     [root presentViewController:detailVC animated:YES completion:nil];
 }
 
-static void openSettings(void) {
-    if (settingsShowing || !cpuWindow || !cpuWindow.rootViewController) return;
-
-    UIViewController *root = cpuWindow.rootViewController;
-    if (root.presentedViewController) {
-        [root.presentedViewController dismissViewControllerAnimated:NO completion:nil];
-    }
-
-    settingsShowing = YES;
-    SBCPUSettingsController *vc = [[SBCPUSettingsController alloc] initWithStyle:UITableViewStyleInsetGrouped];
-    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
-
-    // V4.41：双击浮窗打开真正的全屏设置页，使用系统安全区和导航栏。
-    nav.modalPresentationStyle = UIModalPresentationOverFullScreen;
-    nav.modalTransitionStyle = UIModalTransitionStyleCoverVertical;
-    nav.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
-    nav.view.layer.cornerRadius = 0.0f;
-    nav.view.layer.borderWidth = 0.0f;
-    nav.view.clipsToBounds = YES;
-
-    [root presentViewController:nav animated:YES completion:nil];
-}
 
 static void checkHighCPU(double cpu) {
     if (!autoLogoutEnable || cpu < logoutCPUThreshold) {
@@ -2603,7 +2579,7 @@ static void updateCPU(void) {
         if (autoExpandLandscape) {
             UIInterfaceOrientation orientation = getEffectiveFloatingOrientation();
             BOOL isLandscape = (orientation == UIInterfaceOrientationLandscapeLeft || orientation == UIInterfaceOrientationLandscapeRight);
-            
+
             if (isLandscape && !wasLandscape && !floatingView.isCollapsed && !floatingView.isShowingNotification) {
                 // 横屏（游戏）自动缩小为迷你胶囊（CPU/FPS/电量/温度），替代原自动展开大浮窗
                 [floatingView collapseToEdgeAnimated:YES];
@@ -2643,12 +2619,12 @@ static void updateCPU(void) {
             floatingView.statusDot.backgroundColor = floatingView.statusLabel.textColor;
         }
 
-        [floatingView updateDataWithCPU:cpu 
+        [floatingView updateDataWithCPU:cpu
                                 cpuFreq:cpuFreq
-                                    fps:fps 
-                                battery:battery 
-                                   temp:temp 
-                                current:current 
+                                    fps:fps
+                                battery:battery
+                                   temp:temp
+                                current:current
                              isCharging:charging];
 
         if (chargingStateChanged) updateFloatingSize();
@@ -2676,7 +2652,7 @@ static void updateCPU(void) {
         NSString *title = [content valueForKey:@"title"];
         if (!title || title.length == 0) title = [content valueForKey:@"subtitle"];
         NSString *message = [content valueForKey:@"message"];
-        
+
         NSDictionary *payload = nil;
         @try {
             id userNotif = [req respondsToSelector:@selector(userNotification)] ? [req performSelector:@selector(userNotification)] : nil;
@@ -2686,7 +2662,7 @@ static void updateCPU(void) {
                 info = [bulletin respondsToSelector:@selector(userInfo)] ? [bulletin performSelector:@selector(userInfo)] : nil;
             }
             if (info && [info isKindOfClass:[NSDictionary class]]) {
-                payload = [[NSDictionary alloc] initWithDictionary:info]; 
+                payload = [[NSDictionary alloc] initWithDictionary:info];
             }
         } @catch (NSException *e) {}
 
@@ -2694,20 +2670,20 @@ static void updateCPU(void) {
         static NSString *lastMessage = nil;
         static NSTimeInterval lastTime = 0;
         NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
-        
+
         if ([title isEqualToString:lastTitle] && [message isEqualToString:lastMessage] && (now - lastTime < 1.0)) {
-            return; 
+            return;
         }
         lastTitle = title; lastMessage = message; lastTime = now;
-        
+
         SBNotifReq *notif = [[SBNotifReq alloc] init];
-        notif.bundleID = bundleID; 
-        notif.title = title ?: @"新消息"; 
+        notif.bundleID = bundleID;
+        notif.title = title ?: @"新消息";
         notif.message = message ?: @"";
         notif.timestamp = [NSDate date];
-        notif.userInfoPayload = payload; 
+        notif.userInfoPayload = payload;
         notif.originalRequest = req;
-        
+
         [self handleNewNotification:notif];
     } @catch (NSException *e) {}
 }
@@ -2725,13 +2701,13 @@ static void updateCPU(void) {
     if (wechatEnable && [req.bundleID isEqualToString:@"com.tencent.xin"]) shouldShow = YES;
     if (qqEnable && [req.bundleID.lowercaseString containsString:@"qq"]) shouldShow = YES;
     if (timEnable && [req.bundleID isEqualToString:@"com.tencent.tim"]) shouldShow = YES;
-    
+
     if (!shouldShow) return;
-    
+
     dispatch_async(dispatch_get_main_queue(), ^{
         [historyNotifications insertObject:req atIndex:0];
         if (historyNotifications.count > 20) [historyNotifications removeLastObject];
-        
+
         if (floatingView) {
             [floatingView.notificationQueue addObject:req];
             if (!floatingView.isShowingNotification) {
@@ -3081,7 +3057,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _isCollapsed = NO;
         _isShowingNotification = NO;
         _notificationQueue = [[NSMutableArray alloc] init];
-        
+
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         pan.delegate = self;
         [self addGestureRecognizer:pan];
@@ -3090,11 +3066,6 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         self.singleTapGesture.delegate = self;
         [self addGestureRecognizer:self.singleTapGesture];
 
-        UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleDoubleTap:)];
-        doubleTap.numberOfTapsRequired = 2;
-        doubleTap.delegate = self;
-        [self addGestureRecognizer:doubleTap];
-        [self.singleTapGesture requireGestureRecognizerToFail:doubleTap];
 
         self.longPressGesture = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
         self.longPressGesture.minimumPressDuration = 0.6;
@@ -3189,7 +3160,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
 
         UIView *content = _glassContentView;
         content.userInteractionEnabled = NO;
-        
+
         _horizontalDiv = [[UIView alloc] init];
         _horizontalDiv.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.12f];
         _horizontalDiv.hidden = YES;
@@ -3200,7 +3171,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         [content addSubview:_performanceContainer];
 
         UIColor *titleGrayColor = [UIColor colorWithWhite:0.35 alpha:1.0f];
-        
+
         _cpuTitleLabel = [[UILabel alloc] init];
         _cpuTitleLabel.text = @"CPU";
         _cpuTitleLabel.textColor = titleGrayColor;
@@ -3208,7 +3179,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         [_performanceContainer addSubview:_cpuTitleLabel];
 
         _cpuValueLabel = [[UILabel alloc] init];
-        _cpuValueLabel.textColor = [UIColor colorWithRed:0.18f green:0.75f blue:0.35f alpha:1.0f]; 
+        _cpuValueLabel.textColor = [UIColor colorWithRed:0.18f green:0.75f blue:0.35f alpha:1.0f];
         _cpuValueLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
         _cpuValueLabel.adjustsFontSizeToFitWidth = YES;
         _cpuValueLabel.minimumScaleFactor = 0.5f;
@@ -3424,7 +3395,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _statusDot.backgroundColor = [UIColor blackColor];
         [_collapsedContainerView addSubview:_statusDot];
 
-        _miniCpuLabel = [[UILabel alloc] initWithFrame:CGRectMake(22, 5, 45, 18)]; 
+        _miniCpuLabel = [[UILabel alloc] initWithFrame:CGRectMake(22, 5, 45, 18)];
         _miniCpuLabel.textColor = [UIColor blackColor];
         _miniCpuLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
         _miniCpuLabel.textAlignment = NSTextAlignmentLeft;
@@ -3460,7 +3431,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _miniDockInfoLabel.minimumScaleFactor = 0.55f;
         _miniDockInfoLabel.hidden = YES;
         [_collapsedContainerView addSubview:_miniDockInfoLabel];
-        
+
         _notificationContainer = [[UIView alloc] initWithFrame:content.bounds];
         _notificationContainer.userInteractionEnabled = NO;
         _notificationContainer.alpha = 0.0;
@@ -3475,7 +3446,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _notifMessageLabel = [[UILabel alloc] init];
         _notifMessageLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
         _notifMessageLabel.textColor = [UIColor colorWithWhite:0.15 alpha:1.0];
-        _notifMessageLabel.numberOfLines = 1; 
+        _notifMessageLabel.numberOfLines = 1;
         [_notificationContainer addSubview:_notifMessageLabel];
 
         _badgeLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, -6, 20, 14)];
@@ -3525,20 +3496,20 @@ return self;
             if (targetReq) {
                 NSString *bundleID = targetReq.bundleID;
                 NSDictionary *userInfo = targetReq.userInfoPayload;
-                id rawRequest = targetReq.originalRequest; 
-                
+                id rawRequest = targetReq.originalRequest;
+
                 // 点击通知后，彻底结束本次通知状态。
                 // 特别重要：必须取消通知定时器，否则 5 秒后 hideNotification
                 // 仍会使用 wasCollapsedBeforeNotification 再次把浮窗折叠。
                 [self.notificationTimer invalidate];
                 self.notificationTimer = nil;
                 self.wasCollapsedBeforeNotification = NO;
-                
+
                 self.badgeLabel.hidden = YES;
                 self.isShowingNotification = NO;
                 self.currentNotification = nil;
                 [historyNotifications removeAllObjects];
-                
+
                 if (autoCollapseEnable) {
                     [self collapseToEdgeAnimated:YES];
                 } else {
@@ -3549,7 +3520,7 @@ return self;
                                     showBatteryCurrent:showBatteryCurrent
                                             isCharging:isChargingInternal()];
                 }
-                
+
                 dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
                     dispatch_async(dispatch_get_main_queue(), ^{
                         BOOL opened = NO;
@@ -3560,7 +3531,7 @@ return self;
                                 if (defaultAction && [defaultAction respondsToSelector:@selector(actionRunner)]) {
                                     id runner = [defaultAction performSelector:@selector(actionRunner)];
                                     if (runner && [runner respondsToSelector:@selector(executeAction:fromOrigin:endpoint:withParameters:completion:)]) {
-                                        
+
                                         void (^completionBlock)(BOOL) = ^(BOOL success) {};
                                         [runner executeAction:defaultAction fromOrigin:@"NCNotificationDestinationBanner" endpoint:nil withParameters:nil completion:completionBlock];
                                         opened = YES;
@@ -3573,27 +3544,27 @@ return self;
                             @try {
                                 id fbsServiceClass = NSClassFromString(@"FBSOpenApplicationService");
                                 id fbsOptionsClass = NSClassFromString(@"FBSOpenApplicationOptions");
-                                
+
                                 if (fbsServiceClass && fbsOptionsClass) {
                                     id fbsService = [fbsServiceClass performSelector:@selector(sharedInstance)];
                                     if ([fbsService respondsToSelector:@selector(openApplication:withOptions:completion:)]) {
                                         NSMutableDictionary *dict = [NSMutableDictionary dictionary];
-                                        dict[@"__UnlockPrompt"] = @YES; 
+                                        dict[@"__UnlockPrompt"] = @YES;
                                         if (userInfo) {
                                             dict[@"__Payload"] = userInfo;
                                             dict[@"bks-open-application-options-notification-payload"] = userInfo;
                                             dict[@"UIApplicationOpenURLOptionsAnnotationKey"] = userInfo;
                                         }
                                         id fbsOptions = [fbsOptionsClass performSelector:@selector(optionsWithDictionary:) withObject:dict];
-                                        
-                                        void (^completionBlock)(id) = ^(id error) {}; 
+
+                                        void (^completionBlock)(id) = ^(id error) {};
                                         [fbsService openApplication:bundleID withOptions:fbsOptions completion:completionBlock];
                                         opened = YES;
                                     }
                                 }
                             } @catch (NSException *e) {}
                         }
-                        
+
                         if (!opened) {
                             @try {
                                 id lsawClass = NSClassFromString(@"LSApplicationWorkspace");
@@ -3607,13 +3578,13 @@ return self;
                         }
                     });
                 });
-                
+
                 UIImpactFeedbackGenerator *g = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
                 [g prepare]; [g impactOccurred];
                 return;
             }
         }
-        
+
         if (self.isCollapsed) {
             [self expandFromEdgeAnimated:YES];
         } else {
@@ -3667,16 +3638,6 @@ return self;
             clampAndPositionFloatingView(self.center, YES);
         }
         [self resetInactivityTimer];
-    }
-}
-
-- (void)handleDoubleTap:(UITapGestureRecognizer *)tap {
-    if (tap.state == UIGestureRecognizerStateEnded) {
-        // V4.35.3：双击打开设置时给一次轻触反馈，明确区分于单击展开/收起。
-        UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
-        [generator prepare];
-        [generator impactOccurred];
-        dispatch_async(dispatch_get_main_queue(), ^{ openSettings(); });
     }
 }
 
@@ -3809,7 +3770,7 @@ return self;
                     showBatteryTemp:(BOOL)showTemp
                  showBatteryCurrent:(BOOL)showCurrent
                          isCharging:(BOOL)isCharging {
-    
+
     if (self.isCollapsed && !self.isShowingNotification) return;
 
     BOOL hasUnread = (historyNotifications.count > 0 && !self.isShowingNotification);
@@ -3842,7 +3803,7 @@ return self;
     _bottomCapsule.hidden = !isCharging;
 
     CGFloat currentX = 14.0f;
-    CGFloat padY = 6.0f; 
+    CGFloat padY = 6.0f;
 
     CGFloat cpuW = 46.0f;
     _cpuTitleLabel.frame = CGRectMake(currentX, padY, cpuW, 12);
@@ -3893,7 +3854,7 @@ return self;
 
     if (showTemp) {
         CGFloat tempW = 54.0f;
-        _tempIconView.frame = CGRectMake(currentX + 2, padY + 10, 16, 16); 
+        _tempIconView.frame = CGRectMake(currentX + 2, padY + 10, 16, 16);
         _tempValueLabel.frame = CGRectMake(currentX + 20, padY + 10, tempW - 20, 16);
         _tempSubLabel.frame = CGRectMake(currentX + 20, padY + 27, tempW - 20, 12);
         currentX += tempW + 4.0f;
@@ -3913,11 +3874,11 @@ return self;
         currentX += curW + 4.0f;
     }
 
-    CGFloat finalW = currentX + 10.0f; 
+    CGFloat finalW = currentX + 10.0f;
     if (finalW < 40.0f) finalW = 40.0f;
-    if (showCombinedMode && finalW < 240.0f) finalW = 240.0f; 
-    
-    CGFloat currentY = padY + 44.0f; 
+    if (showCombinedMode && finalW < 240.0f) finalW = 240.0f;
+
+    CGFloat currentY = padY + 44.0f;
 
     if (isCharging) {
         currentY += 4.0f;
@@ -3969,12 +3930,12 @@ return self;
         if ([req.bundleID isEqualToString:@"com.tencent.xin"]) { appName = @"微信"; icon = @"🟢"; }
         else if ([req.bundleID.lowercaseString containsString:@"qq"]) { appName = @"QQ"; icon = @"🔵"; }
         else if ([req.bundleID isEqualToString:@"com.tencent.tim"]) { appName = @"TIM"; icon = @"🔷"; }
-        
+
         NSUInteger count = historyNotifications.count;
         if (count == 0 && self.currentNotification) count = 1;
-        
+
         self.notifAppNameLabel.text = [NSString stringWithFormat:@"%@ %@ • %@", icon, appName, req.title];
-        
+
         BOOL isLocked = NO;
         Class lockClass = NSClassFromString(@"SBLockScreenManager");
         if (lockClass && [lockClass respondsToSelector:@selector(sharedInstance)]) {
@@ -3996,13 +3957,13 @@ return self;
         self.notificationContainer.alpha = 0.0;
     }
 
-    currentY += 8.0f; 
+    currentY += 8.0f;
 
     if (!self.badgeLabel.hidden) {
         UIView *parent = self.superview;
         CGFloat screenW = parent ? parent.bounds.size.width : [UIScreen mainScreen].bounds.size.width;
         BOOL isLeft = (self.center.x <= screenW / 2.0f);
-        
+
         CGFloat badgeW = 20.0f;
         CGFloat targetBadgeX = isLeft ? (finalW - badgeW/2.0f - 4.0f) : (-badgeW/2.0f + 4.0f);
         self.badgeLabel.frame = CGRectMake(targetBadgeX, -6.0f, badgeW, 14.0f);
@@ -4012,10 +3973,10 @@ return self;
     if (_blurView) _blurView.frame = _glassSurfaceView.bounds;
     _glassContentView.frame = _glassSurfaceView.bounds;
     [self refreshNativeLiquidGlass];
-    
+
     CGFloat cornerRad = floatingCornerRadius;
     if (cornerRad > currentY / 2.0f) cornerRad = currentY / 2.0f;
-    
+
     _glassSurfaceView.layer.cornerRadius = cornerRad;
     if (_blurView) {
         _blurView.layer.cornerRadius = cornerRad;
@@ -4121,9 +4082,9 @@ return self;
         if (autoExpandLandscape) {
             UIInterfaceOrientation orientation = getEffectiveFloatingOrientation();
             BOOL isLandscape = (orientation == UIInterfaceOrientationLandscapeLeft || orientation == UIInterfaceOrientationLandscapeRight);
-            if (isLandscape) return; 
+            if (isLandscape) return;
         }
-        
+
         _inactivityTimer = [NSTimer scheduledTimerWithTimeInterval:autoCollapseDelay
                                                              target:self
                                                            selector:@selector(inactivityTimerFired)
@@ -4242,10 +4203,10 @@ return self;
             _miniTempLabel.hidden = YES;
             _statusDot.hidden = NO;
         }
-        
+
         CGFloat cornerRad = floatingCornerRadius;
         if (cornerRad > targetH / 2.0f) cornerRad = targetH / 2.0f;
-        
+
         self.glassSurfaceView.layer.cornerRadius = cornerRad;
         self.bounds = CGRectMake(0, 0, targetW, targetH);
         self.glassContentView.frame = self.glassSurfaceView.bounds;
@@ -4436,7 +4397,7 @@ return self;
 
     BOOL isLeft = (self.center.x <= containerBounds.size.width / 2.0f);
     CGFloat targetX = isLeft ? (expandedHalfW + 4.0f) : (containerBounds.size.width - expandedHalfW - 4.0f);
-    
+
     CGFloat minY = expandedHalfH + floatingTopSafeMargin(parent);
     CGFloat maxY = containerBounds.size.height - expandedHalfH - 10.0f;
     CGFloat targetY = MIN(MAX(self.center.y, minY), maxY);
@@ -4521,7 +4482,7 @@ return self;
 
         self.collapsedContainerView.alpha = 0.0;
         self.horizontalDiv.alpha = 1.0;
-        
+
         for (UIView *v in self.performanceContainer.subviews) {
             if (v != self.collapsedContainerView && !v.hidden) v.alpha = 1.0;
         }
@@ -4618,30 +4579,30 @@ return self;
         [self showNotification:self.notificationQueue.firstObject];
         return;
     }
-    
+
     self.isShowingNotification = NO;
     self.currentNotification = nil;
-    
+
     if (self.wasCollapsedBeforeNotification) {
         [self collapseToEdgeAnimated:YES];
     } else {
         [self resetInactivityTimer];
         [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0.5 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:^{
-            updateFloatingSize(); 
+            updateFloatingSize();
         } completion:^(BOOL finished) {
             [self resetInactivityTimer];
         }];
     }
 }
 
-- (void)updateDataWithCPU:(double)cpu 
+- (void)updateDataWithCPU:(double)cpu
                   cpuFreq:(double)cpuFreq
                       fps:(double)fps
-                  battery:(NSInteger)battery 
-                     temp:(double)temp 
-                  current:(double)current 
+                  battery:(NSInteger)battery
+                     temp:(double)temp
+                  current:(double)current
                isCharging:(BOOL)isCharging {
-    
+
     _cpuValueLabel.text = [NSString stringWithFormat:@"%.1f%%", cpu];
     _cpuValueLabel.textColor = (cpu >= 80.0) ? [UIColor systemRedColor] : [UIColor colorWithRed:0.18f green:0.75f blue:0.35f alpha:1.0f];
 
@@ -4680,7 +4641,7 @@ return self;
     if (showSignalStrength && !fastChargeStartupAnimating) {
         _signalLabel.text = getSignalInfoString();
     }
-    
+
     if (!fastChargeStartupAnimating) {
         if (smartChargeEnable || blockChargingEnable || blockPowerEnable) {
             // V4.22：从 daemon 读真实引擎状态（节流 3s，避免每秒 socket）
@@ -4763,7 +4724,7 @@ return self;
         CGFloat capsuleW = _bottomCapsule.bounds.size.width;
         CGFloat capsuleH = _bottomCapsule.bounds.size.height > 0 ? _bottomCapsule.bounds.size.height : 14.0f;
         CGFloat targetProgressW = MAX(0, MIN(capsuleW, capsuleW * (battery / 100.0f)));
-        
+
         [UIView animateWithDuration:0.35 animations:^{
             self.batteryProgressView.frame = CGRectMake(0, 0, targetProgressW, capsuleH);
         }];
@@ -4815,7 +4776,7 @@ return self;
             _miniTempLabel.text = (temp > 0) ? [NSString stringWithFormat:@"%.0f°", temp] : @"--°";
         }
     }
-    
+
     if (YES) {
         UIColor *statusColor = [UIColor darkGrayColor];
         if (isCharging) {
@@ -5449,7 +5410,7 @@ static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
     [contentView addSubview:cellBtn];
 
     UIView *line = [[UIView alloc] initWithFrame:CGRectMake(0, 40, panelW, 0.5)];
-    line.backgroundColor = [UIColor colorWithWhite:0 alpha:0.1]; 
+    line.backgroundColor = [UIColor colorWithWhite:0 alpha:0.1];
     [contentView addSubview:line];
 
     CGFloat colW = (panelW - 20) / 2.0;
@@ -5640,9 +5601,9 @@ static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
 
     _labelsDict[@"设备名称"].text = [NSString stringWithUTF8String:spec.modelName];
     _labelsDict[@"软件版本"].text = [UIDevice currentDevice].systemVersion;
-    
+
     _labelsDict[@"网络信息"].text = getNetworkType();
-    
+
     NSString *address = @"127.0.0.1";
     struct ifaddrs *interfaces = NULL;
     struct ifaddrs *temp_addr = NULL;
@@ -5753,12 +5714,12 @@ static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
         pluginIndex = indexPath.row - 1; // 回退：假设没有冲突警告
     }
     if (pluginIndex < 0 || pluginIndex >= (NSInteger)gInstalledPlugins.count) return;
-    
+
     NSDictionary *plugin = gInstalledPlugins[pluginIndex];
     NSString *name = plugin[@"name"] ?: @"未知";
     NSString *category = plugin[@"category"] ?: @"其他";
     NSArray *injected = plugin[@"injectedBundles"] ?: @[];
-    
+
     NSString *message;
     if (injected.count > 0) {
         NSMutableString *bundleStr = [NSMutableString string];
@@ -5772,7 +5733,7 @@ static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
     } else {
         message = [NSString stringWithFormat:@"分类：%@\n注入进程：无（全局注入或未配置Filter）", category];
     }
-    
+
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:name message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
     // 直接用 self present，最简单可靠
@@ -5837,15 +5798,15 @@ static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
     self.tableView.separatorColor = [UIColor colorWithWhite:0.85 alpha:1.0];
 }
 
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { 
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     (void)tableView;
     (void)section;
-    return 7; 
+    return 7;
 }
-- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { 
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView;
     (void)section;
-    return @"CPU 触发值"; 
+    return @"CPU 触发值";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -5879,15 +5840,15 @@ static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
     self.tableView.separatorColor = [UIColor colorWithWhite:0.85 alpha:1.0];
 }
 
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { 
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     (void)tableView;
     (void)section;
-    return 7; 
+    return 7;
 }
-- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { 
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView;
     (void)section;
-    return @"持续时间"; 
+    return @"持续时间";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -6406,7 +6367,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     return NO;
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { 
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
     (void)tableView;
     return 13;
 }
@@ -6415,7 +6376,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     (void)tableView;
     // V4.18.1 — 折叠的分组不显示任何行（标题栏仍在，可点击展开）
     if (self.collapsedSections && [self.collapsedSections containsObject:@(section)]) return 0;
-    if (section == 0) return 6; 
+    if (section == 0) return 6;
     if (section == 1) return 5; // 自动控制与防护：自动注销/CPU触发值/持续时间/锁屏清理后台/锁屏清理白名单
     if (section == 2) return 5;
     if (section == 3) return 7; // 通知管理
@@ -6449,7 +6410,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
     if (section == 8) return @"📍 位置与显示";
     if (section == 9) return @""; // 充电智能设置已移至系统插件“充电限制”
     if (section == 10) return @"";
-    if (section == 11) return @""; 
+    if (section == 11) return @"";
     if (section == 12) return @"🔍 插件冲突检测";
     return @"";
 }
@@ -6865,7 +6826,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
         cell.textLabel.hidden = YES;
         cell.detailTextLabel.hidden = YES;
         cell.accessoryType = UITableViewCellAccessoryNone;
-        
+
         if (indexPath.row == 0) {
             // 🎨 卡片式状态卡片
             cell.backgroundColor = [UIColor clearColor];
@@ -7105,7 +7066,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
         cell.textLabel.textColor = [UIColor darkGrayColor];
         cell.textLabel.numberOfLines = 0;
         if (indexPath.row == 0) cell.textLabel.text = @"👆 单击悬浮窗：展开双层 UI / 0延迟直达聊天";
-        else if (indexPath.row == 1) cell.textLabel.text = @"✌️ 双击悬浮窗：打开此高级设置中心";
+        else if (indexPath.row == 1) cell.textLabel.text = @"✌️ 双击悬浮窗：已移除，请前往系统设置";
         else if (indexPath.row == 2) cell.textLabel.text = @"👆 长按悬浮窗：全屏展示设备深层物理状态";
         else if (indexPath.row == 3) cell.textLabel.text = @"🤚 拖动悬浮窗：自由挪动位置并带物理回弹";
         else if (indexPath.row == 4) cell.textLabel.text = @"🔋 充电增强：实时功率监测与高电量充电目标";
@@ -7657,7 +7618,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
     // 🔍 插件冲突检测：点击冲突警告或插件显示详情
     if (indexPath.section == 12) {
         if (indexPath.row == 0) return;
-        
+
         // 点击冲突警告（row 1 ~ gPluginConflictCount）
         if (indexPath.row <= gPluginConflictCount && gPluginConflicts.count > 0) {
             NSInteger conflictIndex = indexPath.row - 1;
@@ -7668,21 +7629,21 @@ static NSString *stripLeadingEmoji(NSString *s) {
                 NSInteger severity = [conflict[@"severity"] integerValue];
                 NSArray *plugins = conflict[@"plugins"] ?: @[];
                 NSString *severityStr = (severity == 0) ? @"🔴 高风险" : (severity == 1) ? @"🟡 中风险" : @"🟢 低风险";
-                
+
                 NSMutableString *pluginStr = [NSMutableString string];
                 for (NSString *p in plugins) {
                     [pluginStr appendFormat:@"\n• %@", p];
                 }
-                
+
                 NSString *message = [NSString stringWithFormat:@"风险等级：%@\n\n冲突说明：%@\n\n涉及插件：%@\n\n建议：禁用其中一个插件，或确认两者功能不重叠后继续使用", severityStr, desc, pluginStr];
-                
+
                 UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
                 [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
                 [self presentViewController:alert animated:YES completion:nil];
                 return;
             }
         }
-        
+
         // 点击插件列表（需要跳过分类标题行）
         if (gInstalledPlugins.count == 0) return;
         NSInteger listStartRow = 1 + gPluginConflictCount;
@@ -7704,7 +7665,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
             if (pluginIndex >= 0) break;
         }
         if (pluginIndex < 0 || pluginIndex >= (NSInteger)gInstalledPlugins.count) return;
-        
+
         NSDictionary *plugin = gInstalledPlugins[pluginIndex];
         NSString *name = plugin[@"name"] ?: @"未知";
         NSString *version = plugin[@"version"] ?: @"未知";
@@ -7712,24 +7673,24 @@ static NSString *stripLeadingEmoji(NSString *s) {
         NSString *category = plugin[@"category"] ?: @"其他";
         NSString *bundleID = plugin[@"bundleID"] ?: @"未知";
         NSArray *injected = plugin[@"injectedBundles"] ?: @[];
-        
+
         // 🎨 创建插件详情视图控制器
         UIViewController *detailVC = [[UIViewController alloc] init];
         detailVC.view.backgroundColor = [UIColor systemBackgroundColor];
         detailVC.title = @"插件详情";
-        
+
         // 导航栏关闭按钮（用 self 处理，避免参数不匹配崩溃）
         UIBarButtonItem *closeBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closePluginDetail:)];
         detailVC.navigationItem.rightBarButtonItem = closeBtn;
-        
+
         // 滚动视图
         UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:detailVC.view.bounds];
         scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         [detailVC.view addSubview:scrollView];
-        
+
         CGFloat y = 20;
         CGFloat w = detailVC.view.bounds.size.width - 40;
-        
+
         // 插件名称（大标题）
         UILabel *nameLbl = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 32)];
         nameLbl.text = name;
@@ -7737,7 +7698,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
         nameLbl.textColor = [UIColor labelColor];
         [scrollView addSubview:nameLbl];
         y += 40;
-        
+
         // 版本号 + 分类
         UILabel *verLbl = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 20)];
         verLbl.text = [NSString stringWithFormat:@"版本：v%@  ·  分类：%@", version, category];
@@ -7745,7 +7706,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
         verLbl.textColor = [UIColor secondaryLabelColor];
         [scrollView addSubview:verLbl];
         y += 28;
-        
+
         // Bundle ID
         UILabel *bidLbl = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 18)];
         bidLbl.text = [NSString stringWithFormat:@"Bundle ID：%@", bundleID];
@@ -7753,13 +7714,13 @@ static NSString *stripLeadingEmoji(NSString *s) {
         bidLbl.textColor = [UIColor tertiaryLabelColor];
         [scrollView addSubview:bidLbl];
         y += 24;
-        
+
         // 分隔线
         UIView *sep1 = [[UIView alloc] initWithFrame:CGRectMake(20, y, w, 1)];
         sep1.backgroundColor = [UIColor separatorColor];
         [scrollView addSubview:sep1];
         y += 16;
-        
+
         // 描述标题
         UILabel *descTitle = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 20)];
         descTitle.text = @"插件描述";
@@ -7767,7 +7728,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
         descTitle.textColor = [UIColor labelColor];
         [scrollView addSubview:descTitle];
         y += 26;
-        
+
         // 描述内容（为空时显示默认值）
         if (desc.length == 0 || [desc isEqualToString:@"暂无描述"]) {
             desc = @"该插件未提供描述信息";
@@ -7781,13 +7742,13 @@ static NSString *stripLeadingEmoji(NSString *s) {
         descLbl.frame = CGRectMake(20, y, w, descLbl.frame.size.height);
         [scrollView addSubview:descLbl];
         y += descLbl.frame.size.height + 20;
-        
+
         // 分隔线
         UIView *sep2 = [[UIView alloc] initWithFrame:CGRectMake(20, y, w, 1)];
         sep2.backgroundColor = [UIColor separatorColor];
         [scrollView addSubview:sep2];
         y += 16;
-        
+
         // 注入进程标题
         UILabel *injectTitle = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 20)];
         injectTitle.text = [NSString stringWithFormat:@"注入进程（%ld 个）", (long)injected.count];
@@ -7795,7 +7756,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
         injectTitle.textColor = [UIColor labelColor];
         [scrollView addSubview:injectTitle];
         y += 26;
-        
+
         // 注入进程列表
         if (injected.count > 0) {
             for (NSString *bundle in injected) {
@@ -7814,20 +7775,20 @@ static NSString *stripLeadingEmoji(NSString *s) {
             [scrollView addSubview:noInject];
             y += 22;
         }
-        
+
         // 耗电评估
         UIView *sep3 = [[UIView alloc] initWithFrame:CGRectMake(20, y, w, 1)];
         sep3.backgroundColor = [UIColor separatorColor];
         [scrollView addSubview:sep3];
         y += 16;
-        
+
         UILabel *powerTitle = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 20)];
         powerTitle.text = @"耗电评估";
         powerTitle.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
         powerTitle.textColor = [UIColor labelColor];
         [scrollView addSubview:powerTitle];
         y += 26;
-        
+
         NSString *powerDesc = powerConsumptionDesc(plugin);
         UILabel *powerLbl = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w, 0)];
         powerLbl.text = powerDesc;
@@ -7838,9 +7799,9 @@ static NSString *stripLeadingEmoji(NSString *s) {
         powerLbl.frame = CGRectMake(20, y, w, powerLbl.frame.size.height);
         [scrollView addSubview:powerLbl];
         y += powerLbl.frame.size.height + 20;
-        
+
         scrollView.contentSize = CGSizeMake(detailVC.view.bounds.size.width, y + 20);
-        
+
         // 用导航控制器包裹，显示导航栏
         UINavigationController *navVC = [[UINavigationController alloc] initWithRootViewController:detailVC];
         navVC.modalPresentationStyle = UIModalPresentationFormSheet;
@@ -7971,20 +7932,20 @@ static NSString *stripLeadingEmoji(NSString *s) {
     return nil;
 }
 
-- (void)changeScaleSlider:(UISlider *)s { 
-    floatingScale = s.value; 
+- (void)changeScaleSlider:(UISlider *)s {
+    floatingScale = s.value;
     UITableViewCell *cell = [self _cellForView:s];
     if (cell) {
         UILabel *l = [cell.contentView viewWithTag:960];
         if (l) l.text = [NSString stringWithFormat:@"%.0f%%", floatingScale * 100];
         else cell.detailTextLabel.text = [NSString stringWithFormat:@"%.0f%%", floatingScale * 100];
     }
-    
+
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(saveConfigs) object:nil];
     [self performSelector:@selector(saveConfigs) withObject:nil afterDelay:0.5];
 }
 
-- (void)changeFontSlider:(UISlider *)s { 
+- (void)changeFontSlider:(UISlider *)s {
     floatingFontSize = s.value;
     UITableViewCell *cell = [self _cellForView:s];
     if (cell) {
@@ -7997,7 +7958,7 @@ static NSString *stripLeadingEmoji(NSString *s) {
     [self performSelector:@selector(saveConfigs) withObject:nil afterDelay:0.5];
 }
 
-- (void)changeCornerRadiusSlider:(UISlider *)s { 
+- (void)changeCornerRadiusSlider:(UISlider *)s {
     floatingCornerRadius = s.value;
     UITableViewCell *cell = [self _cellForView:s];
     if (cell) {
@@ -8459,7 +8420,7 @@ static NSArray *knownConflictPairs(void) {
           @"温度监控冲突", @"两个插件同时读取温度传感器并修改温控属性，可能导致温度读数异常", @0],
         @[@"com.rpetrich.activator", @"com.a3tweaks.ctcenter",
           @"手势冲突", @"Activator 和控制中心插件可能在底部手势区域冲突，导致手势失效", @0],
-        
+
         // 🟡 中风险（功能重叠，可能导致性能问题或功能异常）
         @[@"com.mowang.sbcpufloating", @"com.nscube.cpu",
           @"系统监控冲突", @"两个插件同时高频读取 CPU/温度传感器，可能导致读数冲突和额外耗电", @1],
@@ -8469,7 +8430,7 @@ static NSArray *knownConflictPairs(void) {
           @"控制中心冲突", @"两个控制中心插件同时修改模块布局，可能导致模块显示异常", @1],
         @[@"com.rpetrich.libgesture", @"com.a3tweaks.libgesture",
           @"手势库冲突", @"两个手势库同时注入，可能导致手势识别异常", @1],
-        
+
         // 🟢 低风险（功能轻微重叠，一般不影响使用）
         @[@"com.mowang.sbcpufloating", @"com.opa334.appstore++",
           @"功能重叠", @"两个插件都有充电相关功能，建议确认功能不重叠", @2],
@@ -8484,7 +8445,7 @@ static NSArray *knownConflictPairs(void) {
 static NSString *categorizePlugin(NSString *bundleID, NSString *name, NSString *desc) {
     NSDictionary *catMap = pluginCategoryMap();
     if (bundleID && catMap[bundleID]) return catMap[bundleID];
-    
+
     NSDictionary *kwMap = categoryKeywords();
     NSString *lower = [NSString stringWithFormat:@"%@ %@ %@",
                         bundleID ?: @"", name ?: @"", desc ?: @""].lowercaseString;
@@ -8502,9 +8463,9 @@ static void scanInstalledPlugins(void) {
     gPluginConflicts = [NSMutableArray array];
     gPluginTotalCount = 0;
     gPluginConflictCount = 0;
-    
+
     NSFileManager *fm = [NSFileManager defaultManager];
-    
+
     // 🔥 最可靠的方法：用 dladdr 获取当前插件自己的 .dylib 路径
     // 当前插件(SBCPUFloating)就在 DynamicLibraries 目录里，找到自己就找到了所有插件
     NSMutableArray *selfFoundDylibs = [NSMutableArray array];
@@ -8578,7 +8539,7 @@ static void scanInstalledPlugins(void) {
     }
     gDylibCount = selfFoundDylibs.count;
     NSLog(@"[SBCPUFloating] self-found dylibs: %ld", (long)selfFoundDylibs.count);
-    
+
     // 如果通过自身路径找到了 dylib，直接用这些作为插件列表（最可靠，不需要猜路径）
     if (selfFoundDylibs.count > 0) {
         gScanMethod = @"自身路径探测";
@@ -8618,7 +8579,7 @@ static void scanInstalledPlugins(void) {
         NSLog(@"[SBCPUFloating] scan done via self path, plugins: %ld", (long)gPluginTotalCount);
         return;
     }
-    
+
     // 1. 读取 DynamicLibraries 目录下的 plist（Substrate/Substitute 通用路径）
     NSArray *libPaths = @[
         @"/Library/MobileSubstrate/DynamicLibraries",
@@ -8628,7 +8589,7 @@ static void scanInstalledPlugins(void) {
         @"/Library/TweakInject",
         @"/var/jb/Library/TweakInject",
     ];
-    
+
     NSMutableDictionary *plistMap = [NSMutableDictionary dictionary]; // dylib名 → {bundles, version, desc}
     NSMutableArray *dylibNames = [NSMutableArray array]; // 所有.dylib文件名（fallback用）
     for (NSString *libPath in libPaths) {
@@ -8664,7 +8625,7 @@ static void scanInstalledPlugins(void) {
             plistMap[dylibName] = @{@"bundles": bundles, @"version": version, @"desc": desc};
         }
     }
-    
+
     // 2. 用 dpkg -l 命令获取已安装包列表（最可靠，自动适配各种越狱环境）
     NSMutableString *dpkgOutput = [NSMutableString string];
     FILE *pipe = popen("dpkg -l 2>/dev/null", "r");
@@ -8678,7 +8639,7 @@ static void scanInstalledPlugins(void) {
     gDpkgOutputLength = dpkgOutput.length;
     gScanMethod = (dpkgOutput.length > 0) ? @"dpkg命令" : @"未获取";
     NSLog(@"[SBCPUFloating] dpkg -l output length: %ld", (long)dpkgOutput.length);
-    
+
     // 解析 dpkg -l 输出：ii 开头的行是已安装包
     NSMutableArray *packages = [NSMutableArray array];
     if (dpkgOutput.length > 0) {
@@ -8702,7 +8663,7 @@ static void scanInstalledPlugins(void) {
     }
     gDpkgParsedCount = packages.count;
     NSLog(@"[SBCPUFloating] dpkg -l parsed packages: %ld", (long)packages.count);
-    
+
     // 如果 dpkg -l 没结果，fallback 到文件路径
     if (packages.count == 0) {
         gScanMethod = @"文件路径(fallback)";
@@ -8740,7 +8701,7 @@ static void scanInstalledPlugins(void) {
             }
         }
     }
-    
+
     // 如果 dpkg 完全不可用，用 DynamicLibraries 枚举到的 .dylib 文件作为插件列表
     if (packages.count == 0 && dylibNames.count > 0) {
         NSLog(@"[SBCPUFloating] dpkg unavailable, using %ld dylib files as plugin list", (long)dylibNames.count);
@@ -8749,20 +8710,20 @@ static void scanInstalledPlugins(void) {
             [packages addObject:@{@"package": dylibName, @"version": @"", @"desc": @""}];
         }
     }
-    
+
     // 终极 fallback：自动枚举 /var 所有子目录探测越狱根路径（不预设路径，不过滤）
     if (packages.count == 0) {
         NSLog(@"[SBCPUFloating] all methods failed, auto-detecting jailbreak root");
         gScanMethod = @"自动探测";
         NSMutableArray *foundDylibs = [NSMutableArray array];
         NSMutableString *foundPathInfo = [NSMutableString string];
-        
+
         // 1. 枚举 /var 所有子目录
         NSError *varErr = nil;
         NSArray *varSubdirs = [fm contentsOfDirectoryAtPath:@"/var" error:&varErr];
         NSLog(@"[SBCPUFloating] /var subdirs: %@", varSubdirs);
         [foundPathInfo appendFormat:@"/var子目录:%ld ", (long)varSubdirs.count];
-        
+
         // 2. 对每个子目录，检查是否包含 DynamicLibraries 或 TweakInject
         for (NSString *subdir in varSubdirs) {
             NSString *rootPath = [@"/var" stringByAppendingPathComponent:subdir];
@@ -8797,7 +8758,7 @@ static void scanInstalledPlugins(void) {
             }
             if (foundDylibs.count > 0) break;
         }
-        
+
         // 3. 如果 /var 子目录没找到，试标准路径和 /private/var
         if (foundDylibs.count == 0) {
             NSArray *stdPaths = @[
@@ -8827,12 +8788,12 @@ static void scanInstalledPlugins(void) {
                 if (foundDylibs.count > 0) break;
             }
         }
-        
+
         // 4. 记录 /var 所有子目录名到调试信息（方便排查）
         if (foundDylibs.count == 0 && varSubdirs.count > 0) {
             [foundPathInfo appendFormat:@"[全部:%@]", [varSubdirs componentsJoinedByString:@","]];
         }
-        
+
         NSLog(@"[SBCPUFloating] auto-detect found %ld dylibs, pathInfo: %@", (long)foundDylibs.count, foundPathInfo);
         gDylibCount = foundDylibs.count;
         gScanError = [foundPathInfo copy];
@@ -8840,7 +8801,7 @@ static void scanInstalledPlugins(void) {
             [packages addObject:@{@"package": dn, @"version": @"", @"desc": @""}];
         }
     }
-    
+
     // 遍历包列表（统一格式）
     for (NSDictionary *pkgDict in packages) {
         NSString *package = pkgDict[@"package"] ?: @"";
@@ -8859,7 +8820,7 @@ static void scanInstalledPlugins(void) {
             [package isEqualToString:@"tar"] || [package isEqualToString:@"gzip"] ||
             [package isEqualToString:@"findutils"] || [package hasPrefix:@"system-cmds"] ||
             [package hasPrefix:@"firmware"] || [package hasPrefix:@"base"]) continue;
-        
+
         // 匹配 plist 注入信息（同时读取版本号和描述）
         NSArray *injected = @[];
         NSString *plistVersion = nil;
@@ -8874,13 +8835,13 @@ static void scanInstalledPlugins(void) {
                 break;
             }
         }
-        
+
         // 优先使用 dpkg 的版本号和描述，没有则用 plist 的
         NSString *finalVersion = version.length > 0 ? version : (plistVersion.length > 0 ? plistVersion : @"未知");
         NSString *finalDesc = desc.length > 0 ? desc : (plistDesc.length > 0 ? plistDesc : @"暂无描述");
-        
+
         NSString *category = categorizePlugin(package, name, finalDesc);
-        
+
         NSDictionary *pluginInfo = @{
             @"name": name,
             @"bundleID": package,
@@ -8892,15 +8853,15 @@ static void scanInstalledPlugins(void) {
         [gInstalledPlugins addObject:pluginInfo];
         gPluginTotalCount++;
     }
-    
+
     // 3. 按分类排序
     [gInstalledPlugins sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
         return [a[@"category"] compare:b[@"category"]];
     }];
-    
+
     // 4. 冲突检测
     detectPluginConflicts();
-    
+
     gPluginScanDone = YES;
 }
 
@@ -8911,28 +8872,28 @@ static NSInteger estimatePowerConsumption(NSDictionary *plugin) {
     NSInteger score = 0;
     NSArray *injected = plugin[@"injectedBundles"] ?: @[];
     NSString *category = plugin[@"category"] ?: @"";
-    
+
     // 全局注入：最耗电
     for (NSString *b in injected) {
         if ([b isEqualToString:@"*（全局注入）"]) { score += 2; break; }
     }
-    
+
     // 注入 SpringBoard：常驻系统进程
     for (NSString *b in injected) {
         if ([b.lowercaseString containsString:@"springboard"]) { score += 1; break; }
     }
-    
+
     // 注入进程数量
     if (injected.count >= 5) score += 2;
     else if (injected.count >= 3) score += 1;
-    
+
     // 分类评估
     if ([category isEqualToString:@"系统监控"] || [category isEqualToString:@"温度监控"]) {
         score += 2; // 通常高频轮询传感器
     } else if ([category isEqualToString:@"充电管理"] || [category isEqualToString:@"手势操作"]) {
         score += 1;
     }
-    
+
     // 转换为等级
     if (score >= 3) return 2; // 高耗电
     if (score >= 1) return 1; // 中耗电
@@ -8945,11 +8906,11 @@ static NSString *powerConsumptionDesc(NSDictionary *plugin) {
     NSArray *injected = plugin[@"injectedBundles"] ?: @[];
     NSString *category = plugin[@"category"] ?: @"";
     NSMutableString *desc = [NSMutableString string];
-    
+
     if (level == 2) [desc appendString:@"🔴 高耗电"];
     else if (level == 1) [desc appendString:@"🟡 中耗电"];
     else [desc appendString:@"🟢 低耗电"];
-    
+
     [desc appendString:@"\n评估依据："];
     BOOL hasGlobal = NO, hasSB = NO;
     for (NSString *b in injected) {
@@ -8964,7 +8925,7 @@ static NSString *powerConsumptionDesc(NSDictionary *plugin) {
     } else if ([category isEqualToString:@"充电管理"]) {
         [desc appendString:@"\n• 充电管理类插件持续监听充电状态"];
     }
-    
+
     return desc;
 }
 
@@ -8989,7 +8950,7 @@ static void detectPluginConflicts(void) {
             gPluginConflictCount++;
         }
     }
-    
+
     // ========== 4b. 注入进程重叠检测（增强） ==========
     // 两个插件注入了相同的进程，且分类相同，可能冲突
     NSInteger pluginCount = gInstalledPlugins.count;
@@ -9031,7 +8992,7 @@ static void detectPluginConflicts(void) {
             }
         }
     }
-    
+
     // ========== 4c. 功能关键词智能匹配（增强） ==========
     // 基于插件名称和分类的关键词匹配，发现潜在冲突
     NSArray *keywordGroups = @[
@@ -9077,7 +9038,7 @@ static void detectPluginConflicts(void) {
             gPluginConflictCount++;
         }
     }
-    
+
     // ========== 4d. 同进程注入过多检测（增强） ==========
     // 统计每个进程被多少插件注入，同时收集插件列表
     NSMutableDictionary *processCount = [NSMutableDictionary dictionary];
@@ -9109,7 +9070,7 @@ static void detectPluginConflicts(void) {
             gPluginConflictCount++;
         }
     }
-    
+
     // ========== 4e. 全局注入插件检测（增强） ==========
     NSMutableArray *globalPlugins = [NSMutableArray array];
     for (NSDictionary *p in gInstalledPlugins) {
@@ -9131,7 +9092,7 @@ static void detectPluginConflicts(void) {
         }];
         gPluginConflictCount++;
     }
-    
+
     // ========== 4f. SpringBoard 注入过多检测（保留） ==========
     NSInteger sbCount = 0;
     NSMutableArray *sbPlugins = [NSMutableArray array];
@@ -9154,7 +9115,7 @@ static void detectPluginConflicts(void) {
         }];
         gPluginConflictCount++;
     }
-    
+
     // 去重：相同标题的冲突只保留一个
     NSMutableArray *uniqueConflicts = [NSMutableArray array];
     NSMutableSet *seenTitles = [NSMutableSet set];
@@ -9167,7 +9128,7 @@ static void detectPluginConflicts(void) {
     }
     gPluginConflicts = uniqueConflicts;
     gPluginConflictCount = gPluginConflicts.count;
-    
+
     // 按严重程度排序
     [gPluginConflicts sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
         return [a[@"severity"] compare:b[@"severity"]];
