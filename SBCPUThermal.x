@@ -1678,7 +1678,8 @@ if (g_forceFastChargeEnabled) {
 
 if (thermalDimmingPreventionEnabled() && keyIsBacklightThermalLimit(keyString)) {
 id replacement = backlightReplacementMatchingValue(keyString, (__bridge id)value);
-return replacement ? %orig(entry, key, (__bridge CFTypeRef)replacement) : %orig(entry, key, value);
+if (replacement) return %orig(entry, key, (__bridge CFTypeRef)replacement);
+return %orig(entry, key, value);
 }
 if (isNetworkThrottleProperty(key)) return KERN_SUCCESS;
 if (shouldApplyFullCPUProtection() && keyIsThermalThrottleProperty(keyString)) {
