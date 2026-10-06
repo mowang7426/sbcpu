@@ -849,14 +849,16 @@
 			<string>com.yourname.sbcpufloating</string>
 		</dict>
 		<dict>
-			<key>cell</key>
-			<string>PSLinkCell</string>
-			<key>label</key>
-			<string>充电历史</string>
-			<key>detail</key>
-			<string>SBCPUChargeHistoryController</string>
-			<key>isController</key>
-			<true/>
+			<key>cell</key><string>PSLinkCell</string>
+			<key>label</key><string>插件冲突检测</string>
+			<key>detail</key><string>SBCPUPluginConflictController</string>
+			<key>isController</key><true/>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSLinkCell</string>
+			<key>label</key><string>充电历史</string>
+			<key>detail</key><string>SBCPUChargeHistoryController</string>
+			<key>isController</key><true/>
 		</dict>
 		<dict>
 			<key>cell</key>
