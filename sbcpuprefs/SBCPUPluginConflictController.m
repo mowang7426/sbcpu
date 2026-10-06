@@ -43,8 +43,6 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
 }
 
 - (void)viewDidAppear:(BOOL)animated {
-
-- (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     if (!self.scanMessage && !self.scanning) [self startScan];
 }
