@@ -9928,15 +9928,16 @@ static void scheduleLockCleanupAfterRealLock(void) {
 
 // 🚀 终极通知拦截阵列
 %hook NCNotificationDispatcher
-- (void)postNotificationWithRequest:(id)arg1 { %orig; [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1]; }
-- (void)receiveNotificationRequest:(id)arg1 { %orig; [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1]; }
-- (void)addNotificationRequest:(id)arg1 { %orig; [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1]; }
-- (void)insertNotificationRequest:(id)arg1 { %orig; [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1]; }
+- (void)postNotificationWithRequest:(id)arg1 {
+    %orig;
+    [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1];
+}
 %end
 %hook SBNCNotificationDispatcher
-- (void)postNotificationWithRequest:(id)arg1 { %orig; [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1]; }
-- (void)receiveNotificationRequest:(id)arg1 { %orig; [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1]; }
-- (void)addNotificationRequest:(id)arg1 { %orig; [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1]; }
+- (void)postNotificationWithRequest:(id)arg1 {
+    %orig;
+    [[SBNotificationManager sharedInstance] extractAndHandleRequest:arg1];
+}
 %end
 
 
