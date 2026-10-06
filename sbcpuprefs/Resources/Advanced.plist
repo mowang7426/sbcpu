@@ -172,13 +172,9 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>透明度</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>floatingAlpha</string>
 			<key>default</key>
@@ -194,16 +190,27 @@
 			</array>
 			<key>unit</key>
 			<string></string>
+			<key>validTitles</key>
+			<array>
+				<string>20%</string>
+				<string>40%</string>
+				<string>60%</string>
+				<string>70%</string>
+				<string>85%</string>
+				<string>100%</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>浮窗大小</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>floatingScale</string>
 			<key>default</key>
@@ -220,16 +227,28 @@
 			</array>
 			<key>unit</key>
 			<string>倍</string>
+			<key>validTitles</key>
+			<array>
+				<string>0.4 倍</string>
+				<string>0.6 倍</string>
+				<string>0.8 倍</string>
+				<string>1.0 倍</string>
+				<string>1.2 倍</string>
+				<string>1.4 倍</string>
+				<string>1.6 倍</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>字体大小</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>floatingFontSize</string>
 			<key>default</key>
@@ -247,16 +266,29 @@
 			</array>
 			<key>unit</key>
 			<string> pt</string>
+			<key>validTitles</key>
+			<array>
+				<string>8 pt</string>
+				<string>9 pt</string>
+				<string>10 pt</string>
+				<string>11 pt</string>
+				<string>12 pt</string>
+				<string>13 pt</string>
+				<string>14 pt</string>
+				<string>15 pt</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>圆角大小</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>floatingCornerRadius</string>
 			<key>default</key>
@@ -275,16 +307,30 @@
 			</array>
 			<key>unit</key>
 			<string> pt</string>
+			<key>validTitles</key>
+			<array>
+				<string>4 pt</string>
+				<string>8 pt</string>
+				<string>12 pt</string>
+				<string>16 pt</string>
+				<string>20 pt</string>
+				<string>24 pt</string>
+				<string>28 pt</string>
+				<string>32 pt</string>
+				<string>35 pt</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>数值刷新频率</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>floatingValueRefreshInterval</string>
 			<key>default</key>
@@ -296,6 +342,17 @@
 			</array>
 			<key>unit</key>
 			<string> 秒</string>
+			<key>validTitles</key>
+			<array>
+				<string>1 秒</string>
+				<string>2 秒</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -321,13 +378,9 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>收起延迟时间</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>autoCollapseDelay</string>
 			<key>default</key>
@@ -343,16 +396,27 @@
 			</array>
 			<key>unit</key>
 			<string> 秒</string>
+			<key>validTitles</key>
+			<array>
+				<string>2 秒</string>
+				<string>3 秒</string>
+				<string>4 秒</string>
+				<string>5 秒</string>
+				<string>8 秒</string>
+				<string>10 秒</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>折叠显示内容</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>collapsedDisplayMode</string>
 			<key>default</key>
@@ -367,6 +431,20 @@
 			</array>
 			<key>unit</key>
 			<string></string>
+			<key>validTitles</key>
+			<array>
+				<string>CPU 使用率</string>
+				<string>FPS 帧率</string>
+				<string>电池温度</string>
+				<string>电池电流</string>
+				<string>电池电量</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -434,13 +512,9 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>CPU 触发值</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>logoutCPUThreshold</string>
 			<key>default</key>
@@ -457,16 +531,28 @@
 			</array>
 			<key>unit</key>
 			<string>%</string>
+			<key>validTitles</key>
+			<array>
+				<string>50%</string>
+				<string>75%</string>
+				<string>100%</string>
+				<string>125%</string>
+				<string>150%</string>
+				<string>175%</string>
+				<string>200%</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>自动注销持续时间</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>logoutDuration</string>
 			<key>default</key>
@@ -480,6 +566,19 @@
 			</array>
 			<key>unit</key>
 			<string> 秒</string>
+			<key>validTitles</key>
+			<array>
+				<string>30 秒</string>
+				<string>60 秒</string>
+				<string>120 秒</string>
+				<string>300 秒</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -515,13 +614,9 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>吸附模式</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>dockMode</string>
 			<key>default</key>
@@ -536,6 +631,20 @@
 			</array>
 			<key>unit</key>
 			<string></string>
+			<key>validTitles</key>
+			<array>
+				<string>自动吸附</string>
+				<string>左侧</string>
+				<string>右侧</string>
+				<string>顶部</string>
+				<string>底部</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -667,13 +776,9 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>通知显示时间</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>notificationDuration</string>
 			<key>default</key>
@@ -687,6 +792,19 @@
 			</array>
 			<key>unit</key>
 			<string> 秒</string>
+			<key>validTitles</key>
+			<array>
+				<string>3 秒</string>
+				<string>5 秒</string>
+				<string>8 秒</string>
+				<string>10 秒</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -840,13 +958,9 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>顶部拖动回位延迟</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>statusDockReturnDelay</string>
 			<key>default</key>
@@ -886,6 +1000,45 @@
 			</array>
 			<key>unit</key>
 			<string> 秒</string>
+			<key>validTitles</key>
+			<array>
+				<string>1 秒</string>
+				<string>2 秒</string>
+				<string>3 秒</string>
+				<string>4 秒</string>
+				<string>5 秒</string>
+				<string>6 秒</string>
+				<string>7 秒</string>
+				<string>8 秒</string>
+				<string>9 秒</string>
+				<string>10 秒</string>
+				<string>11 秒</string>
+				<string>12 秒</string>
+				<string>13 秒</string>
+				<string>14 秒</string>
+				<string>15 秒</string>
+				<string>16 秒</string>
+				<string>17 秒</string>
+				<string>18 秒</string>
+				<string>19 秒</string>
+				<string>20 秒</string>
+				<string>21 秒</string>
+				<string>22 秒</string>
+				<string>23 秒</string>
+				<string>24 秒</string>
+				<string>25 秒</string>
+				<string>26 秒</string>
+				<string>27 秒</string>
+				<string>28 秒</string>
+				<string>29 秒</string>
+				<string>30 秒</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -895,13 +1048,9 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>玻璃不透明度</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>glassCardOpacity</string>
 			<key>default</key>
@@ -916,16 +1065,26 @@
 			</array>
 			<key>unit</key>
 			<string></string>
+			<key>validTitles</key>
+			<array>
+				<string>20%</string>
+				<string>40%</string>
+				<string>60%</string>
+				<string>80%</string>
+				<string>100%</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>玻璃雾化强度</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>glassBlurRadius</string>
 			<key>default</key>
@@ -940,16 +1099,26 @@
 			</array>
 			<key>unit</key>
 			<string></string>
+			<key>validTitles</key>
+			<array>
+				<string>0</string>
+				<string>25</string>
+				<string>50</string>
+				<string>75</string>
+				<string>100</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSMultiValueCell</string>
 			<key>label</key>
 			<string>背景遮罩不透明度</string>
-			<key>detail</key>
-			<string>SBCPUValuePickerController</string>
-			<key>isController</key>
-			<true/>
 			<key>key</key>
 			<string>glassDimOpacity</string>
 			<key>default</key>
@@ -964,6 +1133,20 @@
 			</array>
 			<key>unit</key>
 			<string></string>
+			<key>validTitles</key>
+			<array>
+				<string>40%</string>
+				<string>60%</string>
+				<string>80%</string>
+				<string>90%</string>
+				<string>100%</string>
+			</array>
+			<key>PostNotification</key>
+			<string>com.yourname.sbcpufloating.prefschanged</string>
+			<key>get</key>
+			<string>getPreferenceValue:</string>
+			<key>set</key>
+			<string>setPreferenceValue:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
