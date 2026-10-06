@@ -5,6 +5,9 @@
 @interface SBCPUPluginConflictController : PSListController
 @property(nonatomic,copy) NSArray<NSDictionary *> *results;
 @property(nonatomic,assign) BOOL scanning;
+@property(nonatomic,copy) NSString *scanMessage;
+@property(nonatomic,assign) NSUInteger scannedPlists;
+@property(nonatomic,assign) NSUInteger scannedDirectories;
 @end
 
 @implementation SBCPUPluginConflictController
@@ -12,6 +15,11 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"插件冲突检测";
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    if (!self.scanMessage && !self.scanning) [self startScan];
 }
 
 - (NSArray *)specifiers {
@@ -23,8 +31,13 @@
         [scan setButtonAction:@selector(startScan)];
         [scan setProperty:@(!self.scanning) forKey:@"enabled"];
         [items addObject:scan];
+        if (self.scanMessage) {
+            [items addObject:[PSSpecifier preferenceSpecifierNamed:self.scanMessage target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
+        } else {
+            [items addObject:[PSSpecifier preferenceSpecifierNamed:@"进入此页面后会自动扫描；也可点上方按钮重新扫描。" target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
+        }
         if (!_results) {
-            [items addObject:[PSSpecifier preferenceSpecifierNamed:@"只扫描常见 DynamicLibraries 目录，不修改任何插件。" target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
+            [items addObject:[PSSpecifier preferenceSpecifierNamed:@"等待扫描结果" target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
         } else if (!_results.count) {
             [items addObject:[PSSpecifier preferenceSpecifierNamed:@"未发现多个插件同时注入同一系统进程。" target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
         } else {
@@ -62,13 +75,18 @@ static NSArray *SBCPUProcessNamesFromFilter(NSDictionary *filter) {
     return result;
 }
 
-- (NSArray *)scanSnapshot {
+- (NSDictionary *)scanSnapshot {
     NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *processPlugins = [NSMutableDictionary dictionary];
     NSFileManager *fm = [NSFileManager defaultManager];
+    NSUInteger directories = 0, plistCount = 0;
     for (NSString *directory in SBCPUPluginDirectories()) {
+        BOOL isDirectory = NO;
+        if (![fm fileExistsAtPath:directory isDirectory:&isDirectory] || !isDirectory) continue;
+        directories++;
         NSArray *files = [fm contentsOfDirectoryAtPath:directory error:nil];
         for (NSString *file in files) {
             if (![[file pathExtension].lowercaseString isEqualToString:@"plist"]) continue;
+            plistCount++;
             NSString *path = [directory stringByAppendingPathComponent:file];
             NSDictionary *plist = [NSDictionary dictionaryWithContentsOfFile:path];
             if (![plist isKindOfClass:[NSDictionary class]]) continue;
@@ -88,9 +106,10 @@ static NSArray *SBCPUProcessNamesFromFilter(NSDictionary *filter) {
         NSArray *sorted = [[plugins allObjects] sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
         [results addObject:@{ @"process": process, @"plugins": sorted }];
     }
-    return [results sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+    NSArray *sortedResults = [results sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
         return [a[@"process"] localizedCaseInsensitiveCompare:b[@"process"]];
     }];
+    return @{ @"results": sortedResults, @"directories": @(directories), @"plists": @(plistCount) };
 }
 
 - (void)startScan {
@@ -100,11 +119,14 @@ static NSArray *SBCPUProcessNamesFromFilter(NSDictionary *filter) {
     [self reloadSpecifiers];
     __weak typeof(self) weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        NSArray *snapshot = [weakSelf scanSnapshot];
+        NSDictionary *snapshot = [weakSelf scanSnapshot];
         dispatch_async(dispatch_get_main_queue(), ^{
             SBCPUPluginConflictController *strongSelf = weakSelf;
             if (!strongSelf) return;
-            strongSelf.results = snapshot ?: @[];
+            strongSelf.results = snapshot[@"results"] ?: @[];
+            strongSelf.scannedDirectories = [snapshot[@"directories"] unsignedIntegerValue];
+            strongSelf.scannedPlists = [snapshot[@"plists"] unsignedIntegerValue];
+            strongSelf.scanMessage = [NSString stringWithFormat:@"扫描完成：%lu 个插件目录，%lu 个过滤器。", (unsigned long)strongSelf.scannedDirectories, (unsigned long)strongSelf.scannedPlists];
             strongSelf.scanning = NO;
             strongSelf->_specifiers = nil;
             [strongSelf reloadSpecifiers];
