@@ -28,9 +28,12 @@ static NSString *SBCPUText(NSDictionary *raw, NSArray *history) {
 static void SBCPUTestManufacturer(void) {
     SBCPUCheck([SBCPUBatteryManufacturer(nil) isEqual:@"厂商未知"], @"missing manufacturer");
     NSArray *bad = @[@42, @YES, [NSNull null], @[], @{}, @"", @"  ", @"unknown", @"(null)",
-                    @"N/A", @"0", @"Apple\nSMP", @"Apple\u202e", @"Apple\u0000SMP"];
+                    @"N/A", @"0", @"Apple\nSMP", @"Apple\u202e"];
     for (id value in bad)
         SBCPUCheck([SBCPUBatteryManufacturer(value) isEqual:@"厂商未知"], @"invalid manufacturer type/text");
+    const unichar embeddedName[] = {'A', 'p', 'p', 'l', 'e', 0, 'S', 'M', 'P'};
+    NSString *nameWithNUL = [NSString stringWithCharacters:embeddedName length:sizeof(embeddedName) / sizeof(embeddedName[0])];
+    SBCPUCheck([SBCPUBatteryManufacturer(nameWithNUL) isEqual:@"厂商未知"], @"embedded NUL in NSString rejected");
     SBCPUCheck([SBCPUBatteryManufacturer(@"  apple Inc.  ") isEqual:@"Apple"], @"explicit Apple alias");
     for (NSString *vendor in @[@"SMP", @"DSY", @"ATL", @"Sunwoda", @"德赛电池", @"Apple supplier"])
         SBCPUCheck([SBCPUBatteryManufacturer(vendor) isEqual:vendor], @"supplier not mapped to consumer brand");
