@@ -51,7 +51,7 @@
 }
 
 - (void)openMoWangSource {
-	NSURL *url = [NSURL URLWithString:@"sileo://source/https://mowang7426.github.io/MoWang/"];
+	NSURL *url = [NSURL URLWithString:@"sileo://source/https://mowang7426.github.io/mowang/"];
 	if ([[UIApplication sharedApplication] canOpenURL:url]) {
 		[[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
 	}
