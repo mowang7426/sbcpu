@@ -1,3 +1,4 @@
+#import <UIKit/UIKit.h>
 #import <Preferences/PSListController.h>
 #import <Preferences/PSSpecifier.h>
 
@@ -44,7 +45,7 @@
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-
+- (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [self reloadHistory];
 }
