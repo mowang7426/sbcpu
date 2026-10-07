@@ -26,7 +26,7 @@ static inline NSString *SBCPUBatteryManufacturer(id value) {
     } else if ([value isKindOfClass:[NSData class]]) {
         NSData *data = value; // CFData is toll-free bridged; only strict UTF-8.
         if (data.length == 0 || data.length > 256) return @"厂商未知";
-        const unsigned char *bytes = data.bytes;
+        const unsigned char *bytes = (const unsigned char *)data.bytes;
         NSUInteger length = data.length;
         while (length > 0 && bytes[length - 1] == 0) length--;
         if (length == 0) return @"厂商未知";
