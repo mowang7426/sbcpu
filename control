@@ -1,9 +1,9 @@
 Package: com.sbcpu.floating
-Name: SB CPU Floating
-Version: 4.86
+Name: 灵动监测
+Version: 4.87
 Architecture: iphoneos-arm64
 Maintainer: MoWang
 Author: MoWang
-Description: 修改温控 bug：极限满频全局状态同步与 App/桌面切换掉频修复；新控制器注册后立即继承当前性能模式。保留系统与硬件临界温度安全保护。
+Description: 灵动监测：CPU、帧率、电池和系统状态浮窗；长按查看详细数据，支持充电管理、插件注入规则扫描与功能分类。保留系统与硬件热安全保护。
 Section: Tweaks
 Depends: mobilesubstrate, preferenceloader

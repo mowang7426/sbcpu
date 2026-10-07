@@ -85,7 +85,7 @@ after-stage::
 	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/SBCPUPowerd.plist" "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/SBCPUPowerd.plist"$(ECHO_END)
 	$(ECHO_NOTHING)mkdir -p "$(THEOS_STAGING_DIR)/Library/ControlCenter/Bundles/SBCPUFloatingCC.bundle"$(ECHO_END)
 	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/ControlCenter/resources/Info.plist" "$(THEOS_STAGING_DIR)/Library/ControlCenter/Bundles/SBCPUFloatingCC.bundle/Info.plist"$(ECHO_END)
-	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/ControlCenter/resources/SettingsIcon.png" "$(THEOS_STAGING_DIR)/Library/ControlCenter/Bundles/SBCPUFloatingCC.bundle/SettingsIcon.png"$(ECHO_END)
+	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)"/ControlCenter/resources/SettingsIcon*.png "$(THEOS_STAGING_DIR)/Library/ControlCenter/Bundles/SBCPUFloatingCC.bundle/"$(ECHO_END)
 	$(ECHO_NOTHING)mkdir -p "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries"$(ECHO_END)
 	$(ECHO_NOTHING)cp "$(THEOS_PROJECT_DIR)/SBCPUFloatingCCRegistration.plist" "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/SBCPUFloatingCCRegistration.plist"$(ECHO_END)
 	$(ECHO_NOTHING)mkdir -p "$(THEOS_STAGING_DIR)/Library/LaunchDaemons"$(ECHO_END)

@@ -31,6 +31,9 @@
 #import "SBCPUThermalPaths.h"
 #import "SBCPUChargeStore.h"
 #import "SBCPUChargeDayNight.h"
+#import "SBCPUBatteryMetrics.h"
+#import "SBCPUMemoryMetrics.h"
+#import "SBCPUFloatingDisplayPolicy.h"
 #import "SBCPUThermalPressure.h"
 #import "Shared/LGLiveBackdropView.h"
 
@@ -1583,6 +1586,10 @@ static NSString *getNetworkType(void) {
 }
 
 static NSDictionary *getRealBatteryDetails(void) {
+    // Reuse existing registry reads; ETA never creates its own IO/socket timer.
+    static NSMutableArray *etaHistory = nil;
+    static dispatch_once_t etaOnce;
+    dispatch_once(&etaOnce, ^{ etaHistory = [NSMutableArray array]; });
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
     io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
     if (service) {
@@ -1599,8 +1606,14 @@ static NSDictionary *getRealBatteryDetails(void) {
             dict[@"Temperature"] = pDict[@"Temperature"];
             dict[@"Amperage"] = pDict[@"Amperage"] ?: pDict[@"InstantAmperage"];
             dict[@"Voltage"] = pDict[@"Voltage"];
-            dict[@"Manufacturer"] = pDict[@"Manufacturer"];
+            dict[@"Manufacturer"] = SBCPUBatteryManufacturerFromProperties(pDict);
             dict[@"AvgTimeToFull"] = pDict[@"AvgTimeToFull"];
+            NSDictionary *etaSnapshot = SBCPUBatterySnapshot(pDict, [NSProcessInfo processInfo].systemUptime);
+            @synchronized (etaHistory) {
+                SBCPUBatteryAppendSample(etaHistory, etaSnapshot);
+                dict[@"SBCPUEtaSnapshot"] = etaSnapshot;
+                dict[@"SBCPUEtaHistory"] = [etaHistory copy];
+            }
             if (pDict[@"AdapterDetails"]) {
                 NSDictionary *ad = pDict[@"AdapterDetails"];
                 dict[@"Watts"] = ad[@"Watts"];
@@ -1616,6 +1629,9 @@ static NSDictionary *getRealBatteryDetails(void) {
             CFRelease(prop);
         }
         IOObjectRelease(service);
+    }
+    if (!dict[@"SBCPUEtaSnapshot"]) {
+        @synchronized (etaHistory) { [etaHistory removeAllObjects]; }
     }
     return dict;
 }
@@ -3396,6 +3412,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         _statusDot = [[UIView alloc] initWithFrame:CGRectMake(8, 9, 10, 10)];
         _statusDot.layer.cornerRadius = 5.0f;
         _statusDot.backgroundColor = [UIColor blackColor];
+        _statusDot.hidden = YES; // Expanded initial state; folded layout restores its indicator.
         [_collapsedContainerView addSubview:_statusDot];
 
         _miniCpuLabel = [[UILabel alloc] initWithFrame:CGRectMake(22, 5, 45, 18)];
@@ -3775,6 +3792,7 @@ return self;
                          isCharging:(BOOL)isCharging {
 
     if (self.isCollapsed && !self.isShowingNotification) return;
+    if (!self.isCollapsed) _statusDot.hidden = YES;
 
     BOOL hasUnread = (historyNotifications.count > 0 && !self.isShowingNotification);
     self.badgeLabel.hidden = !hasUnread;
@@ -4366,6 +4384,7 @@ return self;
         return;
     }
     _isCollapsed = NO;
+    _statusDot.hidden = YES;
     self.collapsedContainerView.hidden = NO;
     self.collapsedContainerView.alpha = 0.0;
     self.notificationContainer.hidden = YES;
@@ -4788,11 +4807,10 @@ return self;
         } else if (cpu >= 80.0 || temp >= 42.0) statusColor = [UIColor systemRedColor];
         else if (temp >= 38.0) statusColor = [UIColor systemOrangeColor];
         _statusDot.backgroundColor = statusColor;
-        // 兜底：折叠态下横屏四段胶囊强制隐藏状态圆点（防任何路径遗漏/时序问题）
-        if (self.isCollapsed) {
-            BOOL isLandscapeNow = ([UIScreen mainScreen].bounds.size.width > [UIScreen mainScreen].bounds.size.height);
-            _statusDot.hidden = isLandscapeNow;
-        }
+        // Refresh must agree with collapsed layout: top status text has no dot.
+        // Keep the ordinary folded dot and all capsule dimensions/positions unchanged.
+        BOOL dotLandscape = ([UIScreen mainScreen].bounds.size.width > [UIScreen mainScreen].bounds.size.height);
+        _statusDot.hidden = SBCPUStatusDotHidden(self.isCollapsed, statusBarDockEnable, dotLandscape);
     }
     // 更新时间显示（HH:mm:ss）
     NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
@@ -5430,7 +5448,7 @@ static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
 
     NSArray *rightKeys = @[
         @"设备名称", @"软件版本", @"网络信息", @"内网地址",
-        @"实时网速", @"系统总 CPU", @"CPU主频 / FPS", @"内存剩余",
+        @"实时网速", @"系统总 CPU", @"CPU主频 / FPS", @"内存可用",
         @"存储剩余", @"蜂窝/WiFi", @"运动信息", @"设备运行"
     ];
 
@@ -5445,6 +5463,12 @@ static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
         UILabel *lbl = [self createRowWithTitle:key x:10 + colW y:startY + i * rowH width:colW parent:contentView];
         _labelsDict[key] = lbl;
     }
+    UILabel *dataNote = [[UILabel alloc] initWithFrame:CGRectMake(10 + colW, startY + rightKeys.count * rowH + 5, colW - 12, 52)];
+    dataNote.text = @"内存可用含可回收页，为系统级估算；MiB/GiB 按 1024 换算。电池厂商为硬件上报，不能据此验证零售品牌或是否原装；充满时间仅供参考。";
+    dataNote.font = [UIFont systemFontOfSize:8.5];
+    dataNote.textColor = [UIColor darkGrayColor];
+    dataNote.numberOfLines = 0;
+    [contentView addSubview:dataNote];
 }
 
 - (UILabel *)createRowWithTitle:(NSString *)title x:(CGFloat)x y:(CGFloat)y width:(CGFloat)width parent:(UIView *)parent {
@@ -5519,21 +5543,19 @@ static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
     double health = (designCap > 0) ? ((double)maxCap / (double)designCap * 100.0) : 100.0;
     if (health > 105.0) health = 100.0;
 
-    NSString *mfg = batInfo[@"Manufacturer"] ?: @"Apple";
-    if (mfg.length == 0) mfg = @"Apple";
-
-    _labelsDict[@"电池健康程度"].text = [NSString stringWithFormat:@"%.0f%% %@", health, mfg];
+    // The registry reports a manufacturer, not an authenticated retail brand.
+    // Missing fields must not be silently presented as an original Apple battery.
+    NSString *mfg = SBCPUBatteryManufacturer(batInfo[@"Manufacturer"]);
+    NSNumber *reportedFull = SBCPUBatteryNumber(batInfo[@"MaxCapacity"]);
+    NSString *healthText = reportedFull.doubleValue > 100.0 ? [NSString stringWithFormat:@"%.0f%%", health] : @"健康度未知";
+    _labelsDict[@"电池健康程度"].text = [NSString stringWithFormat:@"%@ · %@", healthText, mfg];
 
     NSInteger cycles = [batInfo[@"CycleCount"] integerValue];
     _labelsDict[@"电池循环次数"].text = [NSString stringWithFormat:@"%ld次", (long)cycles];
 
     BOOL charging = isChargingInternal();
-    NSInteger timeToFull = [batInfo[@"AvgTimeToFull"] integerValue];
-    if (charging && timeToFull > 0 && timeToFull < 600) {
-        _labelsDict[@"电池预计充满"].text = [NSString stringWithFormat:@"%ld小时 %ld分钟", (long)(timeToFull / 60), (long)(timeToFull % 60)];
-    } else {
-        _labelsDict[@"电池预计充满"].text = charging ? @"计算中..." : @"未在充电";
-    }
+    _labelsDict[@"电池预计充满"].text = SBCPUBatteryETAText(batInfo[@"SBCPUEtaSnapshot"],
+        batInfo[@"SBCPUEtaHistory"] ?: @[], [NSProcessInfo processInfo].systemUptime);
 
     NSNumber *ratedWatts = batInfo[@"Watts"];
     NSString *chargerTypeStr = batInfo[@"ChargerType"] ?: @"PD 快充";
@@ -5655,23 +5677,35 @@ static NSString *bandItemDisplayName(NSInteger g, NSInteger v) {
     double fps = [SBCPUFPSHelper sharedInstance].currentFPS;
     _labelsDict[@"CPU主频 / FPS"].text = [NSString stringWithFormat:@"%.0fMHz | %.0fFPS", freq, fps];
 
-    uint64_t memsize = 0;
-    size_t size = sizeof(memsize);
-    if (sysctlbyname("hw.memsize", &memsize, &size, NULL, 0) != 0 || memsize == 0) {
-        memsize = [NSProcessInfo processInfo].physicalMemory;
+    _labelsDict[@"内存可用"].text = @"读取失败";
+    uint64_t kernelTotalBytes = 0;
+    size_t kernelTotalSize = sizeof(kernelTotalBytes);
+    if (sysctlbyname("hw.memsize", &kernelTotalBytes, &kernelTotalSize, NULL, 0) != 0 || kernelTotalSize != sizeof(kernelTotalBytes))
+        kernelTotalBytes = 0;
+    uint64_t physicalTotalBytes = [NSProcessInfo processInfo].physicalMemory;
+    mach_port_t hostPort = mach_host_self();
+    vm_size_t pageSize = 0;
+    vm_statistics64_data_t vmStat;
+    memset(&vmStat, 0, sizeof(vmStat));
+    mach_msg_type_number_t hostSize = HOST_VM_INFO64_COUNT;
+    kern_return_t statisticsResult = KERN_FAILURE;
+    if (host_page_size(hostPort, &pageSize) == KERN_SUCCESS && pageSize > 0)
+        statisticsResult = host_statistics64(hostPort, HOST_VM_INFO64, (host_info64_t)&vmStat, &hostSize);
+    if (hostPort != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), hostPort);
+    SBCPUMemoryPageCounters counters = {0, 0, 0, 0};
+    SBCPUMemoryMetrics metrics;
+    if (statisticsResult == KERN_SUCCESS) {
+        counters.free_count = vmStat.free_count;
+        counters.inactive_count = vmStat.inactive_count;
+        counters.speculative_count = vmStat.speculative_count;
+        counters.purgeable_count = vmStat.purgeable_count;
     }
-    uint64_t totalRAM_GB = (uint64_t)ceil((double)memsize / (1024.0 * 1024.0 * 1024.0));
-    if (totalRAM_GB == 0) totalRAM_GB = 6;
-
-    mach_port_t host_port = mach_host_self();
-    mach_msg_type_number_t host_size = sizeof(vm_statistics64_data_t) / sizeof(integer_t);
-    vm_size_t pagesize;
-    host_page_size(host_port, &pagesize);
-    vm_statistics64_data_t vm_stat;
-    if (host_statistics64(host_port, HOST_VM_INFO64, (host_info64_t)&vm_stat, &host_size) == KERN_SUCCESS) {
-        uint64_t freeBytes = (uint64_t)(vm_stat.free_count + vm_stat.inactive_count + vm_stat.speculative_count) * (uint64_t)pagesize;
-        uint64_t freeMB = freeBytes / (1024 * 1024);
-        _labelsDict[@"内存剩余"].text = [NSString stringWithFormat:@"%lluMB / %lluGB", freeMB, totalRAM_GB];
+    if (statisticsResult == KERN_SUCCESS &&
+        SBCPUMemoryMetricsCompute(&counters, pageSize, kernelTotalBytes, physicalTotalBytes, &metrics)) {
+        // XNU free_count already contains speculative pages. Inactive is reclaimable,
+        // not guaranteed immediately allocatable; no invented 6 GB on read failure.
+        _labelsDict[@"内存可用"].text = [NSString stringWithFormat:@"%.0f MiB / %.2f GiB",
+            metrics.available_bytes / (1024.0 * 1024.0), metrics.total_bytes / (1024.0 * 1024.0 * 1024.0)];
     }
 
     NSDictionary *fsAttrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:NSHomeDirectory() error:nil];
@@ -6230,7 +6264,7 @@ static void applySettingsTheme(UITableViewCell *cell, NSIndexPath *indexPath) {
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    self.title = @"SBCPUFloating";
+    self.title = @"灵动监测";
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
                                                      target:self

@@ -55,12 +55,6 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>功能介绍</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
 			<string>录屏与显示安全</string>
 			<key>footerText</key>
 			<string>录屏高帧率增强默认关闭。开启后仅在 RPScreenRecorder 报告录屏期间临时提高显示请求；不保证录屏文件为 120fps，低电量或系统临界温度时自动让位。温控防暗屏不拦截系统熄屏、锁屏或热安全路径。</string>
@@ -112,66 +106,6 @@
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>不弹出高温警告</string><key>key</key><string>thermalBlockNotifPopup</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 		<dict>
 			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>CPU / FPS</string>
-			<key>footerText</key>
-			<string>实时查看当前设备的 CPU 负载、物理频率与屏幕刷新帧率。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>▣ 电池 / 温度</string>
-			<key>footerText</key>
-			<string>精准读取真实电池电量、硬件级温度与充放电电流。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>▣ 通知中心与悬浮聊天</string>
-			<key>footerText</key>
-			<string>无缝显示微信/QQ消息，点击直达聊天窗口。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>手势使用说明</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSTitleValueCell</string>
-			<key>label</key>
-			<string>👆 单击浮窗</string>
-			<key>get</key>
-			<string></string>
-			<key>value</key>
-			<string>展开胶囊 / 消息直达</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSTitleValueCell</string>
-			<key>label</key>
-			<string>👆 长按浮窗</string>
-			<key>get</key>
-			<string></string>
-			<key>value</key>
-			<string>查看详细硬件状态</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSTitleValueCell</string>
-			<key>label</key>
-			<string>🤚 拖动浮窗</string>
-			<key>get</key>
-			<string></string>
-			<key>value</key>
-			<string>自由移动与边缘吸附</string>
-		</dict>
-		<dict>
-			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
 			<string>🌐 莫忘越狱源</string>
@@ -182,11 +116,11 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>SBCPU Floating V3.0 by MoWang</string>
+			<string>灵动监测 · MoWang</string>
 		</dict>
 	</array>
 	<key>title</key>
-	<string>SBCPU Floating</string>
+	<string>灵动监测</string>
 </dict>
 </plist>
 
