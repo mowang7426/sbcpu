@@ -46,7 +46,12 @@ assert 'totalRAM_GB = 6' not in text
 assert 'vm_stat.free_count + vm_stat.inactive_count + vm_stat.speculative_count' not in text
 assert 'SBCPUStatusDotHidden(self.isCollapsed, statusBarDockEnable, dotLandscape)' in text
 assert '_miniCpuLabel.frame = CGRectMake(22, 5, 45, 18);' in text
-assert 'kPrefAppID CFSTR("com.yourname.sbcpufloating")' in text
+charge = (root / 'sbcpuprefs/SBCPUChargeHistoryController.m').read_text()
+assert 'initWithTitle:@"清空"' in charge
+assert 'com.sbcpu.floating.charge-history.clear' in charge
+assert '全部清空' in charge
+assert 'onChargeHistoryClearRequested' in text
+assert 'CFSTR("com.sbcpu.floating.charge-history.clear")' in text
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--staged', type=Path)

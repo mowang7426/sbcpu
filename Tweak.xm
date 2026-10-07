@@ -1954,6 +1954,13 @@ static void clearChargeSessions(void) {
     saveChargeSessionsToDisk();
 }
 
+static void onChargeHistoryClearRequested(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
+    if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
+        clearChargeSessions();
+    }
+}
+
 // 本机时间格式化（充电历史用）
 static NSString *formatSessionStartTime(NSTimeInterval secs) {
     NSDate *d = [NSDate dateWithTimeIntervalSinceReferenceDate:secs];
@@ -10514,6 +10521,7 @@ static void onPartRepairBundleDidLoad(CFNotificationCenterRef center, void *obse
     NSString *processName = [NSProcessInfo processInfo].processName;
     if ([processName isEqualToString:@"SpringBoard"]) {
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onPluginScanRequested, CFSTR("com.sbcpu.floating.plugin-scan.request"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onChargeHistoryClearRequested, CFSTR("com.sbcpu.floating.charge-history.clear"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         LoadPreferences();
         registerThermalHeartbeatListener();
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onCCNotificationReceived, kPrefChangedNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);

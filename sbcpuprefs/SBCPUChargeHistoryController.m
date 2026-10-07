@@ -20,10 +20,31 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"充电历史";
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"清空" style:UIBarButtonItemStylePlain target:self action:@selector(clearAll)];
     [self reloadHistory];
 }
 
-- (void)viewWillAppear:(BOOL)animated {
+- (void)clearAll {
+    if (!self.sessions.count) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"暂无记录" message:@"还没有可清空的充电历史。" preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"好的" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"清空充电历史" message:[NSString stringWithFormat:@"确定删除全部 %lu 条记录？此操作不可恢复。", (unsigned long)self.sessions.count] preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"全部清空" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        (void)action;
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sbcpu.floating.charge-history.clear"), NULL, NULL, YES);
+        [[NSFileManager defaultManager] removeItemAtPath:@"/var/mobile/Library/Preferences/com.sbcpu.floating.charge-sessions.json" error:nil];
+        self.sessions = @[];
+        self->_specifiers = nil;
+        [self reloadSpecifiers];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+
     [super viewWillAppear:animated];
     [self reloadHistory];
 }
