@@ -39,7 +39,7 @@ jobs:
           clang -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
             tests/battery_metrics.m -o "$TMP_PANEL/battery"
           "$TMP_PANEL/battery"
-          clang -x objective-c++ -std=c++11 -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
+          clang++ -x objective-c++ -std=c++11 -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
             tests/battery_metrics.m -o "$TMP_PANEL/battery-cxx"
           "$TMP_PANEL/battery-cxx"
           sh tests/memory_metrics.sh
