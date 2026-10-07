@@ -816,7 +816,7 @@
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>label</key>
-			<string>强制满血快充</string>
+			<string>快充辅助（安全模式）</string>
 			<key>key</key>
 			<string>forceFastChargeEnable</string>
 			<key>default</key>

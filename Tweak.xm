@@ -2588,9 +2588,9 @@ static void updateCPU(void) {
         double current = getBatteryCurrentInternal();
         BOOL charging = isChargingInternal();
 
-        if (chargeBoostEnable && charging) {
+        if ((chargeBoostEnable || forceFastChargeEnable) && charging) {
             applyExperimentalChargeLimit100(YES);
-        } else if (!chargeBoostEnable && chargeLimit100Applied) {
+        } else if (!chargeBoostEnable && !forceFastChargeEnable && chargeLimit100Applied) {
             applyExperimentalChargeLimit100(NO);
         }
         BOOL chargingStateChanged = (charging != previousChargingState);
@@ -2633,7 +2633,7 @@ static void updateCPU(void) {
         chargeBoostStatus = [getChargeBoostStatus(chargeWatts, temp, battery, charging) copy];
         // 保留原有充电状态显示：强制满血快充 > 充电增强 > 普通状态。
         if (forceFastChargeEnable && charging) {
-            floatingView.statusLabel.text = [NSString stringWithFormat:@"🔥 强制满血快充 · %.1fW", chargeWatts];
+            floatingView.statusLabel.text = [NSString stringWithFormat:@"🔋 快充辅助（安全模式） · %.1fW", chargeWatts];
             floatingView.statusLabel.textColor = [UIColor systemRedColor];
             floatingView.statusDot.backgroundColor = floatingView.statusLabel.textColor;
         } else if (chargeBoostEnable && charging) {
@@ -4735,7 +4735,7 @@ return self;
         } else if (forceFastChargeEnable && isCharging) {
             NSDictionary *chargeInfo = getRealBatteryDetails();
             double watts = [chargeInfo[@"CalculatedWatts"] doubleValue];
-            _statusLabel.text = [NSString stringWithFormat:@"🔥 强制满血快充 · %.1fW", MAX(0.0, watts)];
+            _statusLabel.text = [NSString stringWithFormat:@"🔋 快充辅助（安全模式） · %.1fW", MAX(0.0, watts)];
             _statusLabel.textColor = [UIColor systemRedColor];
         } else if (chargeBoostEnable && isCharging) {
             NSDictionary *chargeInfo = getRealBatteryDetails();
@@ -7444,8 +7444,8 @@ static NSString *stripLeadingEmoji(NSString *s) {
             [sw addTarget:self action:@selector(changeChargeBoost:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = sw;
         } else if (indexPath.row == 1) {
-            cell.textLabel.text = @"🔥 强制满血快充";
-            cell.detailTextLabel.text = @"保留原有快充控制";
+            cell.textLabel.text = @"🔋 快充辅助（安全模式）";
+            cell.detailTextLabel.text = @"尝试设为100%上限，不绕过温控";
             UISwitch *sw = [UISwitch new];
             sw.on = forceFastChargeEnable;
             [sw addTarget:self action:@selector(changeForceFastCharge:) forControlEvents:UIControlEventValueChanged];
@@ -9224,8 +9224,8 @@ static void detectPluginConflicts(void) {
     if (sw.isOn) {
         sw.on = NO;
         forceFastChargeEnable = NO;
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚠️ 极度危险警告"
-                                                                         message:@"强制快充会绕过部分原厂充电限制，充电时可能明显升温。仅建议在充分散热条件下使用。"
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"安全充电提示"
+                                                                         message:@"此开关仅尝试将电池充电上限设为 100%，不会绕过苹果原厂温度、电流或过热保护，也不能保证提高充电功率。实际功率由充电器、线材、电池温度及系统策略决定。"
                                                                   preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
             (void)action;
@@ -9237,6 +9237,7 @@ static void detectPluginConflicts(void) {
             (void)action;
             forceFastChargeEnable = YES;
             sw.on = YES;
+            applyExperimentalChargeLimit100(YES);
             SavePreferencesAndNotify();
         }]];
         [self presentViewController:alert animated:YES completion:nil];
@@ -9244,6 +9245,7 @@ static void detectPluginConflicts(void) {
         // 关闭时先同步全局状态，再保存，避免旧状态被重新写回 YES。
         forceFastChargeEnable = NO;
         sw.on = NO;
+        applyExperimentalChargeLimit100(chargeBoostEnable);
         SavePreferencesAndNotify();
     }
 }
