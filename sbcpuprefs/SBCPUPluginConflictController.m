@@ -2,6 +2,7 @@
 #import <UIKit/UIKit.h>
 #import <Preferences/PSListController.h>
 #import <Preferences/PSSpecifier.h>
+#import "SBCPUPluginGroups.h"
 
 @interface SBCPUPluginConflictController : PSListController
 @property(nonatomic,copy) NSArray<NSDictionary *> *results;
@@ -67,16 +68,6 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
         } else {
             [items addObject:[PSSpecifier preferenceSpecifierNamed:@"进入此页面后会自动扫描；也可点上方按钮重新扫描。" target:nil set:NULL get:NULL detail:Nil cell:PSStaticTextCell edit:nil]];
         }
-        if (_plugins.count) {
-            [items addObject:[PSSpecifier groupSpecifierWithName:[NSString stringWithFormat:@"已扫描插件（%lu）— 点按查看注入进程", (unsigned long)_plugins.count]]];
-            for (NSDictionary *plugin in _plugins) {
-                NSString *name = plugin[@"name"] ?: @"未知插件";
-                PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:name target:self set:NULL get:NULL detail:nil cell:PSButtonCell edit:nil];
-                [row setProperty:plugin forKey:@"pluginInfo"];
-                [row setButtonAction:@selector(showPluginDetail:)];
-                [items addObject:row];
-            }
-        }
         if (self.scanPath.length) {
             [items addObject:[PSSpecifier preferenceSpecifierNamed:[NSString stringWithFormat:@"扫描目录：%@", self.scanPath] target:nil set:NULL get:NULL detail:nil cell:PSStaticTextCell edit:nil]];
         }
@@ -99,6 +90,24 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
                 [items addObject:row];
             }
         }
+        if (_plugins.count) {
+            NSArray<NSDictionary *> *groups = SBCPUPluginDisplayGroups(_plugins);
+            for (NSDictionary *group in groups) {
+                NSArray<NSDictionary *> *members = group[@"plugins"];
+                PSSpecifier *header = [PSSpecifier groupSpecifierWithName:[NSString stringWithFormat:@"%@（%lu）", group[@"category"], (unsigned long)members.count]];
+                if (group == groups.firstObject) {
+                    [header setProperty:@"点按插件查看注入进程。分类来自扫描器规则及名称/描述关键词，属于自动估算；同类不代表已确认冲突。" forKey:@"footerText"];
+                }
+                [items addObject:header];
+                for (NSDictionary *plugin in members) {
+                    PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:SBCPUPluginDisplayName(plugin) target:self set:NULL get:NULL detail:nil cell:PSButtonCell edit:nil];
+                    [row setProperty:plugin forKey:@"pluginInfo"];
+                    [row setButtonAction:@selector(showPluginDetail:)];
+                    [row setProperty:@YES forKey:@"enabled"];
+                    [items addObject:row];
+                }
+            }
+        }
         _specifiers = items;
     }
     return _specifiers;
@@ -109,7 +118,7 @@ static void SBCPUPluginScanFinished(CFNotificationCenterRef center, void *observ
     if (!plugin) return;
     NSArray *targets = plugin[@"injectedBundles"] ?: @[];
     NSString *targetText = [plugin[@"injectionKnown"] boolValue] && targets.count ? [targets componentsJoinedByString:@"\n"] : @"无法从已识别规则确认注入进程（可能全局注入、过滤格式暂不支持或无过滤项）。";
-    NSString *message = [NSString stringWithFormat:@"分类：%@\n版本：%@\nBundle ID：%@\n\n注入进程：\n%@\n\n%@", plugin[@"category"] ?: @"其他", plugin[@"version"] ?: @"未知", plugin[@"bundleID"] ?: @"未知", targetText, plugin[@"desc"] ?: @""];
+    NSString *message = [NSString stringWithFormat:@"分类（自动估算）：%@\n版本：%@\nBundle ID：%@\n\n注入进程：\n%@\n\n%@", SBCPUPluginDisplayCategory(plugin), plugin[@"version"] ?: @"未知", plugin[@"bundleID"] ?: @"未知", targetText, plugin[@"desc"] ?: @""];
     [self showMessage:message title:plugin[@"name"] ?: @"插件详情"];
 }
 

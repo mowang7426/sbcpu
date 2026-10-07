@@ -24,6 +24,14 @@ jobs:
           "$TMP_STORE/test"
           python3 tests/charge_regression.py
 
+      - name: Plugin grouping regression
+        run: |
+          set -e
+          TMP_GROUPS=$(mktemp -d)
+          clang -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
+            tests/plugin_groups.m -o "$TMP_GROUPS/test"
+          "$TMP_GROUPS/test"
+
       - name: Install dependencies
         run: |
           brew install make dpkg ldid xz
