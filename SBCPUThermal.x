@@ -296,9 +296,13 @@ return enabled && blockPopup;
 }
 
 static BOOL thermalDimmingPreventionEnabled(void) {
-    // 安全策略：不再以 thermalmonitord 配置或 IOKit 写入阻止暗屏。
-    // 系统熄屏、锁屏和热安全路径始终由 iOS 管理；保留偏好键仅用于兼容旧设置。
-    return NO;
+    // 这个开关以前被硬编码为 NO，导致设置页虽然能开启，核心实际上永远不执行。
+    // 现在恢复为真正读取实时配置；只拦截 thermalmonitord 的背光热限制，
+    // 不干预系统锁屏/熄屏时序，也不修改电池/充电安全保护。
+    BOOL enabled = NO;
+    BOOL preventDimming = NO;
+    runtimeConfigSnapshot(&enabled, NULL, NULL, NULL, &preventDimming);
+    return enabled && preventDimming;
 }
 
 static CommonProduct *commonProductSnapshot(void) {
