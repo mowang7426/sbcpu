@@ -18,6 +18,12 @@
 // 把旧缓存写回并把开关恢复为关闭。
 - (id)getPreferenceValue:(PSSpecifier *)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
+    if ([key isEqualToString:@"respringPreserveNativeUnlockEnabled"]) {
+        CFPreferencesSynchronize(CFSTR("com.yourname.sbcpufloating"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        CFPropertyListRef stored = CFPreferencesCopyValue((__bridge CFStringRef)key, CFSTR("com.yourname.sbcpufloating"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        id value = stored ? CFBridgingRelease(stored) : nil;
+        return [value isKindOfClass:[NSNumber class]] ? @([value boolValue]) : @NO;
+    }
     if ([key isEqualToString:@"screenRecordingHighFrameRateEnabled"])
         return SBChargeRead()[key] ?: @NO;
     NSArray *thermalKeys = @[@"thermalEngineEnabled", @"powerMode", @"thermalPressureAutoProtectionEnabled", @"thermalLockScreenLowPowerEnabled", @"thermalNominalAutoRecoveryEnabled", @"thermalPreventDimmingEnabled", @"thermalBlockNotifPopup"];
@@ -30,6 +36,14 @@
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
+    if ([key isEqualToString:@"respringPreserveNativeUnlockEnabled"]) {
+        CFPreferencesSetValue((__bridge CFStringRef)key, [value boolValue] ? kCFBooleanTrue : kCFBooleanFalse, CFSTR("com.yourname.sbcpufloating"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        if (CFPreferencesSynchronize(CFSTR("com.yourname.sbcpufloating"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost)) {
+            notify_post("com.yourname.sbcpufloating/settingsChanged");
+            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.yourname.sbcpufloating.prefschanged"), NULL, NULL, YES);
+        }
+        return;
+    }
     if ([key isEqualToString:@"screenRecordingHighFrameRateEnabled"]) {
         if (SBChargePatch(@{key: @([value boolValue])})) {
             notify_post("com.yourname.sbcpufloating/settingsChanged");

@@ -10509,6 +10509,19 @@ static void onPartRepairBundleDidLoad(CFNotificationCenterRef center, void *obse
 }
 %end
 
+// Request the native crash/respring policy only; never grant authentication.
+// Read at query time so the first boot-policy query sees the persisted switch,
+// without saving or replaying any previous lock/authentication state.
+%group SBCPUNativeRespringPolicy
+%hook SBBootDefaults
+- (BOOL)dontLockAfterCrash {
+    CFPreferencesSynchronize(kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    if (getBoolPref(CFSTR("respringPreserveNativeUnlockEnabled"), NO)) return YES;
+    return %orig;
+}
+%end
+%end
+
 #pragma mark - 10. 构造函数入口
 
 %ctor {
@@ -10522,6 +10535,10 @@ static void onPartRepairBundleDidLoad(CFNotificationCenterRef center, void *obse
     installReferenceRepairHooks();
     NSString *processName = [NSProcessInfo processInfo].processName;
     if ([processName isEqualToString:@"SpringBoard"]) {
+        Class bootDefaultsClass = NSClassFromString(@"SBBootDefaults");
+        if (bootDefaultsClass && class_getInstanceMethod(bootDefaultsClass, @selector(dontLockAfterCrash))) {
+            %init(SBCPUNativeRespringPolicy);
+        }
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onPluginScanRequested, CFSTR("com.sbcpu.floating.plugin-scan.request"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onChargeHistoryClearRequested, CFSTR("com.sbcpu.floating.charge-history.clear"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         LoadPreferences();

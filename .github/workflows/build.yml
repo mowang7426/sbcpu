@@ -12,6 +12,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Native respring policy regression
+        run: python3 tests/respring_native_policy.py
+
       - name: Charge configuration regression
         run: |
           set -e

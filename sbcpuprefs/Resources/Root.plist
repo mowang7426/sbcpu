@@ -5,6 +5,20 @@
 	<key>items</key>
 	<array>
 		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>注销便利（实验性）</string>
+			<key>footerText</key><string>面向 iOS 17.0，默认关闭。开启仅请求系统原生 dontLockAfterCrash 尽量保留注销前的解锁状态，不覆盖认证、不伪造凭据。是否保留由系统决定，不能保证已锁屏时或重启后的行为；重启后的认证仍由系统控制。未完成真机验证。</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSSwitchCell</string>
+			<key>label</key><string>注销后尽量保持解锁</string>
+			<key>key</key><string>respringPreserveNativeUnlockEnabled</string>
+			<key>defaults</key><string>com.yourname.sbcpufloating</string>
+			<key>default</key><false/>
+			<key>get</key><string>getPreferenceValue:</string>
+			<key>set</key><string>setPreferenceValue:specifier:</string>
+		</dict>
+		<dict>
 			<key>cell</key><string>PSLinkCell</string>
 			<key>label</key><string>浮窗全部设置</string>
 			<key>detail</key><string>SBCPUFloatingAdvancedController</string>
