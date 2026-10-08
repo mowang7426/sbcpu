@@ -3,6 +3,7 @@
 #import "SBCPUPrefsRootListController.h"
 #import "../SBCPUChargeStore.h"
 #import "../include/SBCPUThermalPaths.h"
+#import "SBCPUThermalPreferenceUI.h"
 #import <notify.h>
 
 @implementation SBCPUPrefsRootListController
@@ -26,10 +27,8 @@
     }
     if ([key isEqualToString:@"screenRecordingHighFrameRateEnabled"])
         return SBChargeRead()[key] ?: @NO;
-    NSArray *thermalKeys = @[@"thermalEngineEnabled", @"powerMode", @"thermalPressureAutoProtectionEnabled", @"thermalLockScreenLowPowerEnabled", @"thermalNominalAutoRecoveryEnabled", @"thermalPreventDimmingEnabled", @"thermalBlockNotifPopup"];
-    if ([thermalKeys containsObject:key]) {
-        NSDictionary *prefs = SBCPUThermalReadPrefs();
-        return prefs[key] ?: ([key isEqualToString:@"powerMode"] ? @"fullPower" : @YES);
+    if (SBCPUIsThermalPreference(key)) {
+        return SBCPUThermalPreferenceValue(SBCPUThermalReadPrefs(), key, [specifier propertyForKey:@"default"]);
     }
     return nil;
 }
@@ -51,14 +50,17 @@
         }
         return;
     }
-    NSArray *thermalKeys = @[@"thermalEngineEnabled", @"powerMode", @"thermalPressureAutoProtectionEnabled", @"thermalLockScreenLowPowerEnabled", @"thermalNominalAutoRecoveryEnabled", @"thermalPreventDimmingEnabled", @"thermalBlockNotifPopup"];
-    if ([thermalKeys containsObject:key]) {
-        NSMutableDictionary *prefs = [SBCPUThermalReadPrefs() mutableCopy] ?: [NSMutableDictionary dictionary];
-        prefs[key] = value ?: @NO;
-        if (SBCPUThermalWritePrefs(prefs)) {
-            notify_post("com.yourname.sbcpufloating/settingsChanged");
-            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.yourname.sbcpufloating.prefschanged"), NULL, NULL, YES);
-            if ([key isEqualToString:@"powerMode"]) SBCPUThermalPostPowerMode(prefs[key]);
+    if (SBCPUIsThermalPreference(key)) {
+        if (!SBCPUSaveThermalPreference(key, value)) {
+            // Defer until the switch finishes its optimistic UI update, then reread disk.
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self reloadSpecifiers];
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"温控设置未保存"
+                    message:@"写入偏好失败。已重新读取现有配置；本次更改未发送给温控核心。"
+                    preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:alert animated:YES completion:nil];
+            });
         }
         return;
     }

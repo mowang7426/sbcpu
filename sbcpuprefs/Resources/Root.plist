@@ -104,7 +104,7 @@
 		<dict>
 			<key>cell</key><string>PSGroupCell</string>
 			<key>label</key><string>修改温控 bug</string>
-			<key>footerText</key><string>修改温控 bug：极限满频在 App、桌面与前后台切换时同步性能状态；保留系统与硬件临界温度安全保护。</string>
+			<key>footerText</key><string>修改温控 bug：极限满频在 App、桌面与前后台切换时同步性能状态；保留系统与硬件临界温度安全保护。以下温控选项受温度保护总开关控制；关闭总开关时子选项不生效。“尝试抑制高温通知弹窗”仅针对已有通知路径，不保证隐藏系统全屏高温保护界面，也不解除系统安全保护。</string>
 		</dict>
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>温度保护总开关</string><key>key</key><string>thermalEngineEnabled</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 		<dict>
@@ -117,7 +117,7 @@
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>锁屏省电保护</string><key>key</key><string>thermalLockScreenLowPowerEnabled</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>温度正常后自动恢复</string><key>key</key><string>thermalNominalAutoRecoveryEnabled</string><key>default</key><true/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>温控防暗屏</string><key>key</key><string>thermalPreventDimmingEnabled</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
-		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>不弹出高温警告</string><key>key</key><string>thermalBlockNotifPopup</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
+		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>尝试抑制高温通知弹窗</string><key>key</key><string>thermalBlockNotifPopup</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 		<dict>
 			<key>cell</key>
 			<string>PSButtonCell</string>
