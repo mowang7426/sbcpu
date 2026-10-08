@@ -1,3 +1,4 @@
+#import "SBCPUTextOnlyPolicy.h"
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -238,6 +239,8 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) UITapGestureRecognizer *singleTapGesture;
 @property (nonatomic, strong) UILongPressGestureRecognizer *longPressGesture;
 
+- (void)applyLiquidGlassStyle;
+- (void)refreshNativeLiquidGlass;
 - (void)resetInactivityTimer;
 - (void)scheduleStatusDockReturn;
 - (void)returnToStatusDock;
@@ -333,6 +336,21 @@ static NSTimer *gFloatingUpdateTimer = nil;
 static BOOL gCPUUpdatePending = NO;
 static NSTimeInterval floatingValueRefreshInterval = 1.0;
 static BOOL statusBarDockEnable = NO; // 开启后浮窗吸附到顶部状态栏安全区域
+
+// Presentation-only mode: never overwrite normal docking/geometry preferences.
+static BOOL floatingTextOnlyMode = NO;
+static NSInteger floatingTextOnlyPreset = 1;
+static CGFloat floatingTextOnlyX = 0, floatingTextOnlyY = 0;
+static CGFloat floatingTextOnlyFontSize = 13;
+static NSInteger floatingTextOnlyColor = 0; // 0 experimental difference, 1 white, 2 black
+static UILabel *textOnlyLabel = nil;
+static BOOL textOnlyDragging = NO;
+static BOOL textOnlySnapshotValid = NO, textOnlySnapshotCollapsed = NO;
+static CGPoint textOnlySnapshotCenter;
+static NSMapTable<UIView *, NSNumber *> *textOnlyHiddenSnapshot;
+static float textOnlyShadowOpacity;
+static CGFloat textOnlyBorderWidth;
+static inline BOOL sbcpuStatusBarDockEffective(void) { return SBCPUTextOnlyDockEffective(statusBarDockEnable, floatingTextOnlyMode); }
 static BOOL statusDockShowCPU = YES;
 static BOOL statusDockShowFPS = YES;
 static BOOL statusDockShowFrequency = NO;
@@ -449,6 +467,10 @@ static void createCPUWindow(void);
 static void openDetailView(void);
 static void checkHighCPU(double cpu);
 static void updateCPU(void);
+static void applyTextOnlyMode(void);
+static void applyTextOnlyTextFilter(void);
+static void handleTextOnlyModeTransition(BOOL wasEnabled);
+static void LGRemoveLabelShadowInView(UIView *view);
 
 // ============================================================
 // 📶 SIM 卡信号显示（V4.18.0）
@@ -970,11 +992,12 @@ static void applyVisibility(void) {
 
 static void applyFloatingAlpha(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (floatingView) floatingView.alpha = floatingAlphaEnable ? floatingAlpha : 1.0;
+        if (floatingView) floatingView.alpha = floatingTextOnlyMode ? 1.0 : (floatingAlphaEnable ? floatingAlpha : 1.0);
     });
 }
 
 static void LoadPreferences(void) {
+    BOOL wasTextOnly = floatingTextOnlyMode;
     CFPreferencesAppSynchronize(kPrefAppID);
 
     isEnabled = getBoolPref(CFSTR("isEnabled"), YES);
@@ -1000,6 +1023,12 @@ static void LoadPreferences(void) {
     dockMode = getIntPref(CFSTR("dockMode"), 0);
     rememberPositionEnable = getBoolPref(CFSTR("rememberPositionEnable"), YES);
     statusBarDockEnable = getBoolPref(CFSTR("statusBarDockEnable"), NO);
+    floatingTextOnlyMode = getBoolPref(CFSTR("floatingTextOnlyMode"), NO);
+    floatingTextOnlyPreset = MAX(0, MIN(2, getIntPref(CFSTR("floatingTextOnlyPreset"), 1)));
+    floatingTextOnlyX = SBCPUTextOnlyBound(getFloatPref(CFSTR("floatingTextOnlyX"), 0), -1000, 1000, 0);
+    floatingTextOnlyY = SBCPUTextOnlyBound(getFloatPref(CFSTR("floatingTextOnlyY"), 0), -1000, 1000, 0);
+    floatingTextOnlyFontSize = SBCPUTextOnlyBound(getFloatPref(CFSTR("floatingTextOnlyFontSize"), 13), 8, 24, 13);
+    floatingTextOnlyColor = MAX(0, MIN(2, getIntPref(CFSTR("floatingTextOnlyColor"), 0)));
     statusDockReturnDelay = MAX(1, MIN(30, getIntPref(CFSTR("statusDockReturnDelay"), 5)));
     floatingValueRefreshInterval = MAX(1.0, MIN(2.0, getFloatPref(CFSTR("floatingValueRefreshInterval"), 1.0f)));
     statusDockShowCPU = getBoolPref(CFSTR("statusDockShowCPU"), YES);
@@ -1072,6 +1101,8 @@ static void LoadPreferences(void) {
 
     if ([[NSProcessInfo processInfo].processName isEqualToString:@"SpringBoard"]) {
         applyVisibility();
+        if (floatingView && wasTextOnly != floatingTextOnlyMode) handleTextOnlyModeTransition(wasTextOnly);
+        if (floatingView && floatingTextOnlyMode) applyTextOnlyMode();
         if (showFps || collapsedDisplayMode == 1) {
             [[SBCPUFPSHelper sharedInstance] startMonitoring];
         } else {
@@ -2316,8 +2347,7 @@ static UIInterfaceOrientation getEffectiveFloatingOrientation(void) {
 static CGFloat floatingTopSafeMargin(UIView *container) {
     CGFloat safeTop = 0.0f;
     if (@available(iOS 11.0, *)) safeTop = container.safeAreaInsets.top;
-    if (statusBarDockEnable) return MAX(0.0f, safeTop + 2.0f);
-    return MAX(20.0f, safeTop + (safeTop > 0.0f ? 8.0f : 0.0f));
+    return SBCPUTextOnlyTop(floatingTextOnlyMode, safeTop, sbcpuStatusBarDockEffective());
 }
 
 // 状态栏胶囊尺寸：接近灵动岛，独立于普通竖屏/横屏折叠尺寸。
@@ -2335,7 +2365,7 @@ static inline CGFloat statusBarDockCapsuleHeight(void) { return 38.0f; }
 static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
     if (!floatingView || !floatingView.superview) return;
     // Periodic layout must not cancel the user-selected undocked interval.
-    if (statusBarDockEnable && (floatingView.statusDockDragging || floatingView.statusDockReturnTimer.valid)) return;
+    if (sbcpuStatusBarDockEffective() && (floatingView.statusDockDragging || floatingView.statusDockReturnTimer.valid)) return;
 
     CGRect containerBounds = floatingView.superview.bounds;
     if (CGRectIsEmpty(containerBounds)) containerBounds = [UIScreen mainScreen].bounds;
@@ -2353,8 +2383,8 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
     if (maxY < minY) minY = maxY = containerBounds.size.height / 2.0f;
 
     if (floatingView.isCollapsed) {
-        CGFloat targetW = statusBarDockEnable ? statusBarDockCapsuleWidth() : 68.0f;
-        CGFloat targetH = statusBarDockEnable ? statusBarDockCapsuleHeight() : 28.0f;
+        CGFloat targetW = sbcpuStatusBarDockEffective() ? statusBarDockCapsuleWidth() : 68.0f;
+        CGFloat targetH = sbcpuStatusBarDockEffective() ? statusBarDockCapsuleHeight() : 28.0f;
         CGFloat targetHalfW = targetW / 2.0f;
         CGFloat targetHalfH = targetH / 2.0f;
 
@@ -2363,7 +2393,7 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
         CGFloat colMinY = targetHalfH + floatingTopSafeMargin(floatingView.superview);
         CGFloat colMaxY = containerBounds.size.height - targetHalfH - 10.0f;
 
-        if (statusBarDockEnable) {
+        if (!floatingTextOnlyMode && sbcpuStatusBarDockEffective()) {
             targetCenter.x = containerBounds.size.width * 0.5f;
             targetCenter.y = colMinY;
         } else {
@@ -2371,10 +2401,10 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
             targetCenter.x = isLeft ? colMinX : colMaxX;
             targetCenter.y = MIN(MAX(targetCenter.y, colMinY), colMaxY);
         }
-    } else if (statusBarDockEnable) {
+    } else if (!floatingTextOnlyMode && sbcpuStatusBarDockEffective()) {
         // 状态栏吸附：浮窗整体停在顶部安全区域内，横向位置仍可拖动。
         targetCenter.y = minY;
-    } else if (smartDockEnable) {
+    } else if (!floatingTextOnlyMode && smartDockEnable) {
         if (dockMode == 1) { targetCenter.x = minX; }
         else if (dockMode == 2) { targetCenter.x = maxX; }
         else if (dockMode == 3) { targetCenter.y = minY; }
@@ -2395,7 +2425,7 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
         }
     }
 
-    if (statusBarDockEnable) {
+    if (!floatingTextOnlyMode && sbcpuStatusBarDockEffective()) {
         // 无论展开还是折叠，开启后都停在顶部安全区域。
         targetCenter.y = floatingView.isCollapsed
             ? (floatingView.bounds.size.height * 0.5f + floatingTopSafeMargin(floatingView.superview))
@@ -2414,6 +2444,100 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
     if (animate) {
         [UIView animateWithDuration:0.35 delay:0 usingSpringWithDamping:0.8 initialSpringVelocity:0.5 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:layoutBlock completion:nil];
     } else layoutBlock();
+}
+
+static void applyTextOnlyTextFilter(void) {
+    if (!textOnlyLabel) return;
+    // Experimental compositor path, NOT a verified cross-window iOS API.
+    // Explicit black/white choices are the fallback; no sampling or new timer.
+    @try {
+        textOnlyLabel.layer.compositingFilter = (floatingTextOnlyMode && floatingTextOnlyColor == 0) ? @"differenceBlendMode" : nil;
+    } @catch (__unused NSException *exception) {
+        textOnlyLabel.layer.compositingFilter = nil;
+    }
+    textOnlyLabel.textColor = floatingTextOnlyColor == 2 ? UIColor.blackColor : UIColor.whiteColor;
+}
+
+static void applyTextOnlyMode(void) {
+    if (!floatingView || !floatingTextOnlyMode) return;
+    if (!textOnlyLabel || textOnlyLabel.superview != floatingView) {
+        [textOnlyLabel removeFromSuperview];
+        textOnlyLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+        textOnlyLabel.numberOfLines = 0;
+        textOnlyLabel.backgroundColor = UIColor.clearColor;
+        textOnlyLabel.userInteractionEnabled = NO;
+        [floatingView addSubview:textOnlyLabel];
+    }
+    // Keep original data labels alive, hide their decorative presentation only.
+    for (UIView *view in floatingView.subviews) view.hidden = (view != textOnlyLabel);
+    textOnlyLabel.hidden = NO;
+    floatingView.backgroundColor = UIColor.clearColor;
+    floatingView.layer.shadowOpacity = 0;
+    floatingView.layer.borderWidth = 0;
+    floatingView.alpha = 1;
+    floatingView.isCollapsed = NO;
+    NSMutableArray *lines = [NSMutableArray array];
+    [lines addObject:[NSString stringWithFormat:@"CPU %@%@", floatingView.cpuValueLabel.text ?: @"--",
+        showCpuFrequency ? [NSString stringWithFormat:@"  %@", floatingView.cpuFreqLabel.text ?: @"--"] : @""]];
+    if (showFps) [lines addObject:[NSString stringWithFormat:@"FPS %@", floatingView.fpsValueLabel.text ?: @"--"]];
+    if (showBatteryPercent) [lines addObject:[NSString stringWithFormat:@"电量 %@", floatingView.batteryValueLabel.text ?: @"--"]];
+    if (showBatteryTemperature) [lines addObject:[NSString stringWithFormat:@"温度 %@", floatingView.tempValueLabel.text ?: @"--"]];
+    if (showBatteryCurrent) [lines addObject:[NSString stringWithFormat:@"电流 %@", floatingView.currentValueLabel.text ?: @"--"]];
+    if (floatingView.thermalStatusLabel.text.length) [lines addObject:floatingView.thermalStatusLabel.text];
+    if (showSignalStrength && floatingView.signalLabel.text.length) [lines addObject:floatingView.signalLabel.text];
+    if (floatingView.statusLabel.text.length) [lines addObject:floatingView.statusLabel.text];
+    textOnlyLabel.text = [lines componentsJoinedByString:@"\n"];
+    textOnlyLabel.font = [UIFont monospacedSystemFontOfSize:floatingTextOnlyFontSize weight:UIFontWeightMedium];
+    CGRect container = floatingView.superview.bounds;
+    CGFloat available = MAX(40, MIN(container.size.width, container.size.height) - 8);
+    CGSize size = [textOnlyLabel sizeThatFits:CGSizeMake(available, CGFLOAT_MAX)];
+    floatingView.bounds = CGRectMake(0, 0, ceil(MIN(available, size.width)), ceil(size.height));
+    textOnlyLabel.frame = floatingView.bounds;
+    applyTextOnlyTextFilter();
+}
+
+static void handleTextOnlyModeTransition(BOOL wasEnabled) {
+    if (!floatingView || wasEnabled == floatingTextOnlyMode) return;
+    if (floatingTextOnlyMode) {
+        textOnlySnapshotValid = YES;
+        textOnlySnapshotCollapsed = floatingView.isCollapsed || sbcpuStatusBarDockEffective();
+        textOnlySnapshotCenter = keyboardMoved ? CGPointMake(CGRectGetMidX(keyboardBeforeFrame), CGRectGetMidY(keyboardBeforeFrame)) : floatingView.center;
+        keyboardMoved = NO;
+        textOnlyDragging = NO;
+        textOnlyShadowOpacity = floatingView.layer.shadowOpacity;
+        textOnlyBorderWidth = floatingView.layer.borderWidth;
+        textOnlyHiddenSnapshot = [NSMapTable weakToStrongObjectsMapTable];
+        for (UIView *view in floatingView.subviews) [textOnlyHiddenSnapshot setObject:@(view.hidden) forKey:view];
+        [floatingView.statusDockReturnTimer invalidate];
+        floatingView.statusDockReturnTimer = nil;
+        floatingView.statusDockDragging = NO;
+        [floatingView.inactivityTimer invalidate];
+        floatingView.inactivityTimer = nil;
+        [floatingView.layer removeAllAnimations];
+        floatingView.layoutTransitionAnimating = NO;
+        floatingView.isCollapsed = NO;
+        applyTextOnlyMode();
+    } else {
+        [textOnlyLabel removeFromSuperview];
+        textOnlyLabel = nil;
+        for (UIView *view in floatingView.subviews) {
+            NSNumber *hidden = [textOnlyHiddenSnapshot objectForKey:view];
+            if (hidden) view.hidden = hidden.boolValue;
+        }
+        textOnlyHiddenSnapshot = nil;
+        floatingView.layer.shadowOpacity = textOnlyShadowOpacity;
+        floatingView.layer.borderWidth = textOnlyBorderWidth;
+        floatingView.isCollapsed = NO;
+        [floatingView applyLiquidGlassStyle];
+        updateFloatingSize();
+        if (textOnlySnapshotValid) floatingView.center = textOnlySnapshotCenter;
+        if ((textOnlySnapshotValid && textOnlySnapshotCollapsed) || sbcpuStatusBarDockEffective())
+            [floatingView collapseToEdgeAnimated:NO];
+        clampAndPositionFloatingView(floatingView.center, NO);
+        [floatingView resetInactivityTimer];
+        applyFloatingAlpha();
+        textOnlySnapshotValid = NO;
+    }
 }
 
 static void updateFloatingSize(void) {
@@ -2461,8 +2585,15 @@ static void updateFloatingSize(void) {
         case UIInterfaceOrientationPortrait: default: rotationAngle = 0.0; break;
     }
 
-    CGAffineTransform finalTransform = CGAffineTransformConcat(CGAffineTransformMakeScale(floatingScale, floatingScale), CGAffineTransformMakeRotation(rotationAngle));
+    CGAffineTransform finalTransform = CGAffineTransformConcat(CGAffineTransformMakeScale(floatingTextOnlyMode ? 1 : floatingScale, floatingTextOnlyMode ? 1 : floatingScale), CGAffineTransformMakeRotation(rotationAngle));
     floatingView.transform = finalTransform;
+    if (floatingTextOnlyMode && !textOnlyDragging) {
+        CGRect bounds = floatingView.superview.bounds;
+        CGFloat halfW = floatingView.frame.size.width * 0.5;
+        CGFloat halfH = floatingView.frame.size.height * 0.5;
+        CGFloat anchorX = SBCPUTextOnlyAnchorX((int)floatingTextOnlyPreset, bounds.size.width, halfW);
+        floatingView.center = CGPointMake(anchorX + floatingTextOnlyX, halfH + 2 + floatingTextOnlyY);
+    }
     clampAndPositionFloatingView(floatingView.center, NO);
 }
 
@@ -2493,9 +2624,14 @@ static void createCPUWindow(void) {
     floatingView = [[SBCPUFloatingView alloc] initWithFrame:initFrame];
     [cpuWindow.rootViewController.view addSubview:floatingView];
 
+    if (floatingTextOnlyMode) {
+        handleTextOnlyModeTransition(NO);
+        textOnlySnapshotCollapsed = statusBarDockEnable;
+    }
+
     applyFloatingAlpha();
     updateFloatingSize();
-    if (statusBarDockEnable && floatingView && !floatingView.isCollapsed) {
+    if (sbcpuStatusBarDockEffective() && floatingView && !floatingView.isCollapsed) {
         [floatingView collapseToEdgeAnimated:NO];
     }
 }
@@ -2861,6 +2997,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
 // V4.35：Native Liquid Glass 只负责“表面”，不参与浮窗尺寸计算。
 // hostView 始终就是 SBCPUFloatingView 本身；尺寸由浮窗布局单独决定。
 - (void)refreshNativeLiquidGlass {
+    if (floatingTextOnlyMode) { _nativeLiquidGlassView.hidden = YES; return; }
     if (!_nativeLiquidGlassView || !_usingNativeLiquidGlass) return;
     CGRect b = self.bounds;
     if (CGRectIsEmpty(b)) {
@@ -2880,6 +3017,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
 
 - (void)layoutSubviews {
     [super layoutSubviews];
+    if (floatingTextOnlyMode) return;
     if (_nativeLiquidGlassView && _usingNativeLiquidGlass) {
         CGRect b = self.bounds;
         _nativeLiquidGlassView.frame = b;
@@ -2895,6 +3033,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
 
 
 - (void)applyLiquidGlassStyle {
+    if (floatingTextOnlyMode) { applyTextOnlyMode(); return; }
     BOOL enabled = liquidGlassEnabled;
 
     // V4.34：CCLiquidGlassView 直接就是浮窗背景，不再叠加在旧毛玻璃之上。
@@ -2947,6 +3086,12 @@ static void LGRemoveLabelShadowInView(UIView *view) {
 
 // 液态玻璃：实时采样浮窗下方背景亮度，文字自动反色（亮背景→黑字，暗背景→白字）
 - (void)applyAdaptiveTextColors {
+    if (floatingTextOnlyMode) {
+        // Text-only contrast is composited by Core Animation, never sampled.
+        applyTextOnlyMode();
+        updateFloatingSize();
+        return;
+    }
     BOOL glass = liquidGlassEnabled;
     BOOL lightBg = YES; // 默认浅色背景→黑字
 
@@ -2960,7 +3105,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         : [UIColor colorWithWhite:0.82 alpha:1.0f];
     UIColor *monoColor = lightBg ? [UIColor blackColor] : [UIColor whiteColor];
     // 状态栏胶囊独立采用背景采样反色，不受液态玻璃开关影响。
-    if (statusBarDockEnable && _miniDockInfoLabel) {
+    if (sbcpuStatusBarDockEffective() && _miniDockInfoLabel) {
         CGFloat dockLum = [self sampleBackgroundLuminance];
         BOOL dockLightBackground = dockLum > 0.5f;
         UIColor *dockColor = dockLightBackground ? [UIColor blackColor] : [UIColor whiteColor];
@@ -3626,7 +3771,8 @@ return self;
     if (pan.state == UIGestureRecognizerStateBegan) {
         [self.statusDockReturnTimer invalidate];
         self.statusDockReturnTimer = nil;
-        self.statusDockDragging = statusBarDockEnable;
+        self.statusDockDragging = sbcpuStatusBarDockEffective();
+        textOnlyDragging = floatingTextOnlyMode;
         self.lastPoint = self.center;
     } else if (pan.state == UIGestureRecognizerStateChanged) {
         CGPoint translation = [pan translationInView:self.superview];
@@ -3653,12 +3799,21 @@ return self;
 
         self.center = targetCenter;
     } else if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
-        if (rememberPositionEnable) {
+        if (floatingTextOnlyMode) {
+            textOnlyDragging = NO;
+            CGPoint translation = CGPointMake(self.center.x - self.lastPoint.x, self.center.y - self.lastPoint.y);
+            floatingTextOnlyX = MAX(-1000, MIN(1000, floatingTextOnlyX + translation.x));
+            floatingTextOnlyY = MAX(-1000, MIN(1000, floatingTextOnlyY + translation.y));
+            setFloatPref(CFSTR("floatingTextOnlyX"), floatingTextOnlyX);
+            setFloatPref(CFSTR("floatingTextOnlyY"), floatingTextOnlyY);
+            CFPreferencesAppSynchronize(kPrefAppID);
+            updateFloatingSize();
+        } else if (rememberPositionEnable) {
             [[NSUserDefaults standardUserDefaults] setObject:NSStringFromCGRect(self.frame) forKey:@"SBCPU.LastFrame"];
             [[NSUserDefaults standardUserDefaults] synchronize];
         }
         self.statusDockDragging = NO;
-        if (statusBarDockEnable && self.isCollapsed) {
+        if (sbcpuStatusBarDockEffective() && self.isCollapsed) {
             // 拖开后按用户设置的延迟平滑吸回。
             [self scheduleStatusDockReturn];
         } else {
@@ -3798,6 +3953,7 @@ return self;
                  showBatteryCurrent:(BOOL)showCurrent
                          isCharging:(BOOL)isCharging {
 
+    if (floatingTextOnlyMode) { applyTextOnlyMode(); return; }
     if (self.isCollapsed && !self.isShowingNotification) return;
     if (!self.isCollapsed) _statusDot.hidden = YES;
 
@@ -4080,6 +4236,7 @@ return self;
 }
 
 - (void)scheduleStatusDockReturn {
+    if (floatingTextOnlyMode) return;
     [self.statusDockReturnTimer invalidate];
     self.statusDockReturnTimer = [NSTimer scheduledTimerWithTimeInterval:(NSTimeInterval)statusDockReturnDelay
         target:self selector:@selector(returnToStatusDock) userInfo:nil repeats:NO];
@@ -4088,7 +4245,7 @@ return self;
 - (void)returnToStatusDock {
     [self.statusDockReturnTimer invalidate];
     self.statusDockReturnTimer = nil;
-    if (!statusBarDockEnable || !self.isCollapsed || self.isShowingNotification ||
+    if (!sbcpuStatusBarDockEffective() || !self.isCollapsed || self.isShowingNotification ||
         !self.superview || fastChargeStartupAnimating) return;
     // clampAndPositionFloatingView restores the top safe-area dock position;
     // its spring animation provides a smooth, non-jarring return.
@@ -4106,7 +4263,7 @@ return self;
     // 导致启动动画一起消失。动画结束后 finishStartupAnimation 会重新启动计时器。
     if (fastChargeStartupAnimating) return;
 
-    if (autoCollapseEnable && !_isCollapsed && !settingsShowing && !detailShowing && !self.isShowingNotification) {
+    if (!floatingTextOnlyMode && autoCollapseEnable && !_isCollapsed && !settingsShowing && !detailShowing && !self.isShowingNotification) {
         if (autoExpandLandscape) {
             UIInterfaceOrientation orientation = getEffectiveFloatingOrientation();
             BOOL isLandscape = (orientation == UIInterfaceOrientationLandscapeLeft || orientation == UIInterfaceOrientationLandscapeRight);
@@ -4140,6 +4297,7 @@ return self;
 }
 
 - (void)collapseToEdgeAnimated:(BOOL)animated {
+    if (floatingTextOnlyMode) return;
     if (_isCollapsed || self.isShowingNotification) return;
     _isCollapsed = YES;
 
@@ -4148,16 +4306,16 @@ return self;
 
     // 横屏（游戏）折叠：默认迷你胶囊四段 CPU/FPS/电量/温度；开启单段开关后收成竖屏式单段（仅 CPU，不碍眼）
     BOOL isLandscapeNow = ([UIScreen mainScreen].bounds.size.width > [UIScreen mainScreen].bounds.size.height);
-    CGFloat targetW = statusBarDockEnable ? statusBarDockCapsuleWidth() : (isLandscapeNow ? (compactLandscapeCapsule ? 68.0f : 230.0f) : 68.0f);
-    CGFloat targetH = statusBarDockEnable ? statusBarDockCapsuleHeight() : (isLandscapeNow ? (compactLandscapeCapsule ? 28.0f : 30.0f) : 28.0f);
+    CGFloat targetW = sbcpuStatusBarDockEffective() ? statusBarDockCapsuleWidth() : (isLandscapeNow ? (compactLandscapeCapsule ? 68.0f : 230.0f) : 68.0f);
+    CGFloat targetH = sbcpuStatusBarDockEffective() ? statusBarDockCapsuleHeight() : (isLandscapeNow ? (compactLandscapeCapsule ? 28.0f : 30.0f) : 28.0f);
     CGFloat targetHalfW = targetW / 2.0f;
     CGFloat targetHalfH = targetH / 2.0f;
 
     BOOL isLeft = (self.center.x <= containerBounds.size.width / 2.0f);
-    CGFloat targetX = statusBarDockEnable ? (containerBounds.size.width * 0.5f) : (isLeft ? (targetHalfW + 4.0f) : (containerBounds.size.width - targetHalfW - 4.0f));
+    CGFloat targetX = sbcpuStatusBarDockEffective() ? (containerBounds.size.width * 0.5f) : (isLeft ? (targetHalfW + 4.0f) : (containerBounds.size.width - targetHalfW - 4.0f));
     CGFloat minY = targetHalfH + floatingTopSafeMargin(parent);
     CGFloat maxY = containerBounds.size.height - targetHalfH - 10.0f;
-    CGFloat targetY = statusBarDockEnable ? minY : MIN(MAX(self.center.y, minY), maxY);
+    CGFloat targetY = sbcpuStatusBarDockEffective() ? minY : MIN(MAX(self.center.y, minY), maxY);
 
     CGPoint targetCenter = CGPointMake(targetX, targetY);
 
@@ -4189,7 +4347,7 @@ return self;
         self.glassContentView.frame = self.glassSurfaceView.bounds;
 
         // 状态栏胶囊：使用可选信息条，宽度随选中项目自动扩展。
-        if (statusBarDockEnable) {
+        if (sbcpuStatusBarDockEffective()) {
             _miniDockInfoLabel.hidden = NO;
             _miniDockInfoLabel.frame = CGRectMake(8, 4, targetW - 16, targetH - 8);
             _miniCpuLabel.hidden = YES;
@@ -4318,17 +4476,17 @@ return self;
 - (void)syncCollapsedLayoutForOrientation {
     if (!self.isCollapsed || self.isShowingNotification) return;
     BOOL isLandscapeNow = ([UIScreen mainScreen].bounds.size.width > [UIScreen mainScreen].bounds.size.height);
-    CGFloat targetW = statusBarDockEnable ? statusBarDockCapsuleWidth() : (isLandscapeNow ? (compactLandscapeCapsule ? 68.0f : 230.0f) : 68.0f);
-    CGFloat targetH = statusBarDockEnable ? statusBarDockCapsuleHeight() : (isLandscapeNow ? (compactLandscapeCapsule ? 28.0f : 30.0f) : 28.0f);
+    CGFloat targetW = sbcpuStatusBarDockEffective() ? statusBarDockCapsuleWidth() : (isLandscapeNow ? (compactLandscapeCapsule ? 68.0f : 230.0f) : 68.0f);
+    CGFloat targetH = sbcpuStatusBarDockEffective() ? statusBarDockCapsuleHeight() : (isLandscapeNow ? (compactLandscapeCapsule ? 28.0f : 30.0f) : 28.0f);
     UIView *parent = self.superview;
     CGRect containerBounds = parent ? parent.bounds : [UIScreen mainScreen].bounds;
     CGFloat halfW = targetW / 2.0f;
     CGFloat halfH = targetH / 2.0f;
     BOOL isLeft = (self.center.x <= containerBounds.size.width / 2.0f);
-    CGFloat targetX = statusBarDockEnable ? (containerBounds.size.width * 0.5f) : (isLeft ? (halfW + 4.0f) : (containerBounds.size.width - halfW - 4.0f));
+    CGFloat targetX = sbcpuStatusBarDockEffective() ? (containerBounds.size.width * 0.5f) : (isLeft ? (halfW + 4.0f) : (containerBounds.size.width - halfW - 4.0f));
     CGFloat minY = halfH + floatingTopSafeMargin(parent);
     CGFloat maxY = containerBounds.size.height - halfH - 10.0f;
-    CGFloat targetY = statusBarDockEnable ? minY : MIN(MAX(self.center.y, minY), maxY);
+    CGFloat targetY = sbcpuStatusBarDockEffective() ? minY : MIN(MAX(self.center.y, minY), maxY);
 
     self.collapsedContainerView.frame = CGRectMake(0, 0, targetW, targetH);
     self.glassSurfaceView.frame = CGRectMake(0, 0, targetW, targetH);
@@ -4338,10 +4496,10 @@ return self;
     if (cornerRad > targetH / 2.0f) cornerRad = targetH / 2.0f;
     self.glassSurfaceView.layer.cornerRadius = cornerRad;
     self.bounds = CGRectMake(0, 0, targetW, targetH);
-    if (!statusBarDockEnable || (!self.statusDockDragging && !self.statusDockReturnTimer.valid))
+    if (!sbcpuStatusBarDockEffective() || (!self.statusDockDragging && !self.statusDockReturnTimer.valid))
         self.center = CGPointMake(targetX, targetY);
 
-    if (statusBarDockEnable) {
+    if (sbcpuStatusBarDockEffective()) {
         _miniDockInfoLabel.hidden = NO;
         _miniDockInfoLabel.frame = CGRectMake(8, 4, targetW - 16, targetH - 8);
         _miniCpuLabel.hidden = YES;
@@ -4775,7 +4933,7 @@ return self;
     BOOL isLandscapeNow = ([UIScreen mainScreen].bounds.size.width > [UIScreen mainScreen].bounds.size.height);
     if (self.isCollapsed) {
         [self syncCollapsedLayoutForOrientation];
-        if (statusBarDockEnable) {
+        if (sbcpuStatusBarDockEffective()) {
             NSMutableArray *dockItems = [NSMutableArray array];
             if (statusDockShowCPU) [dockItems addObject:[NSString stringWithFormat:@"CPU %.0f%%", cpu]];
             if (statusDockShowFPS) [dockItems addObject:[NSString stringWithFormat:@"FPS %.0f", fps]];
@@ -4817,7 +4975,7 @@ return self;
         // Refresh must agree with collapsed layout: top status text has no dot.
         // Keep the ordinary folded dot and all capsule dimensions/positions unchanged.
         BOOL dotLandscape = ([UIScreen mainScreen].bounds.size.width > [UIScreen mainScreen].bounds.size.height);
-        _statusDot.hidden = SBCPUStatusDotHidden(self.isCollapsed, statusBarDockEnable, dotLandscape);
+        _statusDot.hidden = SBCPUStatusDotHidden(self.isCollapsed, sbcpuStatusBarDockEffective(), dotLandscape);
     }
     // 更新时间显示（HH:mm:ss）
     NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
@@ -9700,7 +9858,7 @@ static void registerV160Observers(void) {
             if (cpuWindow && floatingView) updateFloatingSize();
         }];
         [nc addObserverForName:UIKeyboardWillShowNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
-            if (settingsShowing || detailShowing || !keyboardAvoidEnable) return;
+            if (floatingTextOnlyMode || settingsShowing || detailShowing || !keyboardAvoidEnable) return;
             if (cpuWindow && floatingView) {
                 UIWindowScene *scene = getWindowScene();
                 CGRect screenBounds = scene ? scene.coordinateSpace.bounds : UIScreen.mainScreen.bounds;
@@ -9714,7 +9872,7 @@ static void registerV160Observers(void) {
             }
         }];
         [nc addObserverForName:UIKeyboardWillHideNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
-            if (!settingsShowing && !detailShowing && keyboardMoved && floatingView) {
+            if (!floatingTextOnlyMode && !settingsShowing && !detailShowing && keyboardMoved && floatingView) {
                 [UIView animateWithDuration:0.25 animations:^{ floatingView.frame = keyboardBeforeFrame; }]; keyboardMoved = NO;
             }
         }];

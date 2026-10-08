@@ -25,6 +25,12 @@
 			<key>isController</key><true/>
 		</dict>
 		<dict>
+            <key>cell</key><string>PSLinkCell</string>
+            <key>label</key><string>纯文字浮窗</string>
+            <key>detail</key><string>SBCPUTextOnlyController</string>
+            <key>isController</key><true/>
+        </dict>
+		<dict>
 			<key>cell</key><string>PSGroupCell</string>
 			<key>label</key><string>浮窗状态</string>
 			<key>footerText</key><string>所有浮窗功能均可在“浮窗全部设置”中修改。</string>

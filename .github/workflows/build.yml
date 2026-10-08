@@ -14,6 +14,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Text-only presentation policy regression
+        run: |
+          set -e
+          python3 tests/text_only_mode.py
+          TMP_TEXT=$(mktemp -d)
+          clang -std=c11 -Wall -Wextra -Werror -pedantic tests/text_only_policy.c -o "$TMP_TEXT/policy"
+          "$TMP_TEXT/policy"
+
       - name: Thermal preference UI regression
         run: |
           set -e
@@ -132,7 +140,7 @@ jobs:
           set -e
           ROOTLESS_DEB=$(find packages -maxdepth 1 -type f -name "*.deb" | head -n 1)
           VERSION=$(awk '/^Version:/ {print $2}' control)
-          cp "$ROOTLESS_DEB" "build/LingDongMonitor-$VERSION-rootless.deb"
+          cp "$ROOTLESS_DEB" "build/LingDongMonitor-$VERSION-${GITHUB_SHA:0:12}-rootless.deb"
 
       - name: Clean before RootHide
         run: |
@@ -149,7 +157,7 @@ jobs:
           set -e
           ROOTHIDE_DEB=$(find packages -maxdepth 1 -type f -name "*.deb" | head -n 1)
           VERSION=$(awk '/^Version:/ {print $2}' control)
-          cp "$ROOTHIDE_DEB" "build/LingDongMonitor-$VERSION-roothide.deb"
+          cp "$ROOTHIDE_DEB" "build/LingDongMonitor-$VERSION-${GITHUB_SHA:0:12}-roothide.deb"
 
       - name: Verify preference bundle is packaged
         run: |
@@ -161,6 +169,7 @@ jobs:
             dpkg-deb -x "$deb" "$STAGED_ICONS"
             python3 tests/panel_branding.py --staged "$STAGED_ICONS"
             python3 tests/preferences_navigation.py --staged "$STAGED_ICONS"
+            python3 tests/text_only_mode.py --staged "$STAGED_ICONS"
             rm -rf "$STAGED_ICONS"
           done
 

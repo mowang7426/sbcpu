@@ -44,7 +44,7 @@ assert 'SBCPUBatteryManufacturerFromProperties(pDict)' in text
 assert 'batInfo[@"Manufacturer"] ?: @"Apple"' not in text
 assert 'totalRAM_GB = 6' not in text
 assert 'vm_stat.free_count + vm_stat.inactive_count + vm_stat.speculative_count' not in text
-assert 'SBCPUStatusDotHidden(self.isCollapsed, statusBarDockEnable, dotLandscape)' in text
+assert 'SBCPUStatusDotHidden(self.isCollapsed, sbcpuStatusBarDockEffective(), dotLandscape)' in text
 assert '_miniCpuLabel.frame = CGRectMake(22, 5, 45, 18);' in text
 charge = (root / 'sbcpuprefs/SBCPUChargeHistoryController.m').read_text()
 assert 'initWithTitle:@"清空"' in charge

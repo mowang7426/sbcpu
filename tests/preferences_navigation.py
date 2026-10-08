@@ -28,6 +28,8 @@ def check_resources(entry, info, settings):
     assert len(diagnostics) == 1
     assert diagnostics[0] == {'cell': 'PSButtonCell', 'label': '诊断报告', 'action': 'openThermalDiagnostics'}
     assert DETAIL_CLASS not in repr(entry) and DETAIL_CLASS not in repr(settings)
+    text_only = [r for r in rows if r.get('detail') == 'SBCPUTextOnlyController']
+    assert len(text_only) == 1 and text_only[0]['cell'] == 'PSLinkCell' and text_only[0]['isController'] is True
     position = rows.index(diagnostics[0])
     assert rows[position - 1]['key'] == 'thermalBlockNotifPopup'
     assert rows[position + 1]['action'] == 'openMoWangSource'
@@ -35,7 +37,7 @@ def check_resources(entry, info, settings):
     # Every original row, key, default, detail link, footer and ordering is retained.
     baseline = plistlib.loads(subprocess.check_output(
         ['git', 'show', '31e0f39:sbcpuprefs/Resources/Root.plist'], cwd=ROOT))
-    assert {**settings, 'items': [r for r in rows if r not in diagnostics]} == baseline
+    assert {**settings, 'items': [r for r in rows if r not in diagnostics and r.get('detail') != 'SBCPUTextOnlyController']} == baseline
 
 
 def method(source, name):
