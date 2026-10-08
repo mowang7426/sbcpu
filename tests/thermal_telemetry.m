@@ -77,6 +77,19 @@ int main(void) {
         CHECK(TSeen[TPressure] == 111);
         CHECK([TEvents.lastObject[@"count"] unsignedLongLongValue] == 111);
         CHECK([TEvents.lastObject[@"result"] containsString:@"严重"]);
+        int writerToken = -1;
+        CHECK(notify_register_check(SBCTWriterName, &writerToken) == NOTIFY_STATUS_OK);
+        TWrite(runtime, @[], NSDate.date.timeIntervalSince1970, SBCTMono());
+        uint64_t writerState = 0;
+        CHECK(notify_get_state(writerToken, &writerState) == NOTIFY_STATUS_OK);
+        CHECK(writerState == SBCTWriterEncode(SBCTOpen, ENOENT, TSequence));
+        CHECK([SBCTWriterReport(writerState, YES) containsString:@"临时文件打开失败"]);
+        CHECK([SBCTWriterReport(0, YES) containsString:@"未观察到记录器握手"]);
+        CHECK([SBCTWriterReport(SBCTWriterEncode(SBCTSuccess, 0, 4), YES) containsString:@"写端报告成功但读端文件缺失"]);
+        CHECK([SBCTWriterReport(SBCTWriterEncode(SBCTHello, 0, 0), YES) containsString:@"构造握手"]);
+        CHECK([SBCTWriterReport(writerState, YES) containsString:@"无 PID"]);
+        CHECK(SBCTWriterEncode(SBCTWrite, EIO, UINT64_C(0x100000005)) == SBCTWriterEncode(SBCTWrite, EIO, 5));
+        notify_cancel(writerToken);
         CHECK(atomic_load(&TPending)); // one coalesced task, not a per-call task backlog
         CHECK(atomic_load(&TGeneration) > generation);
         CHECK(!TLoaded[@"unrecognized"]);

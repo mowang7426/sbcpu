@@ -4,6 +4,7 @@
 #import "../include/SBCPUThermalPaths.h"
 #import "SBCPUThermalDiagnostics.h"
 #import "../include/SBCPUTelemetryFormat.h"
+#import "../include/SBCPUWriterStatus.h"
 
 static NSNumber *SBCDNotify(const char *name) {
     int token = -1;
@@ -94,6 +95,7 @@ static void SBCDGroup(NSMutableArray *rows, NSString *title, NSString *detail) {
             NSString *telemetryState = SBCTValidate(telemetryObject, SBCTBoot(), now, SBCTMono());
             NSDictionary *telemetry = [@[@"recent", @"stale"] containsObject:telemetryState] ? telemetryObject : nil;
             if (!telemetry) [events addObject:[NSString stringWithFormat:@"核心快照：%@（不采用损坏/异次启动/未来报告）", telemetryState]];
+            SBCDGroup(rows, @"记录器握手与写入状态", SBCTWriterReport(SBCDNotify(SBCTWriterName).unsignedLongLongValue, !telemetryExists));
             if (telemetry) {
                 BOOL stale = [telemetryState isEqual:@"stale"];
                 NSString *age = [NSString stringWithFormat:@"%.0f 秒", MAX(0, SBCTMono() - [telemetry[@"mono"] doubleValue])];
@@ -116,16 +118,19 @@ static void SBCDGroup(NSMutableArray *rows, NSString *title, NSString *detail) {
                 for (NSDictionary *event in [telemetry[@"events"] reverseObjectEnumerator]) [coreEvents addObject:[NSString stringWithFormat:@"%@: +%@ 次（累计 %@）；%@", event[@"route"] ?: @"?", event[@"coalesced"] ?: @0, event[@"count"] ?: @0, event[@"result"] ?: @"未知"]];
                 SBCDGroup(rows, @"核心近期事件（最多 80 条）", [NSString stringWithFormat:@"%@；合并计数来自核心，不是硬件生效次数。\n%@", prefix, coreEvents.count ? [coreEvents componentsJoinedByString:@"\n"] : @"尚无调用事件"]);
             } else {
-                SBCDGroup(rows, @"核心真实运行快照", [NSString stringWithFormat:@"未读取：%@；核心已读取/模式/Hook 调用均未知。路径：%@", telemetryState, telemetryExists ? @"存在但不可验证" : @"不存在"]);
+                NSString *detail = telemetryExists ? @"文件存在但内容不可读取/校验失败；请查看核心写入状态（若有旧快照则可能为旧核心）" : @"文件不存在：未建立快照，可能是核心未加载、旧核心、路径视图不同，或写入失败";
+                SBCDGroup(rows, @"核心真实运行快照", [NSString stringWithFormat:@"未读取：%@；%@。核心已读取/模式/Hook 调用均未知。", telemetryState, detail]);
             }
             // Missing current file is not migrated or substituted with a legacy copy.
             if (!readable) [events addObject:exists ? @"错误：当前偏好不可读/损坏/超限" : @"配置：当前偏好缺失（未迁移旧副本）"];
             NSMutableArray *heartbeats = [NSMutableArray array];
             NSUInteger bad = 0, future = 0, missing = 0;
             for (NSString *path in SBCPUThermalHeartbeatPaths()) {
-                NSData *data = SBCDRead(path, 64, &exists);
+                BOOL candidateExists = NO;
+                NSData *data = SBCDRead(path, 64, &candidateExists);
                 NSNumber *value = SBCDParseHeartbeat(data);
-                if (!exists) { missing++; continue; }
+                if (!candidateExists) { missing++; continue; }
+                if (!data) { bad++; continue; }
                 if (!value) { bad++; continue; }
                 if ([SBCDHeartbeatState(value, now) isEqual:@"future"]) { future++; continue; }
                 [heartbeats addObject:value];

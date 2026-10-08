@@ -2,6 +2,7 @@
 #import "include/SBCPUTelemetryFormat.h"
 #include <sys/stat.h>
 #include <errno.h>
+#import "include/SBCPUWriterStatus.h"
 
 enum { TPressure, TSleep, TWake, TRecovery, TApply, TDecision, TNotification, TPressureNotification, TDisplay, TInit, TCommonCPU, TMitigationCPU, TSensors, TRouteCount };
 static const char *TNames[] = {"热压力评估", "锁屏降功耗", "唤醒恢复", "正常温度恢复", "运行模式应用", "决策树", "高温通知", "热压力通知", "IOKit 单属性写入（背光分支分类）", "构造初始化", "CommonProduct CPU", "MitigationController CPU", "HID温度事件"};
@@ -19,6 +20,7 @@ static NSMutableArray *TEvents;
 static void TSchedule(void);
 static void TNote(int route, int decision) {
     if (route < 0 || route >= TRouteCount) return;
+    if (route == TInit && decision == 0) SBCTWriterPublish(SBCTHello, 0, 0);
     atomic_fetch_add_explicit(&TCounts[route], 1, memory_order_relaxed);
     atomic_store_explicit(&TDecisions[route], decision, memory_order_relaxed);
     atomic_store_explicit(&TLastNS[route], (uint64_t)(SBCTMono() * 1e9), memory_order_relaxed);
@@ -135,22 +137,30 @@ static void TWrite(NSDictionary *runtime, NSArray *hooks, double wall, double mo
         while (TEvents.count > 80) [TEvents removeObjectAtIndex:0];
         NSDictionary *snapshot = @{ @"schema":@1, @"pid":@(getpid()), @"process":NSProcessInfo.processInfo.processName, @"boot":SBCTBoot(), @"session":TSession, @"sequence":@(++TSequence), @"wall":@(wall), @"mono":@(mono), @"runtime":runtime, @"configLoaded":@(TLoaded != nil), @"config":TLoaded ?: @{}, @"revision":@(TRevision), @"lastLoadWall":@(TLoadWall), @"lastSuccessfulLoadWall":@(TLastSuccessWall), @"lastLoadSucceeded":@(TLastLoadSucceeded), @"loadStatus":TLoadStatus ?: @"未知", @"hooks":hooks, @"routes":routes, @"events":[TEvents copy]};
         NSData *data = [NSPropertyListSerialization dataWithPropertyList:snapshot format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
-        if (!data || data.length > 131072) return;
+        if (!data || data.length > 131072) {
+            SBCTWriterPublish(data ? SBCTOversize : SBCTSerialize, 0, TSequence);
+            return;
+        }
         NSString *path = SBCPUThermalTelemetryPath();
         NSString *tmp = [path stringByAppendingFormat:@".%d.%@.tmp", getpid(), TSession];
         int fd = open(tmp.fileSystemRepresentation, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
-        if (fd < 0) return;
-        BOOL ok = fchown(fd, 0, 501) == 0 && fchmod(fd, 0640) == 0;
+        if (fd < 0) { SBCTWriterPublish(SBCTOpen, errno, TSequence); return; }
+        unsigned code = SBCTSuccess;
+        int savedError = 0;
+        if (fchown(fd, 0, 501) != 0) { code = SBCTOwner; savedError = errno; }
+        if (code == SBCTSuccess && fchmod(fd, 0640) != 0) { code = SBCTMode; savedError = errno; }
         const char *p = data.bytes; size_t remaining = data.length;
-        while (ok && remaining) {
+        while (code == SBCTSuccess && remaining) {
             ssize_t n = write(fd, p, remaining);
             if (n < 0 && errno == EINTR) continue;
-            if (n <= 0) { ok = NO; break; }
+            if (n <= 0) { code = SBCTWrite; savedError = n < 0 ? errno : EIO; break; }
             p += n; remaining -= n;
         }
-        if (close(fd) != 0) ok = NO;
-        if (ok) rename(tmp.fileSystemRepresentation, path.fileSystemRepresentation);
+        // Keep the first failure: cleanup may overwrite errno.
+        if (close(fd) != 0 && code == SBCTSuccess) { code = SBCTClose; savedError = errno; }
+        if (code == SBCTSuccess && rename(tmp.fileSystemRepresentation, path.fileSystemRepresentation) != 0) { code = SBCTRename; savedError = errno; }
         unlink(tmp.fileSystemRepresentation);
+        SBCTWriterPublish(code, savedError, TSequence);
     }
 }
 static void TSchedule(void) {
