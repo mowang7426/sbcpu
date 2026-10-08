@@ -119,6 +119,12 @@
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>温控防暗屏</string><key>key</key><string>thermalPreventDimmingEnabled</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 		<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>尝试抑制高温通知弹窗</string><key>key</key><string>thermalBlockNotifPopup</string><key>default</key><false/><key>get</key><string>getPreferenceValue:</string><key>set</key><string>setPreferenceValue:specifier:</string></dict>
 		<dict>
+			<key>cell</key><string>PSLinkCell</string>
+			<key>label</key><string>运行检测与日志</string>
+			<key>detail</key><string>SBCPUThermalDiagnosticsController</string>
+			<key>isController</key><true/>
+		</dict>
+		<dict>
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>

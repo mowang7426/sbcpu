@@ -21,6 +21,15 @@ jobs:
             tests/thermal_preferences.m -o "$TMP_THERMAL/test"
           "$TMP_THERMAL/test"
 
+      - name: Thermal diagnostics reader regression
+        run: |
+          set -e
+          python3 tests/thermal_diagnostics.py
+          TMP_DIAGNOSTICS=$(mktemp -d)
+          clang -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
+            tests/thermal_diagnostics.m -o "$TMP_DIAGNOSTICS/test"
+          "$TMP_DIAGNOSTICS/test"
+
       - name: Native respring policy regression
         run: python3 tests/respring_native_policy.py
 
