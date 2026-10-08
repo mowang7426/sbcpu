@@ -1,12 +1,29 @@
 #import <UIKit/UIKit.h>
 #import <Preferences/PSSpecifier.h>
 #import "SBCPUPrefsRootListController.h"
+#import "SBCPUThermalDiagnosticsController.h"
 #import "../SBCPUChargeStore.h"
 #import "../include/SBCPUThermalPaths.h"
 #import "SBCPUThermalPreferenceUI.h"
 #import <notify.h>
 
 @implementation SBCPUPrefsRootListController
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    // Restore the root title when returning from a detail or host-restored page.
+    self.title = @"灵动监测";
+    self.navigationItem.title = @"灵动监测";
+}
+
+- (void)openThermalDiagnostics {
+    // Do not delegate this route to PreferenceLoader's nested detail resolution.
+    // This action is invoked only by the root's PSButtonCell, never on appearance.
+    UINavigationController *navigationController = self.navigationController;
+    if (!navigationController || navigationController.topViewController != self) return;
+    SBCPUThermalDiagnosticsController *controller = [[SBCPUThermalDiagnosticsController alloc] init];
+    [navigationController pushViewController:controller animated:YES];
+}
 
 - (NSArray *)specifiers {
 	if (!_specifiers) {

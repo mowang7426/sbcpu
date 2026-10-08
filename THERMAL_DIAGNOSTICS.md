@@ -1,6 +1,16 @@
-# 运行检测与日志（只读设置面板）
+# 诊断报告（只读设置面板）
 
-入口：根设置页最后一个温控选项之后、莫忘越狱源按钮之前。独立 `PSListController`，初次/重新进入及用户点击刷新时读取；没有定时轮询或后台常驻诊断任务。
+入口：设置 → Tweaks → 灵动监测完整首页 → 温控组「诊断报告」。该行使用 `PSButtonCell` / `openThermalDiagnostics`，仅点击后由根控制器通过原生 navigation controller 推入独立 `PSListController`；不使用诊断 `detail` / `isController` 元数据，不自动打开详情。详情初次/重新进入及用户点击刷新时读取；没有定时轮询或后台常驻诊断任务。返回时根页面恢复「灵动监测」标题，原有所有设置行保持不变。
+
+## 首页回归调查与修复
+
+已检查成功构建 `37801709280`（提交 `58f3334`）的 Rootless/RootHide 实际 DEB：两包入口都是 `SBCPUPrefsRootListController`，`Root.plist` 均包含完整 22 行并与源码一致，但 **SBCPUPrefs.bundle/Info.plist 在两包中均缺失**。`SBCPUPrefs-Info.plist` 位于源码根目录且名称并非 `Resources/Info.plist`，现有 Theos 资源复制规则不会自动复制；Makefile 的 `SBCPUPrefs_PRINCIPAL_CLASS` 并不等同于已打包的 `NSPrincipalClass`。
+
+诊断提交把 `SBCPUThermalDiagnosticsController.m` 插入了编译列表首位；旧 DEB 的 arm64 Objective-C 类表首项确为诊断类（`0x29de0`），根类在后（`0x29e58`）。缺失 `NSPrincipalClass` 时的首类回退与用户截图「返回 Tweaks，直接显示运行检测与日志」吻合。这是已证实的打包缺陷及首类顺序变化；尚未取得设备 PreferenceLoader 调用栈，不能断言实际加载调用路径，也没有证据证明所谓子级 detail 提升。
+
+修复同时覆盖三个层面：显式把既有 Info 文件复制为包内 `Info.plist` 并固定根主类；恢复根控制器优先编译顺序作为防御；诊断入口改为点击专属按钮、明确类声明和原生 push，消除嵌套详情自动解析依赖。已排查其他详情行及设置进程内全局 PSListController 钩子：只见既有电池维修提示过滤，没有诊断自动导航；本次不改这些原有功能。
+
+新增 `tests/preferences_navigation.py`：验证完整首页与诊断前基线逐行一致、入口及主类固定、唯一诊断按钮、只在动作方法中创建/推入详情、返回标题，以及从两种最终 DEB 解压得到的真实入口 / Info / Root / 可执行文件。旧包存在性/图标检查没覆盖主类 Info 缺失，现补齐此门禁。
 
 ## 证据边界
 

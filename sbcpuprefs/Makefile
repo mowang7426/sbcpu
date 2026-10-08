@@ -6,7 +6,7 @@ include $(THEOS)/makefiles/common.mk
 
 BUNDLE_NAME = SBCPUPrefs
 
-SBCPUPrefs_FILES = SBCPUThermalDiagnosticsController.m SBCPUPrefsRootListController.m SBCPUFloatingAdvancedController.m SBCPUPluginConflictController.m SBCPUChoiceControllers.m SBCPUDockReturnController.m SBCPUChargeHistoryController.m SBCPULockCleanupWhitelistController.m SBCPUThermalModeController.m SBCPUChargePreferencesCommon.m SBCPUChargeManagementController.m SBCPUChargeLimitController.m SBCPULiquidGlassController.m SBCPULiquidGlassSliderCell.m
+SBCPUPrefs_FILES = SBCPUPrefsRootListController.m SBCPUThermalDiagnosticsController.m SBCPUFloatingAdvancedController.m SBCPUPluginConflictController.m SBCPUChoiceControllers.m SBCPUDockReturnController.m SBCPUChargeHistoryController.m SBCPULockCleanupWhitelistController.m SBCPUThermalModeController.m SBCPUChargePreferencesCommon.m SBCPUChargeManagementController.m SBCPUChargeLimitController.m SBCPULiquidGlassController.m SBCPULiquidGlassSliderCell.m
 SBCPUPrefs_FRAMEWORKS = UIKit
 SBCPUPrefs_PRIVATE_FRAMEWORKS = Preferences
 SBCPUPrefs_CFLAGS = -fobjc-arc -I../include
@@ -24,4 +24,9 @@ internal-stage::
 	$(ECHO_NOTHING)mkdir -p $(THEOS_STAGING_DIR)/Library/PreferenceLoader/Preferences$(ECHO_END)
 	$(ECHO_NOTHING)cp entry.plist $(THEOS_STAGING_DIR)/Library/PreferenceLoader/Preferences/SBCPUPrefs.plist$(ECHO_END)
 	$(ECHO_NOTHING)cp Resources/icon*.PNG $(THEOS_STAGING_DIR)/Library/PreferenceLoader/Preferences/$(ECHO_END)
+	# The source plist is named SBCPUPrefs-Info.plist, outside Resources.
+	# The previous DEBs had no Info.plist: explicitly pin bundle metadata so
+	# NSBundle/PreferenceLoader cannot fall back to the first linked class.
+	$(ECHO_NOTHING)mkdir -p $(THEOS_STAGING_DIR)/Library/PreferenceBundles/SBCPUPrefs.bundle$(ECHO_END)
+	$(ECHO_NOTHING)cp SBCPUPrefs-Info.plist $(THEOS_STAGING_DIR)/Library/PreferenceBundles/SBCPUPrefs.bundle/Info.plist$(ECHO_END)
 

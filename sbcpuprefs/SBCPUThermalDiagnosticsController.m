@@ -1,5 +1,5 @@
 #import <UIKit/UIKit.h>
-#import <Preferences/PSListController.h>
+#import "SBCPUThermalDiagnosticsController.h"
 #import <Preferences/PSSpecifier.h>
 #import "../include/SBCPUThermalPaths.h"
 #import "SBCPUThermalDiagnostics.h"
@@ -27,7 +27,7 @@ static void SBCDGroup(NSMutableArray *rows, NSString *title, NSString *detail) {
     [group setProperty:detail forKey:@"footerText"];
     [rows addObject:group];
 }
-@interface SBCPUThermalDiagnosticsController : PSListController
+@interface SBCPUThermalDiagnosticsController ()
 @property(nonatomic, copy) NSArray *diagnosticRows;
 @property(nonatomic, strong) NSMutableArray<NSString *> *events;
 @property(nonatomic, copy) NSString *previousConfiguration;
@@ -36,7 +36,7 @@ static void SBCDGroup(NSMutableArray *rows, NSString *title, NSString *detail) {
 @implementation SBCPUThermalDiagnosticsController
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"运行检测与日志";
+    self.title = @"诊断报告";
     self.events = [NSMutableArray array];
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"刷新" style:UIBarButtonItemStylePlain target:self action:@selector(refreshDiagnostics)];
 }

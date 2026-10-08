@@ -3,9 +3,10 @@
 import pathlib, plistlib, subprocess
 root = pathlib.Path(__file__).resolve().parents[1]
 items = plistlib.loads((root / 'sbcpuprefs/Resources/Root.plist').read_bytes())['items']
-link = next(i for i, row in enumerate(items) if row.get('detail') == 'SBCPUThermalDiagnosticsController')
-assert items[link]['label'] == '运行检测与日志'
-assert items[link]['cell'] == 'PSLinkCell' and items[link]['isController']
+link = next(i for i, row in enumerate(items) if row.get('action') == 'openThermalDiagnostics')
+assert items[link]['label'] == '诊断报告'
+assert items[link]['cell'] == 'PSButtonCell'
+assert 'detail' not in items[link] and 'isController' not in items[link]
 assert items[link - 1]['key'] == 'thermalBlockNotifPopup'
 assert items[link + 1]['action'] == 'openMoWangSource'
 source = (root / 'sbcpuprefs/SBCPUThermalDiagnosticsController.m').read_text()
