@@ -34,6 +34,9 @@ jobs:
           clang -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
             tests/thermal_diagnostics.m -o "$TMP_DIAGNOSTICS/test"
           "$TMP_DIAGNOSTICS/test"
+          clang -fobjc-arc -fblocks -framework Foundation -Wall -Wextra -Werror \
+            tests/thermal_telemetry.m -o "$TMP_DIAGNOSTICS/telemetry"
+          "$TMP_DIAGNOSTICS/telemetry"
 
       - name: Native respring policy regression
         run: python3 tests/respring_native_policy.py

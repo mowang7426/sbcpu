@@ -197,6 +197,11 @@ static inline NSString *SBCPUThermalCurrentPrefPath(void) {
     return SBCPUThermalJBRootPathForRootFSPath(kSBCPUThermalPrefRootFSPathC);
 }
 
+static inline NSString *SBCPUThermalTelemetryPath(void) {
+    NSString *directory = [SBCPUThermalCurrentPrefPath() stringByDeletingLastPathComponent];
+    return [directory stringByAppendingPathComponent:S("com.yourname.sbcpufloating.thermal.telemetry.plist")];
+}
+
 static inline NSString *SBCPUThermalOldJBRootPrefPath(void) {
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSString *resolvedJBRoot = [fileManager destinationOfSymbolicLinkAtPath:S("/var/jb") error:nil];

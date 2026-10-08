@@ -3,6 +3,7 @@
 #import <Preferences/PSSpecifier.h>
 #import "../include/SBCPUThermalPaths.h"
 #import "SBCPUThermalDiagnostics.h"
+#import "../include/SBCPUTelemetryFormat.h"
 
 static NSNumber *SBCDNotify(const char *name) {
     int token = -1;
@@ -86,6 +87,37 @@ static void SBCDGroup(NSMutableArray *rows, NSString *title, NSString *detail) {
             id parsed = prefData ? [NSPropertyListSerialization propertyListWithData:prefData options:NSPropertyListImmutable format:NULL error:nil] : nil;
             BOOL readable = [parsed isKindOfClass:NSDictionary.class];
             NSDictionary *prefs = readable ? parsed : @{};
+            // The core snapshot is the only source for actual runtime/config evidence.
+            BOOL telemetryExists = NO;
+            NSData *telemetryData = SBCDRead(SBCPUThermalTelemetryPath(), 131072, &telemetryExists);
+            id telemetryObject = telemetryData ? [NSPropertyListSerialization propertyListWithData:telemetryData options:NSPropertyListImmutable format:NULL error:nil] : nil;
+            NSString *telemetryState = SBCTValidate(telemetryObject, SBCTBoot(), now, SBCTMono());
+            NSDictionary *telemetry = [@[@"recent", @"stale"] containsObject:telemetryState] ? telemetryObject : nil;
+            if (!telemetry) [events addObject:[NSString stringWithFormat:@"核心快照：%@（不采用损坏/异次启动/未来报告）", telemetryState]];
+            if (telemetry) {
+                BOOL stale = [telemetryState isEqual:@"stale"];
+                NSString *age = [NSString stringWithFormat:@"%.0f 秒", MAX(0, SBCTMono() - [telemetry[@"mono"] doubleValue])];
+                NSString *prefix = stale ? @"上次观测（已过期；进程当前状态未知）" : @"近期观测（非实时保证）";
+                NSDictionary *runtime = telemetry[@"runtime"], *config = telemetry[@"config"];
+                NSString *load = [telemetry[@"configLoaded"] boolValue] ? @"曾成功读取" : @"尚未确认成功读取";
+                NSString *lastRead = [telemetry[@"lastLoadSucceeded"] boolValue] ? @"上次读取成功" : @"上次读取失败；保留先前成功版本（如有）";
+                NSString *successTime = [telemetry[@"lastSuccessfulLoadWall"] doubleValue] > 0 ? [formatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:[telemetry[@"lastSuccessfulLoadWall"] doubleValue]]] : @"无";
+                SBCDGroup(rows, @"核心真实运行快照", [NSString stringWithFormat:@"%@，观测距今 %@；%@；%@（修订 %@）\n报告模式 %@；用户模式 %@；原因 %@\n总开关 %@；CPU保护 %@；锁屏降功耗 %@；热压保护 %@；常温恢复 %@；防变暗 %@；阻断弹窗 %@；网络限制 %@；热压覆盖 %@\n报告时间 %@，PID %@；仅表示上次观测，不证明硬件效果。", prefix, age, load, lastRead, telemetry[@"revision"] ?: @0, runtime[@"effectiveMode"] ?: @"未知", runtime[@"selectedMode"] ?: @"未知", runtime[@"reason"] ?: @"未知", runtime[@"enabled"] ?: @"?", runtime[@"cpuProtection"] ?: @"?", runtime[@"lockScreenLowPower"] ?: @"?", runtime[@"pressureProtection"] ?: @"?", runtime[@"nominalRecovery"] ?: @"?", runtime[@"preventDimming"] ?: @"?", runtime[@"blockPopup"] ?: @"?", runtime[@"blockNetwork"] ?: @"?", runtime[@"pressureOverride"] ?: @"?", [formatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:[telemetry[@"wall"] doubleValue]]], telemetry[@"pid"] ?: @"?"]);
+                NSMutableArray *configLines = [NSMutableArray array];
+                for (NSString *key in SBCTKeys()) [configLines addObject:[NSString stringWithFormat:@"%@: %@", key, [telemetry[@"configLoaded"] boolValue] ? (config[key] ?: @"未报告") : @"未读取"]];
+                SBCDGroup(rows, @"核心上次成功加载的配置（非磁盘期望值）", [NSString stringWithFormat:@"%@；%@；上次成功读取 %@\n%@", prefix, lastRead, successTime, [configLines componentsJoinedByString:@"；"]]);
+                NSMutableArray *hookLines = [NSMutableArray array];
+                for (NSDictionary *hook in telemetry[@"hooks"]) [hookLines addObject:[NSString stringWithFormat:@"%@.%@：%@；调用 %@ 次；%@；%@", hook[@"class"] ?: @"?", hook[@"selector"] ?: @"?", hook[@"installation"] ?: @"未知", hook[@"callCount"] ?: @0, hook[@"result"] ?: @"未知", hook[@"evidence"] ?: @"无安装证据"]];
+                SBCDGroup(rows, @"Hook 安装与调用证据", [NSString stringWithFormat:@"%@。IMP 镜像归属仅为安装证据；不保证系统效果。\n%@", prefix, [hookLines componentsJoinedByString:@"\n"]]);
+                NSMutableArray *routeLines = [NSMutableArray array];
+                for (NSDictionary *route in telemetry[@"routes"]) [routeLines addObject:[NSString stringWithFormat:@"%@: %@ 次；%@", route[@"name"] ?: @"?", route[@"count"] ?: @0, route[@"result"] ?: @"未知"]];
+                SBCDGroup(rows, @"核心函数调用与分支结果", [NSString stringWithFormat:@"%@；未触发不代表失败。\n%@", prefix, [routeLines componentsJoinedByString:@"\n"]]);
+                NSMutableArray *coreEvents = [NSMutableArray array];
+                for (NSDictionary *event in [telemetry[@"events"] reverseObjectEnumerator]) [coreEvents addObject:[NSString stringWithFormat:@"%@: +%@ 次（累计 %@）；%@", event[@"route"] ?: @"?", event[@"coalesced"] ?: @0, event[@"count"] ?: @0, event[@"result"] ?: @"未知"]];
+                SBCDGroup(rows, @"核心近期事件（最多 80 条）", [NSString stringWithFormat:@"%@；合并计数来自核心，不是硬件生效次数。\n%@", prefix, coreEvents.count ? [coreEvents componentsJoinedByString:@"\n"] : @"尚无调用事件"]);
+            } else {
+                SBCDGroup(rows, @"核心真实运行快照", [NSString stringWithFormat:@"未读取：%@；核心已读取/模式/Hook 调用均未知。路径：%@", telemetryState, telemetryExists ? @"存在但不可验证" : @"不存在"]);
+            }
             // Missing current file is not migrated or substituted with a legacy copy.
             if (!readable) [events addObject:exists ? @"错误：当前偏好不可读/损坏/超限" : @"配置：当前偏好缺失（未迁移旧副本）"];
             NSMutableArray *heartbeats = [NSMutableArray array];

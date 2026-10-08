@@ -258,6 +258,9 @@ static void restoreUserModeAfterThermalPressure(void);
 static void publishThermalEngineHeartbeat(void);
 static void startThermalEngineHeartbeat(void);
 
+static BOOL SBCPUThermalScreenIsLocked(void);
+static BOOL SBCPUThermalScreenIsBlanked(void);
+#import "SBCPUThermalTelemetry.h" // SBCT instrumentation
 static void runtimeConfigSnapshot(BOOL *enabled, BOOL *cpuProtection, BOOL *blockNetwork, BOOL *blockPopup, BOOL *preventDimming) {
 os_unfair_lock_lock(&g_stateLock);
 if (enabled) *enabled = g_enabled;
@@ -437,6 +440,7 @@ static void scheduleScreenStateRecovery(void) {
 }
 
 static void switchToLowPowerForSleep(const char *source) {
+TNote(TSleep, 4); // SBCT instrumentation
 if (!g_lockScreenLowPowerEnabled) return;
 BOOL changed = NO;
 os_unfair_lock_lock(&g_modeLock);
@@ -445,6 +449,7 @@ g_powerMode = SBCPUThermalPowerModeLow;
 changed = YES;
 }
 os_unfair_lock_unlock(&g_modeLock);
+TSet(TSleep, changed ? 1 : 2); // SBCT instrumentation
 if (changed) applyPowerModeToRuntime(NO);
 scheduleScreenStateRecovery();
 NSLog(@"[SBCPUThermal] %s 状态临时进入低功耗，保留用户模式:%@", source ?: "sleep",
@@ -452,6 +457,7 @@ NSLog(@"[SBCPUThermal] %s 状态临时进入低功耗，保留用户模式:%@", 
 }
 
 static void restoreUserModeAfterWake(const char *source) {
+TNote(TWake, 4); // SBCT instrumentation
 if (!g_lockScreenLowPowerEnabled) return;
 SBCPUThermalPowerMode previous;
 SBCPUThermalPowerMode target;
@@ -460,6 +466,7 @@ previous = g_powerMode;
 target = g_userSelectedPowerMode;
 g_powerMode = target;
 os_unfair_lock_unlock(&g_modeLock);
+TSet(TWake, 1); // SBCT instrumentation
 // 唤醒时无论枚举是否变化都重新应用：长时间锁屏后 PMGR/ApplePPM
 // 可能已经重建，界面模式不变不代表硬件 Level/Floor 仍然有效。
 applyPowerModeToRuntime(NO);
@@ -611,8 +618,10 @@ static SBCPUThermalPressureLevel normalizedThermalPressureLevel(uint64_t state) 
 }
 
 static void restoreUserModeAfterThermalPressure(void) {
+TNote(TRecovery, 4); // SBCT instrumentation
     if (!g_pressureSafetyOverride || !g_thermalNominalAutoRecoveryEnabled) return;
     g_pressureSafetyOverride = NO;
+    TSet(TRecovery, 1); // SBCT instrumentation
     publishThermalDiagnosticState(g_currentPressureLevel, NO);
     os_unfair_lock_lock(&g_modeLock);
     SBCPUThermalPowerMode target = g_userSelectedPowerMode;
@@ -624,9 +633,11 @@ static void restoreUserModeAfterThermalPressure(void) {
 }
 
 static void evaluateThermalPressureState(void) {
+TNote(TPressure, 4); // SBCT instrumentation
     if (!g_thermalPressureAutoProtectionEnabled || !runtimeEnabled() || !bootSettled()) return;
     int token = 0;
     uint64_t state = 0;
+    TSet(TPressure, 5); // SBCT instrumentation: overwritten only after successful pressure read
     if (notify_register_check(kOSThermalNotificationPressureLevelName, &token) != NOTIFY_STATUS_OK) return;
     if (notify_get_state(token, &state) != NOTIFY_STATUS_OK) {
         notify_cancel(token);
@@ -635,10 +646,12 @@ static void evaluateThermalPressureState(void) {
     notify_cancel(token);
 
     SBCPUThermalPressureLevel pressure = normalizedThermalPressureLevel(state);
+    TSet(TPressure, 6); // SBCT instrumentation: read succeeded, no severe/nominal branch yet
     g_currentPressureLevel = pressure;
 
     // 极限满频模式：插件不主动接管为低功耗。系统/硬件层的温控保护仍可自行降频。
     if (isExtremeFullPowerMode()) {
+        TSet(TPressure, 3); // SBCT instrumentation
         if (g_pressureSafetyOverride) {
             g_pressureSafetyOverride = NO;
             g_pressureNominalSince = 0;
@@ -656,6 +669,7 @@ static void evaluateThermalPressureState(void) {
     BOOL severe = (pressure >= SBCPUThermalPressureLevelHeavy && pressure <= SBCPUThermalPressureLevelSleeping);
     publishThermalDiagnosticState(pressure, g_pressureSafetyOverride);
     if (severe) {
+        TSet(TPressure, 1); // SBCT instrumentation
         g_pressureNominalSince = 0;
         if (!g_pressureSafetyOverride) {
             os_unfair_lock_lock(&g_modeLock);
@@ -675,6 +689,7 @@ static void evaluateThermalPressureState(void) {
     }
 
     if (pressure == SBCPUThermalPressureLevelNominal) {
+        TSet(TPressure, 2); // SBCT instrumentation
         if (g_pressureSafetyOverride && g_thermalNominalAutoRecoveryEnabled) {
             if (g_pressureNominalSince <= 0) g_pressureNominalSince = CFAbsoluteTimeGetCurrent();
             if ((CFAbsoluteTimeGetCurrent() - g_pressureNominalSince) >= 5.0) {
@@ -1096,9 +1111,11 @@ applyPowerModeToRuntime(YES);
 }
 
 static void applyPowerModeToRuntime(BOOL respectBootGuard) {
+TNote(TApply, 4); // SBCT instrumentation
 if (!runtimeProtectionEnabled()) return;
 (void)respectBootGuard;
 if (isLowPowerMode()) {
+TSet(TApply, 1); // SBCT instrumentation
 stopExtremePerformanceTimer();
 applyLowPowerToCommonProduct();
 applyLowPowerLimitsToTrackedControllers();
@@ -1108,6 +1125,7 @@ startLowPowerRescheduleTimer();
 return;
 }
 if (isFullPowerMode()) {
+TSet(TApply, 2); // SBCT instrumentation
 startExtremePerformanceTimer();
 SBCPUThermalForceNominalCombined();
 applyFullPowerToCommonProduct();
@@ -1487,6 +1505,7 @@ return SBCPUThermalReadPrefs();
 static void loadPrefs(void) {
 @autoreleasepool {
 NSDictionary *d = readPrefsDictionary();
+TFailedConfig(d); // SBCT instrumentation
 // 读取失败时保留当前内存状态；首次启动则沿用安全默认值。
 if (!d || d.count == 0) return;
 
@@ -1526,6 +1545,7 @@ g_userSelectedPowerMode = selected;
 // 桌面亮屏/通知亮屏不能再把极限满频误切走。
 g_powerMode = (g_lockScreenLowPowerEnabled && locked) ? SBCPUThermalPowerModeLow : selected;
 os_unfair_lock_unlock(&g_modeLock);
+TConfig(d); // SBCT instrumentation: publish only after actual application and unlock
 }
 }
 
@@ -1631,6 +1651,7 @@ return %orig;
 static kern_return_t (*orig_IOServiceSetProperty)(io_service_t, CFStringRef, CFTypeRef) = NULL;
 
 static kern_return_t hooked_IOServiceSetProperty(io_service_t service, CFStringRef key, CFTypeRef value) {
+TNote(TDisplay, 0); // SBCT instrumentation: aggregate property-write entry, no payload
 if (!orig_IOServiceSetProperty) return KERN_FAILURE;
 if (service == MACH_PORT_NULL || !key || !value) return orig_IOServiceSetProperty(service, key, value);
 if (!runtimeEnabled() || g_restoringFullPower || !bootSettled()) {
@@ -1640,6 +1661,7 @@ return orig_IOServiceSetProperty(service, key, value);
 NSString *keyString = (__bridge NSString *)key;
 if (thermalDimmingPreventionEnabled() && keyIsBacklightThermalLimit(keyString)) {
 id replacement = backlightReplacementMatchingValue(keyString, (__bridge id)value);
+TSet(TDisplay, replacement ? 1 : 2); // SBCT instrumentation: matched backlight branch only
 return replacement ? orig_IOServiceSetProperty(service, key, (__bridge CFTypeRef)replacement) : orig_IOServiceSetProperty(service, key, value);
 }
 if (isNetworkThrottleProperty(key)) return KERN_SUCCESS;
@@ -1652,6 +1674,7 @@ return orig_IOServiceSetProperty(service, key, value);
 }
 
 %hookf(kern_return_t, IORegistryEntrySetCFProperty, io_registry_entry_t entry, CFStringRef key, CFTypeRef value) {
+TNote(TDisplay, 0); // SBCT instrumentation: aggregate property-write entry, no payload
 if (entry == MACH_PORT_NULL || !key || !value) return %orig(entry, key, value);
 if (!runtimeEnabled() || g_restoringFullPower || !bootSettled()) return %orig(entry, key, value);
 NSString *keyString = (__bridge NSString *)key;
@@ -1682,6 +1705,7 @@ if (g_forceFastChargeEnabled) {
 
 if (thermalDimmingPreventionEnabled() && keyIsBacklightThermalLimit(keyString)) {
 id replacement = backlightReplacementMatchingValue(keyString, (__bridge id)value);
+TSet(TDisplay, replacement ? 1 : 2); // SBCT instrumentation: matched backlight branch only
 if (replacement) return %orig(entry, key, (__bridge CFTypeRef)replacement);
 return %orig(entry, key, value);
 }
@@ -1770,18 +1794,23 @@ return;
 
 // 解除温控模式: 直接阻断 CPU 节流等级写入，拒绝执行降频指令。
 - (void)setCPULevel:(int)level {
+TNote(TCommonCPU, 0); // SBCT observation only
 if (g_restoringFullPower) {
+TSet(TCommonCPU, 2); // SBCT instrumentation
 %orig(level);
 return;
 }
 if (shouldApplyLowPowerLimit()) {
+TSet(TCommonCPU, 1); // SBCT instrumentation
 %orig(kLowPowerCPULevel);
 return;
 }
 if (shouldApplyFullCPUProtection()) {
+TSet(TCommonCPU, 1); // SBCT instrumentation
 %orig(kFullPowerCPULevel);
 return;
 }
+TSet(TCommonCPU, 2); // SBCT instrumentation
 %orig(level);
 }
 
@@ -1827,10 +1856,13 @@ return;
 %hook HidSensors
 
 - (void)handleTemperatureEvent:(int)arg1 service:(id)arg2 {
+TNote(TSensors, 0); // SBCT instrumentation: no argument payload retained
 if (thermalPopupBlockingEnabled()) {
+TSet(TSensors, 1); // SBCT instrumentation
 SBCPUThermalForceNominalCombined();
 return;
 }
+TSet(TSensors, 2); // SBCT instrumentation
 %orig(arg1, arg2);
 }
 
@@ -1852,12 +1884,15 @@ return;
 
 // 决策树评估 — 这是 thermalmonitord 判断"要不要降频"的核心
 - (void)evaluateDecisionTree {
+TNote(TDecision, 0); // SBCT instrumentation
 // 全功率模式: 阻止决策树运行，避免温控降频
 // 启动静默期内放行，避免干扰传感器健康检查初始化。
 if (shouldApplyFullCPUProtection() && bootSettled()) {
+TSet(TDecision, 1); // SBCT instrumentation
 correctNominalStateIfNeeded();
 return;
 }
+TSet(TDecision, 2); // SBCT instrumentation
 %orig;
 }
 
@@ -1871,20 +1906,26 @@ return;
 
 // 热压力升级通知 — 不再主动阻断
 - (void)updateThermalPressureLevelNotification:(id)notification shouldForceThermalPressure:(BOOL)force {
+TNote(TPressureNotification, 0); // SBCT instrumentation
 if (thermalPopupBlockingEnabled()) {
+TSet(TPressureNotification, 1); // SBCT instrumentation
 SBCPUThermalForceNominalCombined();
 return;
 }
+TSet(TPressureNotification, 2); // SBCT instrumentation
 %orig(notification, force);
 }
 
 // 热通知 — 受 thermalBlockNotifPopup 开关控制
 - (void)updateThermalNotification:(id)notification {
+TNote(TNotification, 0); // SBCT instrumentation
 @autoreleasepool {
 if (thermalPopupBlockingEnabled()) {
+TSet(TNotification, 1); // SBCT instrumentation
 return;
 }
 }
+TSet(TNotification, 2); // SBCT instrumentation
 %orig;
 }
 
@@ -2122,19 +2163,24 @@ return;
 
 // 解除温控模式: 直接阻断 CPU 节流等级写入（MitigationController 使用 0~100 百分比）。
 - (void)setCPULevel:(int)level {
+TNote(TMitigationCPU, 0); // SBCT observation only
 trackPowerController(self);
 if (g_restoringFullPower) {
+TSet(TMitigationCPU, 2); // SBCT instrumentation
 %orig(level);
 return;
 }
 if (shouldApplyLowPowerLimit()) {
+TSet(TMitigationCPU, 1); // SBCT instrumentation
 %orig(kLowPowerCPULevel);
 return;
 }
 if (shouldApplyFullCPUProtection()) {
+TSet(TMitigationCPU, 1); // SBCT instrumentation
 %orig(kFullPowerCPULevel);
 return;
 }
+TSet(TMitigationCPU, 2); // SBCT instrumentation
 %orig(level);
 }
 
@@ -2525,6 +2571,7 @@ else dispatch_async(dispatch_get_main_queue(), block);
 // ============================================================================
 %ctor {
 @autoreleasepool {
+TNote(TInit, 0); // SBCT instrumentation
 loadPrefs();
 // thermalmonitord 真正加载 SBCPUThermal 后立即开始心跳。
 // 设置页会据此判断核心是否真实存活，而不是只看用户开关。
@@ -2600,9 +2647,11 @@ for (int retry = 1; retry <= 4; retry++) {
 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(retry * 0.75 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
 CTRInstallRecoveredThermalHooks();
 installCrossVersionThermalAliases();
+TSet(TInit, 1); // SBCT instrumentation: inspect current IMP after existing registration retry
 });
 }
 // 运行时应用已统一延迟到启动静默期结束（见上方 8 秒 block），
+TSet(TInit, 1); // SBCT instrumentation: ctor registration phase completed
 // 避免 thermalmonitord 初始化期间被强制功率状态。
 NSLog(@"[SBCPUThermal] 启动完成，功率状态将在启动静默期后应用：%@", isLowPowerMode() ? S("低功耗") : S("解除温控"));
 }
