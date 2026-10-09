@@ -32,6 +32,20 @@ ilog "JBROOT=[$JB]"
 DAEMON="$JB/usr/libexec/$DAEMON_NAME"
 PLIST="$JB/Library/LaunchDaemons/$PLIST_NAME"
 
+# Retired thermal injection: dpkg removes old package-owned payloads on upgrade.
+# Also remove exact legacy leftovers, only in the root validated by our daemon.
+# Do NOT kill/reload Apple's daemon: on-disk removal cannot undo resident hooks.
+# A device reboot (then re-enable jailbreak if required) completes unloading.
+if [ -x "$DAEMON" ]; then
+    for retired in SBCPUThermal SBCPUMitigation; do
+        rm -f "$JB/Library/MobileSubstrate/DynamicLibraries/$retired.dylib" \
+              "$JB/Library/MobileSubstrate/DynamicLibraries/$retired.plist" 2>/dev/null
+    done
+    ilog "Retired thermal payloads removed; reboot needed to unload any resident hooks"
+fi
+# Shared preferences and historical telemetry are deliberately not erased:
+# no consumer remains, and deleting the shared plist would destroy user settings.
+
 # 2) launchd 日志重定向目录（必须在加载前存在）
 mkdir -p "$JB/var/log" 2>/dev/null
 

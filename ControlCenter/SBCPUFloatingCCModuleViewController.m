@@ -1,5 +1,5 @@
 #import "SBCPUFloatingCCModuleViewController.h"
-#import "SBCPUThermalPaths.h"
+#import "SBCPUPaths.h"
 #import <Foundation/Foundation.h>
 #import <notify.h>
 

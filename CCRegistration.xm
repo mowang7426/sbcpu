@@ -3,7 +3,7 @@
 #import <mach-o/dyld.h>
 #import <objc/runtime.h>
 #import <substrate.h>
-#import "SBCPUThermalPaths.h"
+#import "SBCPUPaths.h"
 
 // 参考 CPUthermal 1.6.4-53 的 CCRegistration.xm：
 // 1. 将 /Library/ControlCenter/Bundles 纳入 CCSModuleRepository 扫描目录；
@@ -38,7 +38,7 @@ static BOOL SBCPUExternalCCSupportPresent(void) {
 
     if (!present) {
         NSMutableArray<NSString *> *roots = [NSMutableArray arrayWithObjects:S(""), S("/var/jb"), nil];
-        NSString *rootHideRoot = SBCPUThermalCurrentRootHideRoot();
+        NSString *rootHideRoot = SBCPUCurrentRootHideRoot();
         if (rootHideRoot.length > 0) [roots addObject:rootHideRoot];
 
         for (NSString *root in roots) {
@@ -51,7 +51,7 @@ static BOOL SBCPUExternalCCSupportPresent(void) {
 }
 
 static NSString *SBCPUCCModulesPath(void) {
-    return SBCPUThermalJBRootPathForRootFSPath("/Library/ControlCenter/Bundles");
+    return SBCPUJBRootPathForRootFSPath("/Library/ControlCenter/Bundles");
 }
 
 static void SBCPUSetRepositoryAllowlistBypass(id repository) {

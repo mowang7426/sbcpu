@@ -1,10 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <Preferences/PSSpecifier.h>
 #import "SBCPUPrefsRootListController.h"
-#import "SBCPUThermalDiagnosticsController.h"
 #import "../SBCPUChargeStore.h"
-#import "../include/SBCPUThermalPaths.h"
-#import "SBCPUThermalPreferenceUI.h"
 #import <notify.h>
 
 @implementation SBCPUPrefsRootListController
@@ -16,14 +13,7 @@
     self.navigationItem.title = @"灵动监测";
 }
 
-- (void)openThermalDiagnostics {
-    // Do not delegate this route to PreferenceLoader's nested detail resolution.
-    // This action is invoked only by the root's PSButtonCell, never on appearance.
-    UINavigationController *navigationController = self.navigationController;
-    if (!navigationController || navigationController.topViewController != self) return;
-    SBCPUThermalDiagnosticsController *controller = [[SBCPUThermalDiagnosticsController alloc] init];
-    [navigationController pushViewController:controller animated:YES];
-}
+
 
 - (NSArray *)specifiers {
 	if (!_specifiers) {
@@ -44,9 +34,7 @@
     }
     if ([key isEqualToString:@"screenRecordingHighFrameRateEnabled"])
         return SBChargeRead()[key] ?: @NO;
-    if (SBCPUIsThermalPreference(key)) {
-        return SBCPUThermalPreferenceValue(SBCPUThermalReadPrefs(), key, [specifier propertyForKey:@"default"]);
-    }
+
     return nil;
 }
 
@@ -67,20 +55,7 @@
         }
         return;
     }
-    if (SBCPUIsThermalPreference(key)) {
-        if (!SBCPUSaveThermalPreference(key, value)) {
-            // Defer until the switch finishes its optimistic UI update, then reread disk.
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self reloadSpecifiers];
-                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"温控设置未保存"
-                    message:@"写入偏好失败。已重新读取现有配置；本次更改未发送给温控核心。"
-                    preferredStyle:UIAlertControllerStyleAlert];
-                [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
-                [self presentViewController:alert animated:YES completion:nil];
-            });
-        }
-        return;
-    }
+
 }
 
 - (void)openMoWangSource {

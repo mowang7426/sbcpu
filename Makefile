@@ -3,7 +3,7 @@ TARGET = iphone:clang:16.5:14.0
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = SBCPUFloating SBCPUThermal SBCPUPowerd SBCPUFloatingCCRegistration
+TWEAK_NAME = SBCPUFloating SBCPUPowerd SBCPUFloatingCCRegistration
 
 # 1. 桌面 UI、悬浮窗、FPS 监测、通知管理
 SBCPUFloating_FILES = Tweak.xm Shared/LGLiveBackdropView.m Shared/LGWallpaperBlurCache.m Shared/LGSharedSupport.m
@@ -12,14 +12,6 @@ SBCPUFloating_LDFLAGS = -Wl,-U,___isOSVersionAtLeast
 SBCPUFloating_FRAMEWORKS = UIKit Foundation QuartzCore CoreMotion CoreImage CoreGraphics
 SBCPUFloating_PRIVATE_FRAMEWORKS = PowerUI IOKit FrontBoardServices
 SBCPUFloating_INSTALL_TARGET_PROCESSES = SpringBoard
-
-# 2. CPUthermal 合并引擎
-SBCPUThermal_FILES = SBCPUThermal.x SBCPUThermalRecovered.mm
-SBCPUThermal_CFLAGS = -fobjc-arc -Iinclude -Wno-deprecated-declarations -DTHEOS_INSIDE -fvisibility=hidden
-SBCPUThermal_LDFLAGS += -Wl,-x -Wl,-dead_strip
-SBCPUThermal_FRAMEWORKS = Foundation UIKit CoreFoundation IOKit
-SBCPUThermal_LIBRARIES = substrate
-SBCPUThermal_INSTALL_TARGET_PROCESSES = thermalmonitord
 
 # 3. 独立 powerd 满血充电核心：只负责强制快充/解除充电降流限制。
 # 与 thermalmonitord 分离，避免把 powerd 专属 Hook 混入温控核心。
@@ -52,7 +44,6 @@ SBCPUChargeDaemon_CODESIGN_FLAGS = -S$(THEOS_PROJECT_DIR)/SBCPUChargeDaemon.enti
 SBCPUChargeDaemon_INSTALL_PATH = /usr/libexec
 
 ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
-SBCPUThermal_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide
 SBCPUFloatingCCRegistration_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide
 SBCPUChargeDaemon_CFLAGS += -I$(THEOS_VENDOR_INCLUDE_PATH)/roothide
 SBCPUChargeDaemon_LDFLAGS += -L$(THEOS_VENDOR_LIBRARY_PATH)/iphone/roothide -lroothide

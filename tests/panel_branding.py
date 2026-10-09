@@ -35,7 +35,7 @@ forbidden = {'功能介绍', 'CPU / FPS', '▣ 电池 / 温度', '▣ 通知中�
              '手势使用说明', '👆 单击浮窗', '👆 长按浮窗', '🤚 拖动浮窗'}
 assert not forbidden.intersection(item.get('label', '') for item in page['items'])
 assert any(item.get('label') == '浮窗全部设置' for item in page['items'])
-assert any(item.get('key') == 'thermalEngineEnabled' for item in page['items'])
+assert not any(item.get('key') == 'thermalEngineEnabled' for item in page['items'])
 text = (root / 'Tweak.xm').read_text()
 assert 'SBCPUBatteryETAText(batInfo[@"SBCPUEtaSnapshot"]' in text
 assert 'SBCPUBatteryAppendSample(etaHistory, etaSnapshot)' in text

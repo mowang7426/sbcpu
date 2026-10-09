@@ -44,29 +44,10 @@ jobs:
             tests/text_only_color.m -o "$TMP_TEXT/color-cxx"
           "$TMP_TEXT/color-cxx"
 
-      - name: Thermal preference UI regression
+      - name: Thermal-free baseline and settings navigation
         run: |
-          set -e
-          python3 tests/thermal_preferences.py
-          TMP_THERMAL=$(mktemp -d)
-          clang -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
-            tests/thermal_preferences.m -o "$TMP_THERMAL/test"
-          "$TMP_THERMAL/test"
-
-      - name: Settings root and diagnostics navigation regression
-        run: python3 tests/preferences_navigation.py
-
-      - name: Thermal diagnostics reader regression
-        run: |
-          set -e
-          python3 tests/thermal_diagnostics.py
-          TMP_DIAGNOSTICS=$(mktemp -d)
-          clang -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
-            tests/thermal_diagnostics.m -o "$TMP_DIAGNOSTICS/test"
-          "$TMP_DIAGNOSTICS/test"
-          clang -fobjc-arc -fblocks -framework Foundation -Wall -Wextra -Werror \
-            tests/thermal_telemetry.m -o "$TMP_DIAGNOSTICS/telemetry"
-          "$TMP_DIAGNOSTICS/telemetry"
+          python3 tests/thermal_removed.py
+          python3 tests/preferences_navigation.py
 
       - name: Native respring policy regression
         run: python3 tests/respring_native_policy.py
@@ -189,6 +170,7 @@ jobs:
             dpkg-deb -c "$deb" | grep -E 'PreferenceBundles/SBCPUPrefs\.bundle|PreferenceLoader/Preferences/SBCPUPrefs\.plist'
             STAGED_ICONS=$(mktemp -d)
             dpkg-deb -x "$deb" "$STAGED_ICONS"
+            python3 tests/thermal_removed.py --staged "$STAGED_ICONS"
             python3 tests/panel_branding.py --staged "$STAGED_ICONS"
             python3 tests/preferences_navigation.py --staged "$STAGED_ICONS"
             python3 tests/text_only_mode.py --staged "$STAGED_ICONS"
