@@ -38,6 +38,7 @@
 #import "SBCPUBatteryMetrics.h"
 #import "SBCPUMemoryMetrics.h"
 #import "SBCPUFloatingDisplayPolicy.h"
+#import "SBCPUFloatingLockPolicy.h"
 #import "SBCPUThermalPressure.h"
 #import "Shared/LGLiveBackdropView.h"
 
@@ -239,6 +240,9 @@ static void sbcputhermalFloatingStatus(NSString **textOut, UIColor **colorOut);
 @property (nonatomic, strong) NSTimer *inactivityTimer;
 @property (nonatomic, strong) NSTimer *statusDockReturnTimer;
 @property (nonatomic, assign) BOOL statusDockDragging;
+@property (nonatomic, assign) BOOL positionLocked;
+@property (nonatomic, assign) CGPoint lockedCenter;
+@property (nonatomic, strong) UITapGestureRecognizer *doubleTapGesture;
 @property (nonatomic, strong) UITapGestureRecognizer *singleTapGesture;
 @property (nonatomic, strong) UILongPressGestureRecognizer *longPressGesture;
 
@@ -2389,6 +2393,10 @@ static inline CGFloat statusBarDockCapsuleHeight(void) { return 38.0f; }
 
 static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
     if (!floatingView || !floatingView.superview) return;
+    if (floatingView.positionLocked) {
+        floatingView.center = floatingView.lockedCenter; // safety-only correction after size/rotation changes
+        return;
+    }
     // Periodic layout must not cancel the user-selected undocked interval.
     if (sbcpuStatusBarDockEffective() && (floatingView.statusDockDragging || floatingView.statusDockReturnTimer.valid)) return;
 
@@ -2663,6 +2671,18 @@ static void createCPUWindow(void) {
 
     floatingView = [[SBCPUFloatingView alloc] initWithFrame:initFrame];
     [cpuWindow.rootViewController.view addSubview:floatingView];
+
+    // Dedicated SpringBoard defaults, like LastFrame; independent of rememberPositionEnable.
+    NSUserDefaults *positionDefaults = [NSUserDefaults standardUserDefaults];
+    NSString *lockedPoint = [positionDefaults stringForKey:@"SBCPU.LockedCenter"];
+    if ([positionDefaults boolForKey:@"SBCPU.PositionLocked"] && lockedPoint.length) {
+        CGPoint point = CGPointFromString(lockedPoint);
+        if (isfinite(point.x) && isfinite(point.y)) {
+            floatingView.lockedCenter = point;
+            floatingView.positionLocked = YES;
+            floatingView.center = point;
+        }
+    }
 
     if (floatingTextOnlyMode) {
         handleTextOnlyModeTransition(NO);
@@ -3287,6 +3307,12 @@ static void LGRemoveLabelShadowInView(UIView *view) {
         self.singleTapGesture.delegate = self;
         [self addGestureRecognizer:self.singleTapGesture];
 
+        self.doubleTapGesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleDoubleTap:)];
+        self.doubleTapGesture.numberOfTapsRequired = 2;
+        self.doubleTapGesture.delegate = self;
+        [self addGestureRecognizer:self.doubleTapGesture];
+        [self.singleTapGesture requireGestureRecognizerToFail:self.doubleTapGesture];
+
 
         self.longPressGesture = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
         self.longPressGesture.minimumPressDuration = 0.6;
@@ -3704,6 +3730,55 @@ return self;
     }
 }
 
+// Central gate covers normal/text-only layout, fold/unfold, orientation and notification moves.
+// Keep the anchor unchanged; only constrain the rendered center when geometry would hide it.
+- (void)setCenter:(CGPoint)center {
+    if (self.positionLocked) {
+        center = self.lockedCenter;
+        if (self.superview) {
+            CGRect bounds = self.superview.bounds;
+            CGRect frame = self.frame;
+            center.x = CGRectGetMinX(bounds) + SBCPULockedCoordinate(center.x - CGRectGetMinX(bounds), bounds.size.width, frame.size.width / 2);
+            center.y = CGRectGetMinY(bounds) + SBCPULockedCoordinate(center.y - CGRectGetMinY(bounds), bounds.size.height, frame.size.height / 2);
+        }
+    }
+    [super setCenter:center];
+}
+
+- (void)handleDoubleTap:(UITapGestureRecognizer *)tap {
+    if (tap.state != UIGestureRecognizerStateEnded) return;
+    if (!self.positionLocked) {
+        CALayer *presentation = (CALayer *)self.layer.presentationLayer;
+        CGPoint anchor = presentation ? presentation.position : self.center;
+        [self.layer removeAllAnimations];
+        self.layoutTransitionAnimating = NO;
+        self.lockedCenter = anchor;
+        self.positionLocked = YES;
+        self.center = anchor;
+        [self.statusDockReturnTimer invalidate];
+        self.statusDockReturnTimer = nil;
+        self.statusDockDragging = NO;
+        textOnlyDragging = NO;
+        keyboardMoved = NO; // Never restore a stale pre-lock keyboard frame.
+    } else {
+        self.positionLocked = NO;
+        if (sbcpuStatusBarDockEffective() && self.isCollapsed) [self scheduleStatusDockReturn];
+    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setObject:NSStringFromCGPoint(self.lockedCenter) forKey:@"SBCPU.LockedCenter"];
+    [defaults setBool:self.positionLocked forKey:@"SBCPU.PositionLocked"];
+    [defaults synchronize];
+    [self resetInactivityTimer];
+    UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    [feedback prepare];
+    [feedback impactOccurred];
+}
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
+    if (self.positionLocked && [gestureRecognizer isKindOfClass:[UIPanGestureRecognizer class]]) return NO;
+    return YES;
+}
+
 - (void)handleSingleTap:(UITapGestureRecognizer *)tap {
     if (tap.state == UIGestureRecognizerStateEnded) {
         // V4.35.3：单击只保留轻微反馈；双击有独立反馈且不会再进入这里。
@@ -3816,6 +3891,7 @@ return self;
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
+    if (self.positionLocked) return;
     [self resetInactivityTimer];
 
     if (pan.state == UIGestureRecognizerStateBegan) {
@@ -4286,7 +4362,7 @@ return self;
 }
 
 - (void)scheduleStatusDockReturn {
-    if (floatingTextOnlyMode) return;
+    if (floatingTextOnlyMode || self.positionLocked) return;
     [self.statusDockReturnTimer invalidate];
     self.statusDockReturnTimer = [NSTimer scheduledTimerWithTimeInterval:(NSTimeInterval)statusDockReturnDelay
         target:self selector:@selector(returnToStatusDock) userInfo:nil repeats:NO];
@@ -9911,7 +9987,7 @@ static void registerV160Observers(void) {
             if (cpuWindow && floatingView) updateFloatingSize();
         }];
         [nc addObserverForName:UIKeyboardWillShowNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
-            if (floatingTextOnlyMode || settingsShowing || detailShowing || !keyboardAvoidEnable) return;
+            if (floatingView.positionLocked || floatingTextOnlyMode || settingsShowing || detailShowing || !keyboardAvoidEnable) return;
             if (cpuWindow && floatingView) {
                 UIWindowScene *scene = getWindowScene();
                 CGRect screenBounds = scene ? scene.coordinateSpace.bounds : UIScreen.mainScreen.bounds;
@@ -9925,7 +10001,7 @@ static void registerV160Observers(void) {
             }
         }];
         [nc addObserverForName:UIKeyboardWillHideNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
-            if (!floatingTextOnlyMode && !settingsShowing && !detailShowing && keyboardMoved && floatingView) {
+            if (!floatingView.positionLocked && !floatingTextOnlyMode && !settingsShowing && !detailShowing && keyboardMoved && floatingView) {
                 [UIView animateWithDuration:0.25 animations:^{ floatingView.frame = keyboardBeforeFrame; }]; keyboardMoved = NO;
             }
         }];

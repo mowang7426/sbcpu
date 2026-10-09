@@ -14,6 +14,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Floating position lock regression
+        run: |
+          set -e
+          python3 tests/floating_lock.py
+          TMP_LOCK=$(mktemp -d)
+          clang -std=c11 -Wall -Wextra -Werror -pedantic tests/floating_lock_policy.c -lm -o "$TMP_LOCK/lock"
+          "$TMP_LOCK/lock"
+          clang++ -x c++ -std=c++11 -Wall -Wextra -Werror -pedantic tests/floating_lock_policy.c -o "$TMP_LOCK/lock-cxx"
+          "$TMP_LOCK/lock-cxx"
+
       - name: Text-only presentation policy regression
         run: |
           set -e
