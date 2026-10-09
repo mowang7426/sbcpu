@@ -1,4 +1,5 @@
 #import "SBCPUTextOnlyPolicy.h"
+#import "SBCPUTextOnlyColor.h"
 #import "SBCPUTextOnlyFormat.h"
 #import "SBCPUTextOnlyCurrent.h"
 
@@ -344,7 +345,8 @@ static BOOL floatingTextOnlyMode = NO;
 static NSInteger floatingTextOnlyPreset = 1;
 static CGFloat floatingTextOnlyX = 0, floatingTextOnlyY = 0;
 static CGFloat floatingTextOnlyFontSize = 13;
-static NSInteger floatingTextOnlyColor = 0; // 0 experimental difference, 1 white, 2 black
+static NSInteger floatingTextOnlyColor = 0; // 0 system appearance, 1 white, 2 black, 3 custom
+static SBCPUTextRGBA textOnlyCustomRGBA = {0, 122.0/255.0, 1, 1};
 static BOOL textOnlyShowCPU = YES, textOnlyShowFrequency = YES, textOnlyShowFPS = YES;
 static BOOL textOnlyShowBattery = YES, textOnlyShowTemperature = YES, textOnlyShowCurrent = YES;
 static BOOL textOnlyShowSIM1 = YES, textOnlyShowSIM2 = YES;
@@ -1038,7 +1040,9 @@ static void LoadPreferences(void) {
     floatingTextOnlyX = SBCPUTextOnlyBound(getFloatPref(CFSTR("floatingTextOnlyX"), 0), -1000, 1000, 0);
     floatingTextOnlyY = SBCPUTextOnlyBound(getFloatPref(CFSTR("floatingTextOnlyY"), 0), -1000, 1000, 0);
     floatingTextOnlyFontSize = SBCPUTextOnlyBound(getFloatPref(CFSTR("floatingTextOnlyFontSize"), 13), 8, 24, 13);
-    floatingTextOnlyColor = MAX(0, MIN(2, getIntPref(CFSTR("floatingTextOnlyColor"), 0)));
+    floatingTextOnlyColor = getIntPref(CFSTR("floatingTextOnlyColor"), 0);
+    if (floatingTextOnlyColor < 0 || floatingTextOnlyColor > 3) floatingTextOnlyColor = 0;
+    textOnlyCustomRGBA = SBCPUTextDecodeRGBA(getArrayPref(CFSTR("floatingTextOnlyRGBA"), nil));
     // Independent defaults: ordinary show flags never govern this row.
     textOnlyShowCPU = getBoolPref(CFSTR("floatingTextOnlyShowCPU"), YES);
     textOnlyShowFrequency = getBoolPref(CFSTR("floatingTextOnlyShowFrequency"), YES);
@@ -2469,14 +2473,19 @@ static void clampAndPositionFloatingView(CGPoint targetCenter, BOOL animate) {
 
 static void applyTextOnlyTextFilter(void) {
     if (!textOnlyLabel) return;
-    // Experimental compositor path, NOT a verified cross-window iOS API.
-    // Explicit black/white choices are the fallback; no sampling or new timer.
-    @try {
-        textOnlyLabel.layer.compositingFilter = (floatingTextOnlyMode && floatingTextOnlyColor == 0) ? @"differenceBlendMode" : nil;
-    } @catch (__unused NSException *exception) {
-        textOnlyLabel.layer.compositingFilter = nil;
+    // Always clear the obsolete compositor filter, including fixed/custom modes.
+    textOnlyLabel.layer.compositingFilter = nil;
+    if (!floatingTextOnlyMode) return;
+    // SpringBoard's main-screen environment is authoritative, not foreground-app
+    // traits or sampled pixels. Its own overlay window is the unspecified fallback.
+    int style = SBCPUTextSystemStyle((int)UIScreen.mainScreen.traitCollection.userInterfaceStyle,
+                                    (int)cpuWindow.traitCollection.userInterfaceStyle);
+    if (floatingTextOnlyColor == 3) {
+        textOnlyLabel.textColor = [UIColor colorWithRed:textOnlyCustomRGBA.red green:textOnlyCustomRGBA.green
+                                                  blue:textOnlyCustomRGBA.blue alpha:textOnlyCustomRGBA.alpha];
+    } else {
+        textOnlyLabel.textColor = SBCPUTextUsesWhite((int)floatingTextOnlyColor, style) ? UIColor.whiteColor : UIColor.blackColor;
     }
-    textOnlyLabel.textColor = floatingTextOnlyColor == 2 ? UIColor.blackColor : UIColor.whiteColor;
 }
 
 static void applyTextOnlyMode(void) {
@@ -2547,6 +2556,7 @@ static void handleTextOnlyModeTransition(BOOL wasEnabled) {
         floatingView.isCollapsed = NO;
         applyTextOnlyMode();
     } else {
+        textOnlyLabel.layer.compositingFilter = nil;
         [textOnlyLabel removeFromSuperview];
         textOnlyLabel = nil;
         textOnlySignals = nil;
@@ -3123,7 +3133,7 @@ static void LGRemoveLabelShadowInView(UIView *view) {
 // 液态玻璃：实时采样浮窗下方背景亮度，文字自动反色（亮背景→黑字，暗背景→白字）
 - (void)applyAdaptiveTextColors {
     if (floatingTextOnlyMode) {
-        // Text-only contrast is composited by Core Animation, never sampled.
+        // Text-only color follows system appearance or a fixed color, never sampled.
         applyTextOnlyMode();
         updateFloatingSize();
         return;
@@ -3244,6 +3254,10 @@ static void LGRemoveLabelShadowInView(UIView *view) {
 // 监听深浅模式变化，触发反色更新
 - (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
     [super traitCollectionDidChange:previousTraitCollection];
+    if (floatingTextOnlyMode) {
+        applyTextOnlyTextFilter(); // immediate, independent of liquid-glass and refresh ticks
+        return;
+    }
     if (liquidGlassEnabled) {
         [self applyAdaptiveTextColors];
     }

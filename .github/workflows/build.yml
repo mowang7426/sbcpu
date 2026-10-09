@@ -27,6 +27,12 @@ jobs:
           clang -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
             tests/text_only_current.m -o "$TMP_TEXT/current"
           "$TMP_TEXT/current"
+          clang -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
+            tests/text_only_color.m -o "$TMP_TEXT/color"
+          "$TMP_TEXT/color"
+          clang++ -x objective-c++ -std=c++11 -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
+            tests/text_only_color.m -o "$TMP_TEXT/color-cxx"
+          "$TMP_TEXT/color-cxx"
 
       - name: Thermal preference UI regression
         run: |

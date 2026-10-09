@@ -13,7 +13,7 @@ rows = page['items']
 assert next(r for r in rows if r.get('key') == 'floatingTextOnlyMode')['default'] is False
 font = next(r for r in rows if r.get('key') == 'floatingTextOnlyFontSize')
 assert font['cell'] == 'PSSliderCell' and (font['min'], font['max'], font['default']) == (8, 24, 13)
-for action in ('moveUp','moveDown','moveLeft','moveRight','topLeft','topCenter','topRight','editX','editY','difference','whiteText','blackText'):
+for action in ('moveUp','moveDown','moveLeft','moveRight','topLeft','topCenter','topRight','editX','editY','automaticText','customText','whiteText','blackText'):
     assert any(r.get('action') == action for r in rows), action
     assert '- (void)' + action in controller, action
 assert 'SBCPUTextOnlyController.m' in (root / 'sbcpuprefs/Makefile').read_text()
@@ -40,7 +40,22 @@ assert 'SBCPUTextOnlyTop(floatingTextOnlyMode, safeTop, sbcpuStatusBarDockEffect
 start = text.index('static void applyTextOnlyTextFilter(void) {')
 end = text.index('static void updateFloatingSize(void) {', start)
 mode = text[start:end]
-assert 'differenceBlendMode' in mode and 'UIColor.blackColor : UIColor.whiteColor' in mode
+assert 'differenceBlendMode' not in text
+assert 'textOnlyLabel.layer.compositingFilter = nil;' in mode
+assert 'SBCPUTextUsesWhite((int)floatingTextOnlyColor, style) ? UIColor.whiteColor : UIColor.blackColor' in mode
+assert 'UIScreen.mainScreen.traitCollection.userInterfaceStyle' in mode
+assert 'cpuWindow.traitCollection.userInterfaceStyle' in mode
+trait = text[text.index('- (void)traitCollectionDidChange:'):text.index('// 清理反色定时器')]
+assert trait.index('applyTextOnlyTextFilter();') < trait.index('if (liquidGlassEnabled)')
+assert 'SBCPUTextDecodeRGBA(getArrayPref(CFSTR("floatingTextOnlyRGBA"), nil))' in text
+assert 'UIColorPickerViewControllerDelegate' in controller and 'picker.supportsAlpha = NO' in controller
+assert 'UIModalPresentationFormSheet' in controller and 'presentationControllerDidDismiss:' in controller
+assert 'UITableViewCellAccessoryCheckmark' in controller
+selection = controller[controller.index('- (void)colorPickerViewController:'):controller.index('- (void)colorPickerViewControllerDidFinish:')]
+assert 'writeValues' not in selection and 'commitPickerColor' not in selection
+colors = [r for r in rows if 'textColorMode' in r]
+assert [r['textColorMode'] for r in colors] == [0, 3, 1, 2]
+assert colors[0]['label'] == '自动模式' and colors[1]['label'] == '自定义文字颜色'
 assert 'monospacedSystemFontOfSize:floatingTextOnlyFontSize' in mode
 assert 'NSTimer' not in mode and 'snapshotView' not in mode and 'sampleBackgroundLuminance' not in mode
 assert 'textOnlySnapshotCenter' in mode and 'textOnlyHiddenSnapshot' in mode

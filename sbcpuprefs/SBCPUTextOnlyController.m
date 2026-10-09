@@ -3,8 +3,10 @@
 #import <Preferences/PSSpecifier.h>
 #import <notify.h>
 #import "../SBCPUTextOnlyPolicy.h"
+#import "../SBCPUTextOnlyColor.h"
 
-@interface SBCPUTextOnlyController : PSListController
+@interface SBCPUTextOnlyController : PSListController <UIColorPickerViewControllerDelegate, UIAdaptivePresentationControllerDelegate>
+@property(nonatomic, strong) NSArray *pendingTextRGBA;
 @end
 @implementation SBCPUTextOnlyController
 - (NSArray *)specifiers {
@@ -71,8 +73,75 @@
 }
 - (void)editX { [self editOffset:@"floatingTextOnlyX" title:@"水平偏移 X（正数向右）"]; }
 - (void)editY { [self editOffset:@"floatingTextOnlyY" title:@"垂直偏移 Y（正数向下）"]; }
-- (void)difference { [self writeValues:@{@"floatingTextOnlyColor":@0}]; }
-- (void)whiteText { [self writeValues:@{@"floatingTextOnlyColor":@1}]; }
-- (void)blackText { [self writeValues:@{@"floatingTextOnlyColor":@2}]; }
+- (void)selectColorMode:(NSInteger)mode {
+    [self writeValues:@{@"floatingTextOnlyColor":@(mode)}];
+    [self reloadSpecifiers];
+}
+- (void)automaticText { [self selectColorMode:0]; }
+- (void)whiteText { [self selectColorMode:1]; }
+- (void)blackText { [self selectColorMode:2]; }
+- (void)customText {
+    if (self.presentedViewController || self.navigationController.presentedViewController) return;
+    SBCPUTextRGBA c = SBCPUTextDecodeRGBA([self valueForKeyName:@"floatingTextOnlyRGBA" fallback:nil]);
+    UIColorPickerViewController *picker = [UIColorPickerViewController new];
+    picker.title = @"自定义文字颜色";
+    picker.supportsAlpha = NO;
+    picker.selectedColor = [UIColor colorWithRed:c.red green:c.green blue:c.blue alpha:1];
+    picker.delegate = self;
+    picker.modalPresentationStyle = UIModalPresentationFormSheet;
+    self.pendingTextRGBA = nil;
+    UIViewController *presenter = self.navigationController ?: self;
+    [presenter presentViewController:picker animated:YES completion:nil];
+    picker.presentationController.delegate = self;
+}
+- (void)capturePickerColor:(UIColorPickerViewController *)picker {
+    CGFloat r = 0, g = 0, b = 0, a = 1;
+    if (![picker.selectedColor getRed:&r green:&g blue:&b alpha:&a]) return;
+    SBCPUTextRGBA c = SBCPUTextDecodeRGBA(@[@(r), @(g), @(b), @(a)]);
+    self.pendingTextRGBA = @[@(c.red), @(c.green), @(c.blue), @1];
+}
+- (void)commitPickerColor {
+    if (!self.pendingTextRGBA) return;
+    NSArray *color = self.pendingTextRGBA;
+    self.pendingTextRGBA = nil;
+    id mode = [self valueForKeyName:@"floatingTextOnlyColor" fallback:@0];
+    id old = [self valueForKeyName:@"floatingTextOnlyRGBA" fallback:nil];
+    // Commit once on completion/dismissal, never on every slider movement.
+    if (![mode isEqual:@3] || ![old isEqual:color])
+        [self writeValues:@{@"floatingTextOnlyColor":@3, @"floatingTextOnlyRGBA":color}];
+    [self reloadSpecifiers];
+}
+- (void)colorPickerViewController:(UIColorPickerViewController *)viewController didSelectColor:(UIColor *)color continuously:(BOOL)continuously {
+    (void)color; (void)continuously;
+    [self capturePickerColor:viewController];
+}
+- (void)colorPickerViewControllerDidFinish:(UIColorPickerViewController *)viewController {
+    [self capturePickerColor:viewController];
+    [self commitPickerColor];
+    [viewController dismissViewControllerAnimated:YES completion:nil];
+}
+- (void)presentationControllerDidDismiss:(UIPresentationController *)presentationController {
+    (void)presentationController;
+    [self commitPickerColor]; // swipe-to-dismiss also preserves a changed selection
+}
+- (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
+    (void)tableView;
+    PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
+    NSNumber *choice = [specifier propertyForKey:@"textColorMode"];
+    if (!choice) return;
+    id rawMode = [self valueForKeyName:@"floatingTextOnlyColor" fallback:@0];
+    NSInteger mode = [rawMode isKindOfClass:NSNumber.class] ? [rawMode integerValue] : 0;
+    if (mode < 0 || mode > 3) mode = 0;
+    cell.accessoryType = mode == choice.integerValue ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+    cell.textLabel.text = [specifier name];
+    cell.imageView.image = nil;
+    if (choice.integerValue == 3) {
+        SBCPUTextRGBA c = SBCPUTextDecodeRGBA([self valueForKeyName:@"floatingTextOnlyRGBA" fallback:nil]);
+        cell.textLabel.text = [NSString stringWithFormat:@"自定义文字颜色 · #%02X%02X%02X", (unsigned)lround(c.red*255), (unsigned)lround(c.green*255), (unsigned)lround(c.blue*255)];
+        cell.imageView.image = [UIImage systemImageNamed:@"circle.fill"];
+        cell.imageView.tintColor = [UIColor colorWithRed:c.red green:c.green blue:c.blue alpha:1];
+    }
+}
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self reloadSpecifiers]; }
 - (void)viewDidLoad { [super viewDidLoad]; self.title = @"纯文字浮窗"; }
 @end

@@ -234,16 +234,23 @@
 			<key>label</key>
 			<string>文字颜色</string>
 			<key>footerText</key>
-			<string>差值合成使用白色文字作为源，理论上白底黑字、黑底白字，不截图、不增加采样计时器。iOS 跨窗口合成效果尚待真机验证，不保证自动反色；若无效请手动选择固定黑字或白字。</string>
+			<string>自动模式跟随系统外观：浅色模式黑字，深色模式白字，不检测背景像素。自定义颜色通过系统选色面板选择，完成或下滑关闭后保存并启用；不透明文字，默认蓝色。颜色设置仅影响纯文字浮窗。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>差值反色（实验性，需真机验证）</string>
+			<string>自动模式</string>
+            <key>textColorMode</key><integer>0</integer>
 			<key>action</key>
-			<string>difference</string>
+			<string>automaticText</string>
 		</dict>
+        <dict>
+            <key>cell</key><string>PSButtonCell</string>
+            <key>label</key><string>自定义文字颜色</string>
+            <key>textColorMode</key><integer>3</integer>
+            <key>action</key><string>customText</string>
+        </dict>
 		<dict>
 			<key>cell</key>
 			<string>PSButtonCell</string>
@@ -251,6 +258,7 @@
 			<string>固定白字（深色背景）</string>
 			<key>action</key>
 			<string>whiteText</string>
+            <key>textColorMode</key><integer>1</integer>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -259,6 +267,7 @@
 			<string>固定黑字（浅色背景）</string>
 			<key>action</key>
 			<string>blackText</string>
+            <key>textColorMode</key><integer>2</integer>
 		</dict>
 	</array>
 </dict>
