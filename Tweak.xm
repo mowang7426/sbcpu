@@ -1,4 +1,5 @@
 #import "SBCPUTextOnlyPolicy.h"
+#import "SBCPUTextOnlyFormat.h"
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -343,6 +344,10 @@ static NSInteger floatingTextOnlyPreset = 1;
 static CGFloat floatingTextOnlyX = 0, floatingTextOnlyY = 0;
 static CGFloat floatingTextOnlyFontSize = 13;
 static NSInteger floatingTextOnlyColor = 0; // 0 experimental difference, 1 white, 2 black
+static BOOL textOnlyShowCPU = YES, textOnlyShowFrequency = YES, textOnlyShowFPS = YES;
+static BOOL textOnlyShowBattery = YES, textOnlyShowTemperature = YES, textOnlyShowCurrent = YES;
+static BOOL textOnlyShowSIM1 = YES, textOnlyShowSIM2 = YES;
+static NSArray<NSDictionary *> *textOnlySignals = nil;
 static UILabel *textOnlyLabel = nil;
 static BOOL textOnlyDragging = NO;
 static BOOL textOnlySnapshotValid = NO, textOnlySnapshotCollapsed = NO;
@@ -1029,6 +1034,15 @@ static void LoadPreferences(void) {
     floatingTextOnlyY = SBCPUTextOnlyBound(getFloatPref(CFSTR("floatingTextOnlyY"), 0), -1000, 1000, 0);
     floatingTextOnlyFontSize = SBCPUTextOnlyBound(getFloatPref(CFSTR("floatingTextOnlyFontSize"), 13), 8, 24, 13);
     floatingTextOnlyColor = MAX(0, MIN(2, getIntPref(CFSTR("floatingTextOnlyColor"), 0)));
+    // Independent defaults: ordinary show flags never govern this row.
+    textOnlyShowCPU = getBoolPref(CFSTR("floatingTextOnlyShowCPU"), YES);
+    textOnlyShowFrequency = getBoolPref(CFSTR("floatingTextOnlyShowFrequency"), YES);
+    textOnlyShowFPS = getBoolPref(CFSTR("floatingTextOnlyShowFPS"), YES);
+    textOnlyShowBattery = getBoolPref(CFSTR("floatingTextOnlyShowBattery"), YES);
+    textOnlyShowTemperature = getBoolPref(CFSTR("floatingTextOnlyShowTemperature"), YES);
+    textOnlyShowCurrent = getBoolPref(CFSTR("floatingTextOnlyShowCurrent"), YES);
+    textOnlyShowSIM1 = getBoolPref(CFSTR("floatingTextOnlyShowSIM1"), YES);
+    textOnlyShowSIM2 = getBoolPref(CFSTR("floatingTextOnlyShowSIM2"), YES);
     statusDockReturnDelay = MAX(1, MIN(30, getIntPref(CFSTR("statusDockReturnDelay"), 5)));
     floatingValueRefreshInterval = MAX(1.0, MIN(2.0, getFloatPref(CFSTR("floatingValueRefreshInterval"), 1.0f)));
     statusDockShowCPU = getBoolPref(CFSTR("statusDockShowCPU"), YES);
@@ -1103,7 +1117,7 @@ static void LoadPreferences(void) {
         applyVisibility();
         if (floatingView && wasTextOnly != floatingTextOnlyMode) handleTextOnlyModeTransition(wasTextOnly);
         if (floatingView && floatingTextOnlyMode) applyTextOnlyMode();
-        if (showFps || collapsedDisplayMode == 1) {
+        if (showFps || collapsedDisplayMode == 1 || (floatingTextOnlyMode && textOnlyShowFPS)) {
             [[SBCPUFPSHelper sharedInstance] startMonitoring];
         } else {
             [[SBCPUFPSHelper sharedInstance] stopMonitoring];
@@ -1174,7 +1188,7 @@ static void SavePreferencesAndNotify(void) {
 
     CFPreferencesSynchronize(kPrefAppID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
 
-    if (showFps || collapsedDisplayMode == 1) {
+    if (showFps || collapsedDisplayMode == 1 || (floatingTextOnlyMode && textOnlyShowFPS)) {
         [[SBCPUFPSHelper sharedInstance] startMonitoring];
     } else {
         [[SBCPUFPSHelper sharedInstance] stopMonitoring];
@@ -2463,7 +2477,11 @@ static void applyTextOnlyMode(void) {
     if (!textOnlyLabel || textOnlyLabel.superview != floatingView) {
         [textOnlyLabel removeFromSuperview];
         textOnlyLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-        textOnlyLabel.numberOfLines = 0;
+        textOnlyLabel.numberOfLines = 1;
+        textOnlyLabel.lineBreakMode = NSLineBreakByClipping;
+        textOnlyLabel.adjustsFontSizeToFitWidth = YES;
+        textOnlyLabel.baselineAdjustment = UIBaselineAdjustmentAlignCenters;
+        textOnlyLabel.textAlignment = NSTextAlignmentCenter;
         textOnlyLabel.backgroundColor = UIColor.clearColor;
         textOnlyLabel.userInteractionEnabled = NO;
         [floatingView addSubview:textOnlyLabel];
@@ -2476,22 +2494,23 @@ static void applyTextOnlyMode(void) {
     floatingView.layer.borderWidth = 0;
     floatingView.alpha = 1;
     floatingView.isCollapsed = NO;
-    NSMutableArray *lines = [NSMutableArray array];
-    [lines addObject:[NSString stringWithFormat:@"CPU %@%@", floatingView.cpuValueLabel.text ?: @"--",
-        showCpuFrequency ? [NSString stringWithFormat:@"  %@", floatingView.cpuFreqLabel.text ?: @"--"] : @""]];
-    if (showFps) [lines addObject:[NSString stringWithFormat:@"FPS %@", floatingView.fpsValueLabel.text ?: @"--"]];
-    if (showBatteryPercent) [lines addObject:[NSString stringWithFormat:@"电量 %@", floatingView.batteryValueLabel.text ?: @"--"]];
-    if (showBatteryTemperature) [lines addObject:[NSString stringWithFormat:@"温度 %@", floatingView.tempValueLabel.text ?: @"--"]];
-    if (showBatteryCurrent) [lines addObject:[NSString stringWithFormat:@"电流 %@", floatingView.currentValueLabel.text ?: @"--"]];
-    if (floatingView.thermalStatusLabel.text.length) [lines addObject:floatingView.thermalStatusLabel.text];
-    if (showSignalStrength && floatingView.signalLabel.text.length) [lines addObject:floatingView.signalLabel.text];
-    if (floatingView.statusLabel.text.length) [lines addObject:floatingView.statusLabel.text];
-    textOnlyLabel.text = [lines componentsJoinedByString:@"\n"];
+    SBCPUTextOnlyFields fields = {textOnlyShowCPU, textOnlyShowFrequency, textOnlyShowFPS,
+        textOnlyShowBattery, textOnlyShowTemperature, textOnlyShowCurrent, textOnlyShowSIM1, textOnlyShowSIM2};
+    textOnlyLabel.text = SBCPUTextOnlyRow(fields, floatingView.cpuValueLabel.text,
+        floatingView.cpuFreqLabel.text, floatingView.fpsValueLabel.text, floatingView.batteryValueLabel.text,
+        floatingView.tempValueLabel.text, floatingView.currentValueLabel.text, textOnlySignals);
+    textOnlyLabel.hidden = (textOnlyLabel.text.length == 0);
     textOnlyLabel.font = [UIFont monospacedSystemFontOfSize:floatingTextOnlyFontSize weight:UIFontWeightMedium];
     CGRect container = floatingView.superview.bounds;
-    CGFloat available = MAX(40, MIN(container.size.width, container.size.height) - 8);
-    CGSize size = [textOnlyLabel sizeThatFits:CGSizeMake(available, CGFLOAT_MAX)];
-    floatingView.bounds = CGRectMake(0, 0, ceil(MIN(available, size.width)), ceil(size.height));
+    UIInterfaceOrientation orientation = getEffectiveFloatingOrientation();
+    BOOL rotated = UIInterfaceOrientationIsLandscape(orientation);
+    CGFloat available = SBCPUTextOnlyAvailableWidth(container.size.width, container.size.height, rotated);
+    CGFloat naturalWidth = ceil([textOnlyLabel.text sizeWithAttributes:@{NSFontAttributeName:textOnlyLabel.font}].width);
+    textOnlyLabel.minimumScaleFactor = SBCPUTextOnlyMinimumScale(naturalWidth, available);
+    // Single physical row; retain every selected value even on narrow screens.
+    CGFloat rowWidth = textOnlyLabel.hidden ? 1 : MAX(1, MIN(available, naturalWidth + 2));
+    CGFloat rowHeight = textOnlyLabel.hidden ? 1 : ceil(textOnlyLabel.font.lineHeight);
+    floatingView.bounds = CGRectMake(0, 0, rowWidth, rowHeight);
     textOnlyLabel.frame = floatingView.bounds;
     applyTextOnlyTextFilter();
 }
@@ -2504,6 +2523,7 @@ static void handleTextOnlyModeTransition(BOOL wasEnabled) {
         textOnlySnapshotCenter = keyboardMoved ? CGPointMake(CGRectGetMidX(keyboardBeforeFrame), CGRectGetMidY(keyboardBeforeFrame)) : floatingView.center;
         keyboardMoved = NO;
         textOnlyDragging = NO;
+        textOnlySignals = (textOnlyShowSIM1 || textOnlyShowSIM2) ? readAllSimSignals() : @[];
         textOnlyShadowOpacity = floatingView.layer.shadowOpacity;
         textOnlyBorderWidth = floatingView.layer.borderWidth;
         textOnlyHiddenSnapshot = [NSMapTable weakToStrongObjectsMapTable];
@@ -2520,6 +2540,7 @@ static void handleTextOnlyModeTransition(BOOL wasEnabled) {
     } else {
         [textOnlyLabel removeFromSuperview];
         textOnlyLabel = nil;
+        textOnlySignals = nil;
         for (UIView *view in floatingView.subviews) {
             NSNumber *hidden = [textOnlyHiddenSnapshot objectForKey:view];
             if (hidden) view.hidden = hidden.boolValue;
@@ -4824,8 +4845,11 @@ return self;
         _thermalStatusLabel.textColor = thermalColor ?: [UIColor systemBlueColor];
     }
 
-    // SIM 卡信号行（每秒刷新，跟随 updateCPU 定时器）
-    if (showSignalStrength && !fastChargeStartupAnimating) {
+    // Reuse the existing refresh tick. Pure-text signals ignore ordinary flags
+    // and never parse the long carrier/status label.
+    if (floatingTextOnlyMode) {
+        textOnlySignals = (textOnlyShowSIM1 || textOnlyShowSIM2) ? readAllSimSignals() : @[];
+    } else if (showSignalStrength && !fastChargeStartupAnimating) {
         _signalLabel.text = getSignalInfoString();
     }
 

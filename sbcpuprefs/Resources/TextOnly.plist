@@ -34,9 +34,89 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
+			<string>独立显示项目</string>
+			<key>footerText</key>
+			<string>以下开关只影响纯文字浮窗，初始默认全部开启，不继承或改写普通浮窗开关。◉ 为 CPU 占用，▰ 为电量；MHz / fps / °C / mA 为频率、帧率、温度、电流；S1 / S2 为各卡 dBm 信号强度，不显示运营商、频段或制式。-- 表示未取得数值。不显示温控运行和充电状态；全关则不显示文字。</string>
+		</dict>
+		<dict>
+			<key>defaults</key><string>com.yourname.sbcpufloating</string>
+			<key>get</key><string>getPreferenceValue:</string>
+			<key>set</key><string>setPreferenceValue:specifier:</string>
+			<key>cell</key><string>PSSwitchCell</string>
+			<key>label</key><string>CPU 占用（◉）</string>
+			<key>key</key><string>floatingTextOnlyShowCPU</string>
+			<key>default</key><true/>
+		</dict>
+		<dict>
+			<key>defaults</key><string>com.yourname.sbcpufloating</string>
+			<key>get</key><string>getPreferenceValue:</string>
+			<key>set</key><string>setPreferenceValue:specifier:</string>
+			<key>cell</key><string>PSSwitchCell</string>
+			<key>label</key><string>CPU 频率（MHz）</string>
+			<key>key</key><string>floatingTextOnlyShowFrequency</string>
+			<key>default</key><true/>
+		</dict>
+		<dict>
+			<key>defaults</key><string>com.yourname.sbcpufloating</string>
+			<key>get</key><string>getPreferenceValue:</string>
+			<key>set</key><string>setPreferenceValue:specifier:</string>
+			<key>cell</key><string>PSSwitchCell</string>
+			<key>label</key><string>帧率（fps）</string>
+			<key>key</key><string>floatingTextOnlyShowFPS</string>
+			<key>default</key><true/>
+		</dict>
+		<dict>
+			<key>defaults</key><string>com.yourname.sbcpufloating</string>
+			<key>get</key><string>getPreferenceValue:</string>
+			<key>set</key><string>setPreferenceValue:specifier:</string>
+			<key>cell</key><string>PSSwitchCell</string>
+			<key>label</key><string>电量（▰）</string>
+			<key>key</key><string>floatingTextOnlyShowBattery</string>
+			<key>default</key><true/>
+		</dict>
+		<dict>
+			<key>defaults</key><string>com.yourname.sbcpufloating</string>
+			<key>get</key><string>getPreferenceValue:</string>
+			<key>set</key><string>setPreferenceValue:specifier:</string>
+			<key>cell</key><string>PSSwitchCell</string>
+			<key>label</key><string>电池温度（°C）</string>
+			<key>key</key><string>floatingTextOnlyShowTemperature</string>
+			<key>default</key><true/>
+		</dict>
+		<dict>
+			<key>defaults</key><string>com.yourname.sbcpufloating</string>
+			<key>get</key><string>getPreferenceValue:</string>
+			<key>set</key><string>setPreferenceValue:specifier:</string>
+			<key>cell</key><string>PSSwitchCell</string>
+			<key>label</key><string>电流（mA）</string>
+			<key>key</key><string>floatingTextOnlyShowCurrent</string>
+			<key>default</key><true/>
+		</dict>
+		<dict>
+			<key>defaults</key><string>com.yourname.sbcpufloating</string>
+			<key>get</key><string>getPreferenceValue:</string>
+			<key>set</key><string>setPreferenceValue:specifier:</string>
+			<key>cell</key><string>PSSwitchCell</string>
+			<key>label</key><string>SIM 1 信号（S1）</string>
+			<key>key</key><string>floatingTextOnlyShowSIM1</string>
+			<key>default</key><true/>
+		</dict>
+		<dict>
+			<key>defaults</key><string>com.yourname.sbcpufloating</string>
+			<key>get</key><string>getPreferenceValue:</string>
+			<key>set</key><string>setPreferenceValue:specifier:</string>
+			<key>cell</key><string>PSSwitchCell</string>
+			<key>label</key><string>SIM 2 信号（S2）</string>
+			<key>key</key><string>floatingTextOnlyShowSIM2</string>
+			<key>default</key><true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
 			<string>字号</string>
 			<key>footerText</key>
-			<string>独立字号 8–24 pt，不改变普通浮窗字号或缩放。</string>
+			<string>独立基准字号 8–24 pt，不改变普通浮窗字号或缩放。所有选中项目始终单行显示；超过屏幕可用宽度会整体缩字，必要时低于 8 pt，不换行、不省略。若字太小可减少显示项目。</string>
 		</dict>
 		<dict>
 			<key>defaults</key>

@@ -21,6 +21,9 @@ jobs:
           TMP_TEXT=$(mktemp -d)
           clang -std=c11 -Wall -Wextra -Werror -pedantic tests/text_only_policy.c -o "$TMP_TEXT/policy"
           "$TMP_TEXT/policy"
+          clang -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
+            tests/text_only_format.m -o "$TMP_TEXT/format"
+          "$TMP_TEXT/format"
 
       - name: Thermal preference UI regression
         run: |

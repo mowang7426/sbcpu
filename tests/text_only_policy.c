@@ -20,6 +20,12 @@ int main(void) {
     assert(SBCPUTextOnlyBound(NAN, 8, 24, 13) == 13);
     assert(SBCPUTextOnlyBound(INFINITY, -1000, 1000, 0) == 0);
     assert(SBCPUTextOnlyBound(-2000, -1000, 1000, 0) == -1000);
-    puts("PASS: text-only dock, Island margin, three anchors, font and offset bounds");
+    assert(SBCPUTextOnlyAvailableWidth(320, 568, 0) == 312);
+    assert(SBCPUTextOnlyAvailableWidth(320, 568, 1) == 560);
+    assert(SBCPUTextOnlyMinimumScale(800, 312) < 0.4);
+    assert(SBCPUTextOnlyMinimumScale(100, 312) == 1);
+    assert(SBCPUTextOnlyMinimumScale(NAN, 312) == 1);
+    assert(SBCPUTextOnlyMinimumScale(10000, 120) > 0);
+    puts("PASS: text-only dock, Island margin, three anchors, narrow layout and font bounds");
     return 0;
 }

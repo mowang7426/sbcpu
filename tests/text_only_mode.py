@@ -18,6 +18,23 @@ for action in ('moveUp','moveDown','moveLeft','moveRight','topLeft','topCenter',
     assert '- (void)' + action in controller, action
 assert 'SBCPUTextOnlyController.m' in (root / 'sbcpuprefs/Makefile').read_text()
 assert 'getBoolPref(CFSTR("floatingTextOnlyMode"), NO)' in text
+keys = ('CPU', 'Frequency', 'FPS', 'Battery', 'Temperature', 'Current', 'SIM1', 'SIM2')
+for suffix in keys:
+    key = 'floatingTextOnlyShow' + suffix
+    entry, = [r for r in rows if r.get('key') == key]
+    assert entry['cell'] == 'PSSwitchCell' and entry['default'] is True
+    assert entry['defaults'] == 'com.yourname.sbcpufloating'
+    assert entry['get'] == 'getPreferenceValue:' and entry['set'] == 'setPreferenceValue:specifier:'
+    assert f'getBoolPref(CFSTR("{key}"), YES)' in text
+assert 'notify_post("com.yourname.sbcpufloating.prefschanged")' in controller
+assert 'SBCPUTextOnlyRow(fields,' in text
+assert 'textOnlyLabel.numberOfLines = 1' in text
+assert 'SBCPUTextOnlyMinimumScale(naturalWidth, available)' in text
+assert 'textOnlyLabel.hidden = (textOnlyLabel.text.length == 0)' in text
+assert 'textOnlySignals = (textOnlyShowSIM1 || textOnlyShowSIM2) ? readAllSimSignals() : @[];' in text
+assert '(floatingTextOnlyMode && textOnlyShowFPS)' in text
+assert 'if (floatingTextOnlyMode) {' in text[text.index('// Reuse the existing refresh tick.'):][:260]
+assert 'if (floatingTextOnlyMode)' in text[text.index('- (void)updateLayoutWithShowCpuFreq:'):]
 assert 'SBCPUTextOnlyDockEffective(statusBarDockEnable, floatingTextOnlyMode)' in text
 assert 'SBCPUTextOnlyTop(floatingTextOnlyMode, safeTop, sbcpuStatusBarDockEffective())' in text
 start = text.index('static void applyTextOnlyTextFilter(void) {')
@@ -28,8 +45,11 @@ assert 'monospacedSystemFontOfSize:floatingTextOnlyFontSize' in mode
 assert 'NSTimer' not in mode and 'snapshotView' not in mode and 'sampleBackgroundLuminance' not in mode
 assert 'textOnlySnapshotCenter' in mode and 'textOnlyHiddenSnapshot' in mode
 assert 'statusBarDockEnable =' not in mode and 'SavePreferencesAndNotify' not in mode
-for label in ('cpuValueLabel','cpuFreqLabel','fpsValueLabel','batteryValueLabel','tempValueLabel','currentValueLabel','thermalStatusLabel','signalLabel','statusLabel'):
+for label in ('cpuValueLabel','cpuFreqLabel','fpsValueLabel','batteryValueLabel','tempValueLabel','currentValueLabel'):
     assert label in mode
+assert 'floatingView.thermalStatusLabel.text' not in mode
+assert 'floatingView.statusLabel.text' not in mode
+assert 'floatingView.signalLabel.text' not in mode
 adaptive = text[text.index('- (void)applyAdaptiveTextColors {'):text.index('- (CGFloat)sampleBackgroundLuminance')]
 assert adaptive.index('if (floatingTextOnlyMode)') < adaptive.index('sampleBackgroundLuminance')
 assert 'if (floatingTextOnlyMode) return;' in text[text.index('- (void)collapseToEdgeAnimated:(BOOL)animated {'):][:150]
