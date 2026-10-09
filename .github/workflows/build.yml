@@ -24,6 +24,9 @@ jobs:
           clang -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
             tests/text_only_format.m -o "$TMP_TEXT/format"
           "$TMP_TEXT/format"
+          clang -fobjc-arc -framework Foundation -Wall -Wextra -Werror \
+            tests/text_only_current.m -o "$TMP_TEXT/current"
+          "$TMP_TEXT/current"
 
       - name: Thermal preference UI regression
         run: |

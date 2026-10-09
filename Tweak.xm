@@ -1,5 +1,6 @@
 #import "SBCPUTextOnlyPolicy.h"
 #import "SBCPUTextOnlyFormat.h"
+#import "SBCPUTextOnlyCurrent.h"
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -348,6 +349,10 @@ static BOOL textOnlyShowCPU = YES, textOnlyShowFrequency = YES, textOnlyShowFPS 
 static BOOL textOnlyShowBattery = YES, textOnlyShowTemperature = YES, textOnlyShowCurrent = YES;
 static BOOL textOnlyShowSIM1 = YES, textOnlyShowSIM2 = YES;
 static NSArray<NSDictionary *> *textOnlySignals = nil;
+// Updated on the existing UI sampling tick; never reuse the ordinary label's
+// smart-stop zero or the legacy 150 mA fallback.
+static NSNumber *textOnlyBatteryCurrent = nil;
+static NSTimeInterval textOnlyCurrentUptime = 0;
 static UILabel *textOnlyLabel = nil;
 static BOOL textOnlyDragging = NO;
 static BOOL textOnlySnapshotValid = NO, textOnlySnapshotCollapsed = NO;
@@ -1650,6 +1655,8 @@ static NSDictionary *getRealBatteryDetails(void) {
             dict[@"CycleCount"] = pDict[@"CycleCount"];
             dict[@"Temperature"] = pDict[@"Temperature"];
             dict[@"Amperage"] = pDict[@"Amperage"] ?: pDict[@"InstantAmperage"];
+            if (floatingTextOnlyMode && textOnlyShowCurrent)
+                dict[@"SBCPUTextOnlyCurrentMA"] = SBCPUTextOnlyBatteryCurrent(pDict);
             dict[@"Voltage"] = pDict[@"Voltage"];
             dict[@"Manufacturer"] = SBCPUBatteryManufacturerFromProperties(pDict);
             dict[@"AvgTimeToFull"] = pDict[@"AvgTimeToFull"];
@@ -2496,9 +2503,11 @@ static void applyTextOnlyMode(void) {
     floatingView.isCollapsed = NO;
     SBCPUTextOnlyFields fields = {textOnlyShowCPU, textOnlyShowFrequency, textOnlyShowFPS,
         textOnlyShowBattery, textOnlyShowTemperature, textOnlyShowCurrent, textOnlyShowSIM1, textOnlyShowSIM2};
+    NSString *netCurrent = SBCPUTextOnlyCurrentText(textOnlyBatteryCurrent,
+        textOnlyCurrentUptime, [NSProcessInfo processInfo].systemUptime);
     textOnlyLabel.text = SBCPUTextOnlyRow(fields, floatingView.cpuValueLabel.text,
         floatingView.cpuFreqLabel.text, floatingView.fpsValueLabel.text, floatingView.batteryValueLabel.text,
-        floatingView.tempValueLabel.text, floatingView.currentValueLabel.text, textOnlySignals);
+        floatingView.tempValueLabel.text, netCurrent, textOnlySignals);
     textOnlyLabel.hidden = (textOnlyLabel.text.length == 0);
     textOnlyLabel.font = [UIFont monospacedSystemFontOfSize:floatingTextOnlyFontSize weight:UIFontWeightMedium];
     CGRect container = floatingView.superview.bounds;
@@ -2776,6 +2785,12 @@ static void updateCPU(void) {
         }
 
         NSDictionary *chargeInfo = getRealBatteryDetails();
+        // Same registry sample as charge-power display; cache before updateData
+        // builds the text row. Missing data invalidates the previous sample.
+        if (floatingTextOnlyMode) {
+            textOnlyBatteryCurrent = textOnlyShowCurrent ? chargeInfo[@"SBCPUTextOnlyCurrentMA"] : nil;
+            textOnlyCurrentUptime = [NSProcessInfo processInfo].systemUptime;
+        }
         double chargeWatts = [chargeInfo[@"CalculatedWatts"] doubleValue];
         if (chargeWatts < 0) chargeWatts = 0;
         previousChargeWatts = lastChargeWatts;

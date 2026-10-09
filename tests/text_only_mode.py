@@ -45,8 +45,9 @@ assert 'monospacedSystemFontOfSize:floatingTextOnlyFontSize' in mode
 assert 'NSTimer' not in mode and 'snapshotView' not in mode and 'sampleBackgroundLuminance' not in mode
 assert 'textOnlySnapshotCenter' in mode and 'textOnlyHiddenSnapshot' in mode
 assert 'statusBarDockEnable =' not in mode and 'SavePreferencesAndNotify' not in mode
-for label in ('cpuValueLabel','cpuFreqLabel','fpsValueLabel','batteryValueLabel','tempValueLabel','currentValueLabel'):
+for label in ('cpuValueLabel','cpuFreqLabel','fpsValueLabel','batteryValueLabel','tempValueLabel'):
     assert label in mode
+assert 'SBCPUTextOnlyCurrentText(textOnlyBatteryCurrent' in mode
 assert 'floatingView.thermalStatusLabel.text' not in mode
 assert 'floatingView.statusLabel.text' not in mode
 assert 'floatingView.signalLabel.text' not in mode
